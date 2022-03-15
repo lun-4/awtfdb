@@ -1,0 +1,12 @@
+tracepoint:syscalls:sys_enter_renameat2,
+tracepoint:syscalls:sys_enter_renameat,
+tracepoint:syscalls:sys_enter_rename {
+    printf("v1:oldname:%d:%d:%s\n", pid, tid, str(args->oldname));
+    printf("v1:newname:%d:%d:%s\n", pid, tid, str(args->newname));
+}
+
+tracepoint:syscalls:sys_exit_renameat2,
+tracepoint:syscalls:sys_exit_renameat,
+tracepoint:syscalls:sys_exit_rename {
+    printf("v1:ret:%d:%d:%d\n", pid, tid, args->ret);
+}
