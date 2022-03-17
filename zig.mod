@@ -3,3 +3,4 @@ name: awtfdb
 license: MIT
 description: The Anime Woman Tagged Files Database
 root_dependencies:
+  - src: git https://github.com/nektro/zig-sqlite3
