@@ -88,10 +88,11 @@ const Context = struct {
 
     pub fn loadDatabase(self: *Self) !void {
         // TODO other people do exist! (use HOME env var)
-        const flags = sqlite.c.SQLITE_OPEN_READWRITE | sqlite.c.SQLITE_OPEN_CREATE;
-        if (sqlite.c.sqlite3_open_v2("/home/luna/boorufs.db", &self.db, flags, null) != sqlite.c.SQLITE_OK) {
-            std.log.err("can't open database: {s}", .{
-                if (self.db != null) sqlite.c.sqlite3_errmsg(self.db) else "unknown",
+        const flags = sqlite.c.SQLITE_OPEN_READWRITE | sqlite.c.SQLITE_OPEN_CREATE | sqlite.c.SQLITE_OPEN_EXRESCODE;
+        const rc = sqlite.c.sqlite3_open_v2("/home/luna/boorufs.db", &self.db, flags, null);
+        if (rc != sqlite.c.SQLITE_OK) {
+            std.log.err("can't open database: {d} '{s}' '{s}'", .{
+                rc, sqlite.c.sqlite3_errstr(rc), if (self.db != null) sqlite.c.sqlite3_errmsg(self.db) else "out of memory",
             });
             return error.OpenFail;
         }
