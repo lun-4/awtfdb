@@ -1,5 +1,5 @@
 const std = @import("std");
-const sqlite = @import("sqlite3");
+const sqlite = @import("sqlite");
 
 const HELPTEXT =
     \\ awtfdb-manage: main program for awtfdb file management
@@ -82,69 +82,54 @@ const Context = struct {
     args_it: *std.process.ArgIterator,
     stdout: std.fs.File,
     /// Always call loadDatabase before using this attribute.
-    db: ?*sqlite.c.sqlite3 = undefined,
+    db: ?sqlite.Db = null,
 
     const Self = @This();
 
     pub fn loadDatabase(self: *Self) !void {
+        // try to create the file always. this is done because
+        // i give up. tried a lot of things to make sqlite create the db file
+        // itself but it just hates me (SQLITE_CANTOPEN my beloathed).
+
         // TODO other people do exist! (use HOME env var)
-        const flags = sqlite.c.SQLITE_OPEN_READWRITE | sqlite.c.SQLITE_OPEN_CREATE | sqlite.c.SQLITE_OPEN_EXRESCODE;
-        const rc = sqlite.c.sqlite3_open_v2("/home/luna/boorufs.db", &self.db, flags, null);
-        if (rc != sqlite.c.SQLITE_OK) {
-            std.log.err("can't open database: {d} '{s}' '{s}'", .{
-                rc, sqlite.c.sqlite3_errstr(rc), if (self.db != null) sqlite.c.sqlite3_errmsg(self.db) else "out of memory",
-            });
-            return error.OpenFail;
-        }
+        const path = "/home/luna/boorufs.db";
+        var file = try std.fs.cwd().createFile(path, .{});
+        defer file.close();
+
+        var diags: sqlite.Diagnostics = undefined;
+        self.db = try sqlite.Db.init(.{
+            .mode = sqlite.Db.Mode{ .File = path },
+            .open_flags = .{
+                .write = true,
+                .create = true,
+            },
+            .threading_mode = .MultiThread,
+            .diags = &diags,
+        });
 
         // ensure our database functions work
         var result = try self.fetchValue(i32, "select 123;");
-        if (result != 123) {
+        if (result == null or result.? != 123) {
             std.log.err("error on test statement: expected 123, got {d}", .{result});
             return error.TestStatementFailed;
         }
     }
 
-    fn executeAny(self: *Self, statement: []const u8) !*sqlite.c.sqlite3_stmt {
-        var maybe_stmt: ?*sqlite.c.sqlite3_stmt = null;
-
-        var rc = sqlite.c.sqlite3_prepare_v2(self.db.?, statement.ptr, @intCast(c_int, statement.len), &maybe_stmt, null);
-        if (rc != sqlite.c.SQLITE_OK) {
-            std.log.err("error compiling statement ({s}): {s}", .{ statement, sqlite.c.sqlite3_errstr(rc) });
-            return error.StatementPrepareFail;
-        } else if (maybe_stmt) |stmt| {
-            rc = sqlite.c.sqlite3_step(stmt);
-            if (rc != sqlite.c.SQLITE_ROW and rc != sqlite.c.SQLITE_DONE) {
-                std.log.err("error evaluating '{s}': {d} {s}", .{ statement, rc, sqlite.c.sqlite3_errstr(rc) });
-                return error.EvaluationFail;
-            }
-
-            return stmt;
-        } else {
-            unreachable;
-        }
+    fn executeOnce(self: *Self, comptime statement: []const u8) !void {
+        var stmt = try self.db.?.prepare(statement);
+        defer stmt.deinit();
+        try stmt.exec(.{}, .{});
     }
 
-    fn executeOnce(self: *Self, statement: []const u8) !void {
-        var stmt = try self.executeAny(statement);
-        defer _ = sqlite.c.sqlite3_finalize(stmt);
-    }
-
-    fn fetchValue(self: *Self, comptime T: type, statement: []const u8) !T {
-        var stmt = try self.executeAny(statement);
-        defer _ = sqlite.c.sqlite3_finalize(stmt);
-
-        if (T == i32) {
-            var result = sqlite.c.sqlite3_column_int(stmt, 0);
-            return @as(i32, result);
-        } else {
-            @compileError("Unsupported type " ++ @typeName(T));
-        }
+    fn fetchValue(self: *Self, comptime T: type, comptime statement: []const u8) !?T {
+        var stmt = try self.db.?.prepare(statement);
+        defer stmt.deinit();
+        return try stmt.one(T, .{}, .{});
     }
 
     pub fn deinit(self: *Self) void {
         if (self.db != null) {
-            defer _ = sqlite.c.sqlite3_close(self.db);
+            self.db.?.deinit();
         }
     }
 
@@ -171,8 +156,19 @@ const Context = struct {
         try self.loadDatabase();
     }
 };
+export fn sqliteLog(_: ?*anyopaque, level: c_int, message: ?[*:0]const u8) callconv(.C) void {
+    std.log.info("sqlite log {d} {s}", .{ level, message });
+}
 
 pub fn main() anyerror!void {
+    const rc = sqlite.c.sqlite3_config(sqlite.c.SQLITE_CONFIG_LOG, sqliteLog, @as(?*anyopaque, null));
+    if (rc != sqlite.c.SQLITE_OK) {
+        std.log.err("failed to configure: {d} '{s}'", .{
+            rc, sqlite.c.sqlite3_errstr(rc),
+        });
+        return error.ConfigFail;
+    }
+
     var args_it = std.process.args();
     _ = args_it.skip();
     const stdout = std.io.getStdOut();
