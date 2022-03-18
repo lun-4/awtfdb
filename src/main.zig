@@ -1,4 +1,5 @@
 const std = @import("std");
+const sqlite = @import("sqlite3");
 
 const HELPTEXT =
     \\ awtfdb-manage: main program for awtfdb file management
@@ -23,19 +24,69 @@ const HELPTEXT =
 
 const Context = struct {
     args_it: *std.process.ArgIterator,
-    stdout: std.io.File,
+    stdout: std.fs.File,
+    /// Always call loadDatabase before using this attribute.
+    db: *sqlite.c.sqlite3 = undefined,
 
     const Self = @This();
 
-    pub fn createCommand(self: *Self) !void {}
-    pub fn statsCommand(self: *Self) !void {}
-    pub fn jobsCommand(self: *Self) !void {}
+    pub fn loadDatabase(self: *Self) !void {
+        var maybe_db: ?*sqlite.c.sqlite3 = null;
+
+        if (sqlite.c.sqlite3_open("/home/luna/boorufs.db", &maybe_db) != 0) {
+            std.log.err("can't open database: {s}", .{sqlite.c.sqlite3_errmsg(maybe_db)});
+            return error.DatabaseError;
+        }
+        self.db = maybe_db.?;
+    }
+
+    pub fn deinit(self: *Self) void {
+        defer _ = sqlite.c.sqlite3_close(self.db);
+    }
+
+    pub fn createCommand(self: *Self) !void {
+        try self.loadDatabase();
+
+        var maybe_stmt: ?*sqlite.c.sqlite3_stmt = null;
+        defer _ = sqlite.c.sqlite3_finalize(maybe_stmt);
+        var rc = sqlite.c.sqlite3_prepare_v2(self.db, "select 123;", 128, &maybe_stmt, null);
+        if (rc != sqlite.c.SQLITE_OK) {
+            std.log.err("error executing 'select 1' statement on database: {s}", .{sqlite.c.sqlite3_errstr(rc)});
+            return error.TestStatementFailed;
+        } else if (maybe_stmt) |stmt| {
+            rc = sqlite.c.sqlite3_step(stmt);
+            if (rc != sqlite.c.SQLITE_ROW) {
+                std.log.err("error fetching 'select 1' statement on database: {d} {s}", .{ rc, sqlite.c.sqlite3_errstr(rc) });
+                return error.TestStatementFailed;
+            }
+
+            var result = sqlite.c.sqlite3_column_int(stmt, 0);
+            if (result != 123) {
+                std.log.err("error fetching 'select 1' statement on database: expected 123, got {d}", .{result});
+                return error.TestStatementFailed;
+            }
+        } else {
+            return error.InvalidTestStatementState;
+        }
+    }
+
+    pub fn migrateCommand(self: *Self) !void {
+        try self.loadDatabase();
+        self.db;
+    }
+
+    pub fn statsCommand(self: *Self) !void {
+        try self.loadDatabase();
+    }
+
+    pub fn jobsCommand(self: *Self) !void {
+        try self.loadDatabase();
+    }
 };
 
 pub fn main() anyerror!void {
-    const args_it = std.process.args();
+    var args_it = std.process.args();
     _ = args_it.skip();
-    const action = args_it.next();
     const stdout = std.io.getStdOut();
 
     const Args = struct {
@@ -45,7 +96,6 @@ pub fn main() anyerror!void {
         maybe_action: ?[]const u8 = null,
     };
 
-    var arg_state: usize = 0;
     var given_args = Args{};
     while (args_it.next()) |arg| {
         if (std.mem.eql(u8, arg, "-h")) {
@@ -60,10 +110,10 @@ pub fn main() anyerror!void {
     }
 
     if (given_args.help) {
-        try stdout.print(HELPTEXT, .{});
+        try stdout.writer().print(HELPTEXT, .{});
         return;
     } else if (given_args.version) {
-        try stdout.print("awtfdb-manage 0.0.1\n", .{});
+        try stdout.writer().print("awtfdb-manage 0.0.1\n", .{});
         return;
     }
 
@@ -72,18 +122,20 @@ pub fn main() anyerror!void {
     }
 
     if (given_args.maybe_action == null) {
-        std.log.err("action argument is required");
+        std.log.err("action argument is required", .{});
         return error.MissingActionArgument;
     }
 
     var ctx = Context{
-        .args_it = args_it,
+        .args_it = &args_it,
         .stdout = stdout,
+        .db = undefined,
     };
+    defer ctx.deinit();
 
     const action = given_args.maybe_action.?;
     if (std.mem.eql(u8, action, "create")) {
-        ctx.createCommand();
+        try ctx.createCommand();
     } else {
         std.log.err("unknown action {s}", .{action});
         return error.UnknownAction;
