@@ -22,6 +22,62 @@ const HELPTEXT =
     \\  awtfdb-manage jobs
 ;
 
+const MIGRATIONS = .{
+    .{
+        1,
+        \\ -- uniquely identifies a tag in the ENTIRE UNIVERSE!!!
+        \\ -- since this uses random data for core_data, and core_hash is blake3
+        \\ --
+        \\ -- this is not randomly generated UUIDs, of which anyone can cook up 128-bit
+        \\ -- numbers out of thin air. using a cryptographic hash function lets us be
+        \\ -- sure that we have an universal tag for 'new york' or 'tree', while also
+        \\ -- enabling different language representations of the same tag
+        \\ -- (since they all reference the core!)
+        \\ create table tag_cores (
+        \\     core_hash text primary key,
+        \\     core_data blob not null
+        \\ );
+        \\ 
+        \\ -- files that are imported by bimport/badd are here
+        \\ -- this is how we learn that a certain path means a certain hash without
+        \\ -- having to recalculate the hash over and over.
+        \\ create table files (
+        \\     file_hash text primary key not null,
+        \\     local_path text not null,
+        \\ );
+        \\ 
+        \\ -- this is the main tag<->file mapping. to find out which tags a file has,
+        \\ -- execute your SELECT here.
+        \\ create table tag_files (
+        \\     file_hash text not null,
+        \\     core_hash text not null,
+        \\     constraint tag_files_core_fk foreign key (core_hash)
+        \\         references tag_cores (core_hash) on delete cascade,
+        \\     constraint tag_files_file_fk foreign key (file_hash)
+        \\         references files (file_hash) on delete cascade,
+        \\     constraint tag_files_pk primary key (file_hash, core_hash)
+        \\ );
+        \\ 
+        \\ -- this is the main name<->tag mapping. to find out the
+        \\ -- UNIVERSALLY RECOGNIZABLE id of a tag name, execute your SELECT here.
+        \\ create table tag_names (
+        \\     tag_text text not null,
+        \\     tag_language text not null,
+        \\     core_hash text not null,
+        \\     constraint tag_names_core_fk foreign key (core_hash) references tag_cores on delete cascade,
+        \\     constraint tag_names_pk primary key (tag_text, tag_language, core_hash)
+        \\ );
+    },
+};
+
+const MIGRATION_LOG_TABLE =
+    \\ create table if not exists boorufs_migrations (
+    \\     version int primary key,
+    \\     applied_at int,
+    \\     description text
+    \\ );
+;
+
 const Context = struct {
     args_it: *std.process.ArgIterator,
     stdout: std.fs.File,
@@ -38,6 +94,49 @@ const Context = struct {
             return error.DatabaseError;
         }
         self.db = maybe_db.?;
+
+        // ensure our database functions work
+        var result = try self.fetchValue(i32, "select 123;");
+        if (result != 123) {
+            std.log.err("error on test statement: expected 123, got {d}", .{result});
+            return error.TestStatementFailed;
+        }
+    }
+
+    fn executeAny(self: *Self, statement: []const u8) !*sqlite.c.sqlite3_stmt {
+        var maybe_stmt: ?*sqlite.c.sqlite3_stmt = null;
+
+        var rc = sqlite.c.sqlite3_prepare_v2(self.db, statement.ptr, @intCast(c_int, statement.len), &maybe_stmt, null);
+        if (rc != sqlite.c.SQLITE_OK) {
+            std.log.err("error compiling statement ({s}): {s}", .{ statement, sqlite.c.sqlite3_errstr(rc) });
+            return error.StatementPrepareFail;
+        } else if (maybe_stmt) |stmt| {
+            rc = sqlite.c.sqlite3_step(stmt);
+            if (rc != sqlite.c.SQLITE_ROW) {
+                std.log.err("error evaluating '{s}': {d} {s}", .{ statement, rc, sqlite.c.sqlite3_errstr(rc) });
+                return error.EvaluationFail;
+            }
+
+            return stmt;
+        } else {
+            unreachable;
+        }
+    }
+    fn executeOnce(self: *Self, statement: []const u8) !void {
+        var stmt = self.executeAny(statement);
+        defer _ = sqlite.c.sqlite3_finalize(stmt);
+    }
+
+    fn fetchValue(self: *Self, comptime T: type, statement: []const u8) !T {
+        var stmt = try self.executeAny(statement);
+        defer _ = sqlite.c.sqlite3_finalize(stmt);
+
+        if (T == i32) {
+            var result = sqlite.c.sqlite3_column_int(stmt, 0);
+            return @as(i32, result);
+        } else {
+            @compileError("Unsupported type " ++ @typeName(T));
+        }
     }
 
     pub fn deinit(self: *Self) void {
@@ -46,33 +145,11 @@ const Context = struct {
 
     pub fn createCommand(self: *Self) !void {
         try self.loadDatabase();
-
-        var maybe_stmt: ?*sqlite.c.sqlite3_stmt = null;
-        defer _ = sqlite.c.sqlite3_finalize(maybe_stmt);
-        var rc = sqlite.c.sqlite3_prepare_v2(self.db, "select 123;", 128, &maybe_stmt, null);
-        if (rc != sqlite.c.SQLITE_OK) {
-            std.log.err("error executing 'select 1' statement on database: {s}", .{sqlite.c.sqlite3_errstr(rc)});
-            return error.TestStatementFailed;
-        } else if (maybe_stmt) |stmt| {
-            rc = sqlite.c.sqlite3_step(stmt);
-            if (rc != sqlite.c.SQLITE_ROW) {
-                std.log.err("error fetching 'select 1' statement on database: {d} {s}", .{ rc, sqlite.c.sqlite3_errstr(rc) });
-                return error.TestStatementFailed;
-            }
-
-            var result = sqlite.c.sqlite3_column_int(stmt, 0);
-            if (result != 123) {
-                std.log.err("error fetching 'select 1' statement on database: expected 123, got {d}", .{result});
-                return error.TestStatementFailed;
-            }
-        } else {
-            return error.InvalidTestStatementState;
-        }
+        try self.migrateCommand();
     }
 
     pub fn migrateCommand(self: *Self) !void {
         try self.loadDatabase();
-        self.db;
     }
 
     pub fn statsCommand(self: *Self) !void {
