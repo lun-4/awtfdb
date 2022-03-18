@@ -71,7 +71,7 @@ const MIGRATIONS = .{
 };
 
 const MIGRATION_LOG_TABLE =
-    \\ create table if not exists boorufs_migrations (
+    \\ create table if not exists migration_logs (
     \\     version int primary key,
     \\     applied_at int,
     \\     description text
@@ -82,18 +82,17 @@ const Context = struct {
     args_it: *std.process.ArgIterator,
     stdout: std.fs.File,
     /// Always call loadDatabase before using this attribute.
-    db: *sqlite.c.sqlite3 = undefined,
+    db: ?*sqlite.c.sqlite3 = undefined,
 
     const Self = @This();
 
     pub fn loadDatabase(self: *Self) !void {
-        var maybe_db: ?*sqlite.c.sqlite3 = null;
-
-        if (sqlite.c.sqlite3_open("/home/luna/boorufs.db", &maybe_db) != 0) {
-            std.log.err("can't open database: {s}", .{sqlite.c.sqlite3_errmsg(maybe_db)});
+        if (sqlite.c.sqlite3_open("/home/luna/boorufs.db", &self.db) != 0) {
+            std.log.err("can't open database: {s}", .{
+                if (self.db != null) sqlite.c.sqlite3_errmsg(self.db) else "unknown",
+            });
             return error.DatabaseError;
         }
-        self.db = maybe_db.?;
 
         // ensure our database functions work
         var result = try self.fetchValue(i32, "select 123;");
@@ -106,7 +105,7 @@ const Context = struct {
     fn executeAny(self: *Self, statement: []const u8) !*sqlite.c.sqlite3_stmt {
         var maybe_stmt: ?*sqlite.c.sqlite3_stmt = null;
 
-        var rc = sqlite.c.sqlite3_prepare_v2(self.db, statement.ptr, @intCast(c_int, statement.len), &maybe_stmt, null);
+        var rc = sqlite.c.sqlite3_prepare_v2(self.db.?, statement.ptr, @intCast(c_int, statement.len), &maybe_stmt, null);
         if (rc != sqlite.c.SQLITE_OK) {
             std.log.err("error compiling statement ({s}): {s}", .{ statement, sqlite.c.sqlite3_errstr(rc) });
             return error.StatementPrepareFail;
@@ -122,8 +121,9 @@ const Context = struct {
             unreachable;
         }
     }
+
     fn executeOnce(self: *Self, statement: []const u8) !void {
-        var stmt = self.executeAny(statement);
+        var stmt = try self.executeAny(statement);
         defer _ = sqlite.c.sqlite3_finalize(stmt);
     }
 
@@ -140,7 +140,9 @@ const Context = struct {
     }
 
     pub fn deinit(self: *Self) void {
-        defer _ = sqlite.c.sqlite3_close(self.db);
+        if (self.db != null) {
+            defer _ = sqlite.c.sqlite3_close(self.db);
+        }
     }
 
     pub fn createCommand(self: *Self) !void {
@@ -150,6 +152,12 @@ const Context = struct {
 
     pub fn migrateCommand(self: *Self) !void {
         try self.loadDatabase();
+
+        // migration log table is forever
+        try self.executeOnce(MIGRATION_LOG_TABLE);
+
+        const last_ran_migration = try self.fetchValue(i32, "select max(version) from migration_logs");
+        std.log.debug("last migration: {d}", .{last_ran_migration});
     }
 
     pub fn statsCommand(self: *Self) !void {
