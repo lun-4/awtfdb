@@ -87,11 +87,13 @@ const Context = struct {
     const Self = @This();
 
     pub fn loadDatabase(self: *Self) !void {
-        if (sqlite.c.sqlite3_open("/home/luna/boorufs.db", &self.db) != 0) {
+        // TODO other people do exist! (use HOME env var)
+        const flags = sqlite.c.SQLITE_OPEN_READWRITE | sqlite.c.SQLITE_OPEN_CREATE;
+        if (sqlite.c.sqlite3_open_v2("/home/luna/boorufs.db", &self.db, flags, null) != sqlite.c.SQLITE_OK) {
             std.log.err("can't open database: {s}", .{
                 if (self.db != null) sqlite.c.sqlite3_errmsg(self.db) else "unknown",
             });
-            return error.DatabaseError;
+            return error.OpenFail;
         }
 
         // ensure our database functions work
