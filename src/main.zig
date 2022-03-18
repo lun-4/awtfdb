@@ -114,7 +114,7 @@ const Context = struct {
             return error.StatementPrepareFail;
         } else if (maybe_stmt) |stmt| {
             rc = sqlite.c.sqlite3_step(stmt);
-            if (rc != sqlite.c.SQLITE_ROW) {
+            if (rc != sqlite.c.SQLITE_ROW and rc != sqlite.c.SQLITE_DONE) {
                 std.log.err("error evaluating '{s}': {d} {s}", .{ statement, rc, sqlite.c.sqlite3_errstr(rc) });
                 return error.EvaluationFail;
             }
