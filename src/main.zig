@@ -196,7 +196,7 @@ pub const Context = struct {
             var core_hash_text_buffer: Blake3HashHex = undefined;
             _ = try std.fmt.bufPrint(
                 &core_hash_text_buffer,
-                "{s}",
+                "{x}",
                 .{std.fmt.fmtSliceHexLower(&core_hash_bytes)},
             );
 
@@ -239,9 +239,9 @@ pub const Context = struct {
 
         pub fn addTag(self: *FileSelf, core_hash: Blake3HashHex) !void {
             try self.ctx.db.?.exec(
-                "insert into tag_files (core_hash, file_hash) values (?, ?)",
+                "insert into tag_files (core_hash, file_hash) values (?, ?) on conflict do nothing",
                 .{},
-                .{ .core_hash = core_hash, .file_hash = self.hash },
+                .{ .core_hash = &core_hash, .file_hash = &self.hash },
             );
             std.log.debug("link file {s} (hash {s}) with tag core hash {s}", .{ self.local_path, self.hash, core_hash });
         }
@@ -271,7 +271,7 @@ pub const Context = struct {
 
             _ = try std.fmt.bufPrint(
                 &file_hash_text_buffer,
-                "{s}",
+                "{x}",
                 .{std.fmt.fmtSliceHexLower(&file_hash_bytes)},
             );
 
@@ -281,7 +281,7 @@ pub const Context = struct {
         try self.db.?.exec(
             "insert into files (file_hash, local_path) values (?, ?) on conflict do nothing",
             .{},
-            .{ .file_hash = file_hash_text, .local_path = absolute_local_path },
+            .{ .file_hash = &file_hash_text, .local_path = absolute_local_path },
         );
         std.log.debug("created file entry hash={s} path={s}", .{
             absolute_local_path,
