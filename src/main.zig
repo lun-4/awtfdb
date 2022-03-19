@@ -34,8 +34,9 @@ const MIGRATIONS = .{
         \\ -- enabling different language representations of the same tag
         \\ -- (since they all reference the core!)
         \\ create table tag_cores (
-        \\     core_hash text primary key,
-        \\     core_data blob not null
+        \\     core_hash text,
+        \\     core_data blob not null,
+        \\     constraint tag_cores_pk primary key (core_hash)
         \\ );
         \\ 
         \\ -- files that are imported by bimport/badd are here
@@ -44,7 +45,7 @@ const MIGRATIONS = .{
         \\ create table files (
         \\     file_hash text not null,
         \\     local_path text not null,
-        \\     primary key (file_hash, local_path)
+        \\     constraint files_pk primary key (file_hash, local_path)
         \\ );
         \\ 
         \\ -- this is the main tag<->file mapping. to find out which tags a file has,
