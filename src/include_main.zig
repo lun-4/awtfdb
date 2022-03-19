@@ -10,7 +10,7 @@ const HELPTEXT =
     \\ ainclude: include a file/folder into the awtfdb
     \\
     \\ usage:
-    \\ 	ainclude [options..] <file/folder path>
+    \\ 	ainclude [options..] <file/folder path...>
     \\
     \\ options:
     \\ 	-h				prints this help and exits
@@ -23,6 +23,9 @@ const HELPTEXT =
     \\
     \\ example, adding a single file:
     \\  ainclude --tag format:mp4 --tag "meme:what the dog doing" /downloads/funny_meme.mp4
+    \\
+    \\ example, adding a batch of files:
+    \\  ainclude --tag format:mp4 --tag "meme:what the dog doing" /downloads/funny_meme.mp4 /download/another_dog_meme.mp4 /downloads/butter_dog.mp4
     \\
     \\ example, adding a media library:
     \\  ainclude --tag type:music --infer-more-tags media /my/music/collection
@@ -52,11 +55,12 @@ pub fn main() anyerror!void {
         version: bool = false,
         default_tags: StringList,
         wanted_inferrers: StringList,
-        include_path: ?[]const u8 = null,
+        include_paths: StringList,
 
         pub fn deinit(self: *@This()) void {
             self.default_tags.deinit();
             self.wanted_inferrers.deinit();
+            self.include_paths.deinit();
         }
     };
 
@@ -67,6 +71,7 @@ pub fn main() anyerror!void {
     var given_args = Args{
         .default_tags = StringList.init(allocator),
         .wanted_inferrers = StringList.init(allocator),
+        .include_paths = StringList.init(allocator),
     };
     defer given_args.deinit();
 
@@ -96,7 +101,7 @@ pub fn main() anyerror!void {
         } else if (std.mem.eql(u8, arg, "--infer-more-tags")) {
             state = .InferMoreTags;
         } else {
-            given_args.include_path = arg;
+            given_args.include_paths.append(arg);
         }
     }
 
@@ -112,8 +117,8 @@ pub fn main() anyerror!void {
         std.debug.todo("aa");
     }
 
-    if (given_args.include_path == null) {
-        std.log.err("include path is required", .{});
+    if (given_args.include_path.items.len) {
+        std.log.err("at least one include path needs to be given", .{});
         return error.MissingArgument;
     }
 
@@ -126,5 +131,46 @@ pub fn main() anyerror!void {
 
     try ctx.loadDatabase();
 
-    std.log.info("{}", .{given_args});
+    std.log.info("args: {}", .{given_args});
+
+    // map tag names to their relevant cores in db
+    var default_tag_cores = StringList.init(allocator);
+    defer default_tag_cores.deinit();
+    for (given_args.default_tags.items) |named_tag_text| {
+        const maybe_tag = try ctx.fetchNamedTag(named_tag_text);
+        if (maybe_tag) |tag| {
+            log.debug(
+                "tag '{s}' is core {s}",
+                .{ named_tag_text, tag.core },
+            );
+            default_tag_cores.append(tag.core);
+        } else {
+            // TODO support ISO 639-2
+            var new_tag = try ctx.createNamedTag(tag, "en", null);
+            log.debug(
+                "(created!) tag '{s}' with core {s}",
+                .{ named_tag_text, new_tag.core },
+            );
+            default_tag_cores.append(new_tag.core);
+        }
+    }
+
+    for (given_args.wanted_inferrers.items) |inferrer_text| {
+        std.debug.todo("add any inferrer logic");
+    }
+
+    for (given_args.include_paths.items) |path_to_include| {
+        const dir: ?std.fs.Dir = std.fs.cwd().openDir(path_to_include) catch |err| blk: {
+            if (err == error.NotDir) break :blk null;
+            return err;
+        };
+        defer if (dir != null) dir.close();
+
+        if (dir == null) {
+            var file = try ctx.addFile(path_to_include);
+            for (default_tag_cores.items) |tag_core| try file.addTag(tag_core);
+        } else {
+            std.debug.todo("support folders");
+        }
+    }
 }
