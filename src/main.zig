@@ -78,7 +78,7 @@ const MIGRATION_LOG_TABLE =
     \\ );
 ;
 
-const Context = struct {
+pub const Context = struct {
     args_it: *std.process.ArgIterator,
     stdout: std.fs.File,
     /// Always call loadDatabase before using this attribute.
@@ -191,7 +191,8 @@ const Context = struct {
         try self.loadDatabase();
     }
 };
-export fn sqliteLog(_: ?*anyopaque, level: c_int, message: ?[*:0]const u8) callconv(.C) void {
+
+pub export fn sqliteLog(_: ?*anyopaque, level: c_int, message: ?[*:0]const u8) callconv(.C) void {
     std.log.info("sqlite logged level={d} msg={s}", .{ level, message });
 }
 
