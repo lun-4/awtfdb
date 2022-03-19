@@ -93,8 +93,10 @@ const Context = struct {
 
         // TODO other people do exist! (use HOME env var)
         const path = "/home/luna/boorufs.db";
-        var file = try std.fs.cwd().createFile(path, .{});
-        defer file.close();
+        {
+            var file = try std.fs.cwd().createFile(path, .{});
+            defer file.close();
+        }
 
         var diags: sqlite.Diagnostics = undefined;
         self.db = try sqlite.Db.init(.{
@@ -145,19 +147,12 @@ const Context = struct {
         try self.executeOnce(MIGRATION_LOG_TABLE);
 
         const current_version: i32 = (try self.fetchValue(i32, "select max(version) from migration_logs")) orelse 0;
-        std.log.debug("db version: {d}", .{current_version});
+        std.log.info("db version: {d}", .{current_version});
 
         {
-            // this is actually a pretty dably way to express transactions
-            // in zig. wrap it all in a block, with defer/errdefer for the
-            // end state of such. thx zig
-            try self.executeOnce("BEGIN TRANSACTION");
-            defer _ = self.executeOnce("COMMIT") catch |err| {
-                std.log.err("failed to commit inside migration: {s}", .{@errorName(err)});
-            };
-            errdefer self.executeOnce("ROLLBACK") catch |err| {
-                std.log.err("failed to rollback inside migration: {s}", .{@errorName(err)});
-            };
+            var savepoint = try self.db.?.savepoint("migrations");
+            errdefer savepoint.rollback();
+            defer savepoint.commit();
 
             inline for (MIGRATIONS) |migration_decl| {
                 const decl_version = migration_decl.@"0";
@@ -165,7 +160,12 @@ const Context = struct {
                 const decl_sql = migration_decl.@"2";
 
                 if (current_version < decl_version) {
-                    try self.db.?.runMulti(decl_sql, .{});
+                    std.log.info("running migration {d}", .{decl_version});
+                    var diags = sqlite.Diagnostics{};
+                    self.db.?.runMulti(decl_sql, .{ .diags = &diags }) catch |err| {
+                        std.log.err("unable to prepare statement, got error {s}. diagnostics: {s}", .{ err, diags });
+                        return err;
+                    };
 
                     try self.db.?.exec(
                         "INSERT INTO migration_logs (version, applied_at, description) values (?, ?, ?);",
@@ -190,7 +190,7 @@ const Context = struct {
     }
 };
 export fn sqliteLog(_: ?*anyopaque, level: c_int, message: ?[*:0]const u8) callconv(.C) void {
-    std.log.info("sqlite log {d} {s}", .{ level, message });
+    std.log.info("sqlite logged level={d} msg={s}", .{ level, message });
 }
 
 pub fn main() anyerror!void {
