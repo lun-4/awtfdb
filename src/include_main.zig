@@ -168,9 +168,21 @@ pub fn main() anyerror!void {
 
         if (dir == null) {
             var file = try ctx.addFile(path_to_include);
+            log.debug("adding file '{s}'", .{path_to_include});
             for (default_tag_cores.items) |tag_core| try file.addTag(tag_core);
         } else {
-            std.debug.todo("support folders");
+            var walker = try dir.walk(allocator);
+
+            while (dir_it.next()) |entry| {
+                switch (entry.kind) {
+                    .File, .SymLink => {
+                        log.debug("adding child path '{s}'", .{entry.path});
+                        var file = try ctx.addFileFromDir(entry.dir, entry.basename);
+                        for (default_tag_cores.items) |tag_core| try file.addTag(tag_core);
+                    },
+                    else => {},
+                }
+            }
         }
     }
 }
