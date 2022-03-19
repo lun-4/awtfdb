@@ -48,6 +48,7 @@ pub fn main() anyerror!void {
     _ = args_it.skip();
 
     const StringList = std.ArrayList([]const u8);
+    const HashList = std.ArrayList([64]u8);
 
     const Args = struct {
         help: bool = false,
@@ -101,7 +102,7 @@ pub fn main() anyerror!void {
         } else if (std.mem.eql(u8, arg, "--infer-more-tags")) {
             state = .InferMoreTags;
         } else {
-            given_args.include_paths.append(arg);
+            try given_args.include_paths.append(arg);
         }
     }
 
@@ -117,7 +118,7 @@ pub fn main() anyerror!void {
         std.debug.todo("aa");
     }
 
-    if (given_args.include_path.items.len) {
+    if (given_args.include_paths.items.len == 0) {
         std.log.err("at least one include path needs to be given", .{});
         return error.MissingArgument;
     }
@@ -125,7 +126,8 @@ pub fn main() anyerror!void {
     var ctx = Context{
         .args_it = undefined,
         .stdout = undefined,
-        .db = undefined,
+        .db = null,
+        .allocator = allocator,
     };
     defer ctx.deinit();
 
@@ -134,51 +136,71 @@ pub fn main() anyerror!void {
     std.log.info("args: {}", .{given_args});
 
     // map tag names to their relevant cores in db
-    var default_tag_cores = StringList.init(allocator);
+    var default_tag_cores = HashList.init(allocator);
     defer default_tag_cores.deinit();
     for (given_args.default_tags.items) |named_tag_text| {
-        const maybe_tag = try ctx.fetchNamedTag(named_tag_text);
+        const maybe_tag = try ctx.fetchNamedTag(named_tag_text, "en");
         if (maybe_tag) |tag| {
             log.debug(
                 "tag '{s}' is core {s}",
                 .{ named_tag_text, tag.core },
             );
-            default_tag_cores.append(tag.core);
+            try default_tag_cores.append(tag.core);
         } else {
             // TODO support ISO 639-2
-            var new_tag = try ctx.createNamedTag(tag, "en", null);
+            var new_tag = try ctx.createNamedTag(named_tag_text, "en", null);
             log.debug(
                 "(created!) tag '{s}' with core {s}",
                 .{ named_tag_text, new_tag.core },
             );
-            default_tag_cores.append(new_tag.core);
+            try default_tag_cores.append(new_tag.core);
         }
     }
 
     for (given_args.wanted_inferrers.items) |inferrer_text| {
+        _ = inferrer_text;
         std.debug.todo("add any inferrer logic");
     }
 
     for (given_args.include_paths.items) |path_to_include| {
-        const dir: ?std.fs.Dir = std.fs.cwd().openDir(path_to_include) catch |err| blk: {
+        var dir: ?std.fs.Dir = std.fs.cwd().openDir(path_to_include, .{ .iterate = true }) catch |err| blk: {
             if (err == error.NotDir) break :blk null;
             return err;
         };
-        defer if (dir != null) dir.close();
+        defer if (dir) |*unpacked_dir| unpacked_dir.close();
 
         if (dir == null) {
-            var file = try ctx.addFile(path_to_include);
-            log.debug("adding file '{s}'", .{path_to_include});
-            for (default_tag_cores.items) |tag_core| try file.addTag(tag_core);
-        } else {
-            var walker = try dir.walk(allocator);
+            var file = try ctx.createFileFromPath(path_to_include);
+            defer file.deinit();
+            log.debug("adding file '{s}'", .{file.local_path});
 
-            while (dir_it.next()) |entry| {
+            var savepoint = try ctx.db.?.savepoint("tags");
+            errdefer savepoint.rollback();
+            defer savepoint.commit();
+
+            for (default_tag_cores.items) |tag_core| {
+                try file.addTag(tag_core);
+            }
+        } else {
+            std.debug.todo("todo folders");
+            var walker = try dir.walk(allocator);
+            while (walker.next()) |entry| {
                 switch (entry.kind) {
                     .File, .SymLink => {
                         log.debug("adding child path '{s}'", .{entry.path});
-                        var file = try ctx.addFileFromDir(entry.dir, entry.basename);
-                        for (default_tag_cores.items) |tag_core| try file.addTag(tag_core);
+                        // TODO use dir which is more efficient
+                        // and also bypasses MAX_BYTES for path operations
+                        //var file = try ctx.createFileFromDir(entry.dir, entry.basename);
+                        var file = try ctx.createFileFromPath(entry.path);
+                        defer file.deinit();
+
+                        var savepoint = try ctx.db.?.savepoint("tags");
+                        errdefer savepoint.rollback();
+                        defer savepoint.commit();
+
+                        for (default_tag_cores.items) |tag_core| {
+                            try file.addTag(tag_core);
+                        }
                     },
                     else => {},
                 }

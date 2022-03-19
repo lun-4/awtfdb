@@ -42,8 +42,9 @@ const MIGRATIONS = .{
         \\ -- this is how we learn that a certain path means a certain hash without
         \\ -- having to recalculate the hash over and over.
         \\ create table files (
-        \\     file_hash text primary key not null,
-        \\     local_path text not null
+        \\     file_hash text not null,
+        \\     local_path text not null,
+        \\     primary key (file_hash, local_path)
         \\ );
         \\ 
         \\ -- this is the main tag<->file mapping. to find out which tags a file has,
@@ -81,6 +82,7 @@ const MIGRATION_LOG_TABLE =
 pub const Context = struct {
     args_it: *std.process.ArgIterator,
     stdout: std.fs.File,
+    allocator: std.mem.Allocator,
     /// Always call loadDatabase before using this attribute.
     db: ?sqlite.Db = null,
 
@@ -135,6 +137,161 @@ pub const Context = struct {
         if (self.db != null) {
             self.db.?.deinit();
         }
+    }
+
+    const Blake3Hash = [std.crypto.hash.Blake3.digest_length]u8;
+    const Blake3HashHex = [std.crypto.hash.Blake3.digest_length * 2]u8;
+
+    const Tag = struct {
+        core: Blake3HashHex,
+        kind: union(enum) {
+            Named: struct {
+                text: []const u8,
+                language: []const u8,
+            },
+        },
+    };
+
+    pub fn fetchNamedTag(self: *Self, text: []const u8, language: []const u8) !?Tag {
+        var maybe_core_hash = try self.db.?.one(
+            Blake3HashHex,
+            "select core_hash from tag_names where tag_text = ? and tag_language = ?",
+            .{},
+            .{ .tag_text = text, .tag_language = language },
+        );
+
+        if (maybe_core_hash) |core_hash| {
+            return Tag{
+                .core = core_hash,
+                .kind = .{ .Named = .{ .text = text, .language = language } },
+            };
+        } else {
+            return null;
+        }
+    }
+
+    /// Caller owns the returned memory.
+    fn randomCoreData(self: *Self, core_output: []u8) void {
+        _ = self;
+        const seed = @truncate(u64, @bitCast(u128, std.time.nanoTimestamp()));
+        var r = std.rand.DefaultPrng.init(seed);
+        for (core_output) |_, index| {
+            var random_byte = r.random().uintAtMost(u8, 255);
+            core_output[index] = random_byte;
+        }
+    }
+
+    pub fn createNamedTag(self: *Self, text: []const u8, language: []const u8, maybe_core: ?Blake3HashHex) !Tag {
+        var core_hash: Blake3HashHex = undefined;
+        if (maybe_core) |existing_core_hash| {
+            core_hash = existing_core_hash;
+        } else {
+            var core_data: [1024]u8 = undefined;
+            self.randomCoreData(&core_data);
+
+            var core_hash_bytes: Blake3Hash = undefined;
+            std.crypto.hash.Blake3.hash(&core_data, &core_hash_bytes, .{});
+
+            var core_hash_text_buffer: Blake3HashHex = undefined;
+            _ = try std.fmt.bufPrint(
+                &core_hash_text_buffer,
+                "{s}",
+                .{std.fmt.fmtSliceHexLower(&core_hash_bytes)},
+            );
+
+            const core_hash_text = core_hash_text_buffer[0..(std.crypto.hash.Blake3.digest_length * 2)];
+
+            try self.db.?.exec(
+                "insert into tag_cores (core_hash, core_data) values (?, ?)",
+                .{},
+                .{ .core_hash = core_hash_text, .core_data = core_data },
+            );
+            core_hash = core_hash_text.*;
+
+            std.log.debug("created tag core with hash {s}", .{core_hash_text});
+        }
+
+        try self.db.?.exec(
+            "insert into tag_names (core_hash, tag_text, tag_language) values (?, ?, ?)",
+            .{},
+            .{ .core_hash = core_hash, .tag_text = text, .tag_language = language },
+        );
+        std.log.debug("created name tag with value {s} language {s} core {s}", .{ text, language, core_hash });
+
+        return Tag{
+            .core = core_hash,
+            .kind = .{ .Named = .{ .text = text, .language = language } },
+        };
+    }
+
+    const File = struct {
+        ctx: *Context,
+        local_path: []const u8,
+        hash: Blake3HashHex,
+
+        const FileSelf = @This();
+
+        pub fn deinit(self: *FileSelf) void {
+            self.ctx.allocator.free(self.local_path);
+            //self.ctx.allocator.free(self.hash);
+        }
+
+        pub fn addTag(self: *FileSelf, core_hash: Blake3HashHex) !void {
+            try self.ctx.db.?.exec(
+                "insert into tag_files (core_hash, file_hash) values (?, ?)",
+                .{},
+                .{ .core_hash = core_hash, .file_hash = self.hash },
+            );
+            std.log.debug("link file {s} (hash {s}) with tag core hash {s}", .{ self.local_path, self.hash, core_hash });
+        }
+    };
+
+    /// Caller owns returned memory.
+    pub fn createFileFromPath(self: *Self, local_path: []const u8) !File {
+        const absolute_local_path = try std.fs.cwd().realpathAlloc(self.allocator, local_path);
+
+        var file_hash_text_buffer: [std.crypto.hash.Blake3.digest_length * 2]u8 = undefined;
+        var file_hash_text: Blake3HashHex = undefined;
+        {
+            var file = try std.fs.openFileAbsolute(absolute_local_path, .{ .mode = .read_only });
+            defer file.close();
+
+            var data_chunk_buffer: [1024]u8 = undefined;
+            var hasher = std.crypto.hash.Blake3.init(.{});
+            while (true) {
+                const bytes_read = try file.read(&data_chunk_buffer);
+                if (bytes_read == 0) break;
+                const data_chunk = data_chunk_buffer[0..bytes_read];
+                hasher.update(data_chunk);
+            }
+
+            var file_hash_bytes: [std.crypto.hash.Blake3.digest_length]u8 = undefined;
+            hasher.final(&file_hash_bytes);
+
+            _ = try std.fmt.bufPrint(
+                &file_hash_text_buffer,
+                "{s}",
+                .{std.fmt.fmtSliceHexLower(&file_hash_bytes)},
+            );
+
+            file_hash_text = file_hash_text_buffer[0..(std.crypto.hash.Blake3.digest_length * 2)].*;
+        }
+
+        try self.db.?.exec(
+            "insert into files (file_hash, local_path) values (?, ?) on conflict do nothing",
+            .{},
+            .{ .file_hash = file_hash_text, .local_path = absolute_local_path },
+        );
+        std.log.debug("created file entry hash={s} path={s}", .{
+            absolute_local_path,
+            file_hash_text,
+        });
+
+        return File{
+            .ctx = self,
+            .local_path = absolute_local_path,
+            .hash = file_hash_text,
+        };
     }
 
     pub fn createCommand(self: *Self) !void {
@@ -249,7 +406,8 @@ pub fn main() anyerror!void {
     var ctx = Context{
         .args_it = &args_it,
         .stdout = stdout,
-        .db = undefined,
+        .allocator = undefined,
+        .db = null,
     };
     defer ctx.deinit();
 
@@ -270,7 +428,8 @@ test "basic db initialization" {
     var ctx = Context{
         .args_it = undefined,
         .stdout = undefined,
-        .db = undefined,
+        .db = null,
+        .allocator = std.testing.allocator,
     };
     defer ctx.deinit();
 
