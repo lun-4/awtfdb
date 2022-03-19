@@ -43,7 +43,7 @@ const MIGRATIONS = .{
         \\ -- having to recalculate the hash over and over.
         \\ create table files (
         \\     file_hash text primary key not null,
-        \\     local_path text not null,
+        \\     local_path text not null
         \\ );
         \\ 
         \\ -- this is the main tag<->file mapping. to find out which tags a file has,
