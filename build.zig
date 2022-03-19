@@ -31,7 +31,15 @@ pub fn build(b: *std.build.Builder) void {
     const exe_tests = b.addTest("src/main.zig");
     exe_tests.setTarget(target);
     exe_tests.setBuildMode(mode);
+    deps.addAllTo(exe_tests);
 
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&exe_tests.step);
+
+    const watcher_exe = b.addExecutable("awtfdb-watcher", "src/rename_watcher.zig");
+    watcher_exe.setTarget(target);
+    watcher_exe.setBuildMode(mode);
+    watcher_exe.install();
+
+    deps.addAllTo(watcher_exe);
 }

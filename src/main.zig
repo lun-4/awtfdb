@@ -87,6 +87,8 @@ const Context = struct {
     const Self = @This();
 
     pub fn loadDatabase(self: *Self) !void {
+        if (self.db != null) return;
+
         // try to create the file always. this is done because
         // i give up. tried a lot of things to make sqlite create the db file
         // itself but it just hates me (SQLITE_CANTOPEN my beloathed).
@@ -261,4 +263,24 @@ pub fn main() anyerror!void {
 
 test "basic test" {
     try std.testing.expectEqual(10, 3 + 7);
+}
+
+test "basic db initialization" {
+    var ctx = Context{
+        .args_it = undefined,
+        .stdout = undefined,
+        .db = undefined,
+    };
+    defer ctx.deinit();
+
+    ctx.db = try sqlite.Db.init(.{
+        .mode = sqlite.Db.Mode{ .Memory = {} },
+        .open_flags = .{
+            .write = true,
+            .create = true,
+        },
+        .threading_mode = .MultiThread,
+    });
+
+    try ctx.createCommand();
 }
