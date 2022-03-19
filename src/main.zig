@@ -165,9 +165,9 @@ const Context = struct {
                 const decl_sql = migration_decl.@"2";
 
                 if (current_version < decl_version) {
-                    try self.executeOnce(decl_sql);
+                    try self.db.?.runMulti(decl_sql, .{});
 
-                    var migration_stmt = try self.db.?.exec(
+                    try self.db.?.exec(
                         "INSERT INTO migration_logs (version, applied_at, description) values (?, ?, ?);",
                         .{},
                         .{
