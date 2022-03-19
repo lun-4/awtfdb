@@ -94,7 +94,7 @@ const Context = struct {
         // TODO other people do exist! (use HOME env var)
         const path = "/home/luna/boorufs.db";
         {
-            var file = try std.fs.cwd().createFile(path, .{});
+            var file = try std.fs.cwd().createFile(path, .{ .truncate = false });
             defer file.close();
         }
 
