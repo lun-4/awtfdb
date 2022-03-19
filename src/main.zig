@@ -24,7 +24,7 @@ const HELPTEXT =
 
 const MIGRATIONS = .{
     .{
-        1,
+        1, "initial table",
         \\ -- uniquely identifies a tag in the ENTIRE UNIVERSE!!!
         \\ -- since this uses random data for core_data, and core_hash is blake3
         \\ --
@@ -144,8 +144,41 @@ const Context = struct {
         // migration log table is forever
         try self.executeOnce(MIGRATION_LOG_TABLE);
 
-        const last_ran_migration = try self.fetchValue(i32, "select max(version) from migration_logs");
-        std.log.debug("last migration: {d}", .{last_ran_migration});
+        const current_version: i32 = (try self.fetchValue(i32, "select max(version) from migration_logs")) orelse 0;
+        std.log.debug("db version: {d}", .{current_version});
+
+        {
+            // this is actually a pretty dably way to express transactions
+            // in zig. wrap it all in a block, with defer/errdefer for the
+            // end state of such. thx zig
+            try self.executeOnce("BEGIN TRANSACTION");
+            defer _ = self.executeOnce("COMMIT") catch |err| {
+                std.log.err("failed to commit inside migration: {s}", .{@errorName(err)});
+            };
+            errdefer self.executeOnce("ROLLBACK") catch |err| {
+                std.log.err("failed to rollback inside migration: {s}", .{@errorName(err)});
+            };
+
+            inline for (MIGRATIONS) |migration_decl| {
+                const decl_version = migration_decl.@"0";
+                const decl_name = migration_decl.@"1";
+                const decl_sql = migration_decl.@"2";
+
+                if (current_version < decl_version) {
+                    try self.executeOnce(decl_sql);
+
+                    var migration_stmt = try self.db.?.exec(
+                        "INSERT INTO migration_logs (version, applied_at, description) values (?, ?, ?);",
+                        .{},
+                        .{
+                            .version = decl_version,
+                            .applied_at = 0,
+                            .description = decl_name,
+                        },
+                    );
+                }
+            }
+        }
     }
 
     pub fn statsCommand(self: *Self) !void {
