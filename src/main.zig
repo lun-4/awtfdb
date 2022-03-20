@@ -295,6 +295,53 @@ pub const Context = struct {
         };
     }
 
+    pub fn createFileFromDir(self: *Self, dir: std.fs.Dir, dir_path: []const u8) !File {
+        const absolute_local_path = try dir.realpathAlloc(self.allocator, dir_path);
+
+        var file_hash_text_buffer: [std.crypto.hash.Blake3.digest_length * 2]u8 = undefined;
+        var file_hash_text: Blake3HashHex = undefined;
+        {
+            var file = try dir.openFile(dir_path, .{ .mode = .read_only });
+            defer file.close();
+
+            var data_chunk_buffer: [1024]u8 = undefined;
+            var hasher = std.crypto.hash.Blake3.init(.{});
+            while (true) {
+                const bytes_read = try file.read(&data_chunk_buffer);
+                if (bytes_read == 0) break;
+                const data_chunk = data_chunk_buffer[0..bytes_read];
+                hasher.update(data_chunk);
+            }
+
+            var file_hash_bytes: [std.crypto.hash.Blake3.digest_length]u8 = undefined;
+            hasher.final(&file_hash_bytes);
+
+            _ = try std.fmt.bufPrint(
+                &file_hash_text_buffer,
+                "{x}",
+                .{std.fmt.fmtSliceHexLower(&file_hash_bytes)},
+            );
+
+            file_hash_text = file_hash_text_buffer[0..(std.crypto.hash.Blake3.digest_length * 2)].*;
+        }
+
+        try self.db.?.exec(
+            "insert into files (file_hash, local_path) values (?, ?) on conflict do nothing",
+            .{},
+            .{ .file_hash = &file_hash_text, .local_path = absolute_local_path },
+        );
+        std.log.debug("created file entry hash={s} path={s}", .{
+            absolute_local_path,
+            file_hash_text,
+        });
+
+        return File{
+            .ctx = self,
+            .local_path = absolute_local_path,
+            .hash = file_hash_text,
+        };
+    }
+
     pub fn createCommand(self: *Self) !void {
         try self.loadDatabase();
         try self.migrateCommand();

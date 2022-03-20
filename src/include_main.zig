@@ -182,16 +182,16 @@ pub fn main() anyerror!void {
                 try file.addTag(tag_core);
             }
         } else {
-            std.debug.todo("todo folders");
-            var walker = try dir.walk(allocator);
-            while (walker.next()) |entry| {
+            var walker = try dir.?.walk(allocator);
+            defer walker.deinit();
+
+            while (try walker.next()) |entry| {
                 switch (entry.kind) {
                     .File, .SymLink => {
-                        log.debug("adding child path '{s}'", .{entry.path});
-                        // TODO use dir which is more efficient
-                        // and also bypasses MAX_BYTES for path operations
-                        //var file = try ctx.createFileFromDir(entry.dir, entry.basename);
-                        var file = try ctx.createFileFromPath(entry.path);
+                        // TODO use std.fs.path.join here
+                        log.debug("adding child path '{s}/{s}'", .{ path_to_include, entry.path });
+
+                        var file = try ctx.createFileFromDir(entry.dir, entry.basename);
                         defer file.deinit();
 
                         var savepoint = try ctx.db.?.savepoint("tags");
