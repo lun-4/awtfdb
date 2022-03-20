@@ -1,6 +1,8 @@
 const std = @import("std");
 const sqlite = @import("sqlite");
 
+pub const AWTFDB_BLAKE3_CONTEXT = "awtfdb Sun Mar 20 16:58:11 AM +00 2022 main hash key";
+
 const HELPTEXT =
     \\ awtfdb-manage: main program for awtfdb file management
     \\
@@ -237,7 +239,10 @@ pub const Context = struct {
             self.randomCoreData(&core_data);
 
             var core_hash_bytes: Blake3Hash = undefined;
-            std.crypto.hash.Blake3.hash(&core_data, &core_hash_bytes, .{});
+
+            var hasher = std.crypto.hash.Blake3.initKdf(AWTFDB_BLAKE3_CONTEXT, .{});
+            hasher.update(&core_data);
+            hasher.final(&core_hash_bytes);
 
             var core_hash_text_buffer: Blake3HashHex = undefined;
             _ = try std.fmt.bufPrint(
@@ -280,7 +285,6 @@ pub const Context = struct {
 
         pub fn deinit(self: *FileSelf) void {
             self.ctx.allocator.free(self.local_path);
-            //self.ctx.allocator.free(self.hash);
         }
 
         pub fn addTag(self: *FileSelf, core_hash: Blake3HashHex) !void {
@@ -291,8 +295,6 @@ pub const Context = struct {
             );
             std.log.debug("link file {s} (hash {s}) with tag core hash {s}", .{ self.local_path, self.hash, core_hash });
         }
-
-        //const HashList = std.ArrayList(Blake3HashHex);
 
         pub fn fetchTags(self: *FileSelf, allocator: std.mem.Allocator) ![]Blake3HashHex {
             var stmt = try self.ctx.db.?.prepare(
@@ -320,7 +322,7 @@ pub const Context = struct {
             defer file.close();
 
             var data_chunk_buffer: [1024]u8 = undefined;
-            var hasher = std.crypto.hash.Blake3.init(.{});
+            var hasher = std.crypto.hash.Blake3.initKdf(AWTFDB_BLAKE3_CONTEXT, .{});
             while (true) {
                 const bytes_read = try file.read(&data_chunk_buffer);
                 if (bytes_read == 0) break;
@@ -367,7 +369,7 @@ pub const Context = struct {
             defer file.close();
 
             var data_chunk_buffer: [1024]u8 = undefined;
-            var hasher = std.crypto.hash.Blake3.init(.{});
+            var hasher = std.crypto.hash.Blake3.initKdf(AWTFDB_BLAKE3_CONTEXT, .{});
             while (true) {
                 const bytes_read = try file.read(&data_chunk_buffer);
                 if (bytes_read == 0) break;
