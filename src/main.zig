@@ -468,18 +468,13 @@ pub fn main() anyerror!void {
     }
 }
 
-test "basic test" {
-    try std.testing.expectEqual(10, 3 + 7);
-}
-
-test "basic db initialization" {
+fn makeTestContext() !Context {
     var ctx = Context{
         .args_it = undefined,
         .stdout = undefined,
         .db = null,
         .allocator = std.testing.allocator,
     };
-    defer ctx.deinit();
 
     ctx.db = try sqlite.Db.init(.{
         .mode = sqlite.Db.Mode{ .Memory = {} },
@@ -491,4 +486,26 @@ test "basic db initialization" {
     });
 
     try ctx.createCommand();
+
+    return ctx;
+}
+
+test "basic db initialization" {
+    var ctx = try makeTestContext();
+    defer ctx.deinit();
+}
+
+test "tag creation" {
+    var ctx = try makeTestContext();
+    defer ctx.deinit();
+
+    var tag = try ctx.createNamedTag("test_tag", "en", null);
+    var fetched_tag = (try ctx.fetchNamedTag("test_tag", "en")).?;
+
+    try std.testing.expectEqualStrings("test_tag", tag.kind.Named.text);
+    try std.testing.expectEqualStrings("en", tag.kind.Named.language);
+    try std.testing.expectEqualStrings("test_tag", fetched_tag.kind.Named.text);
+    try std.testing.expectEqualStrings("en", fetched_tag.kind.Named.language);
+
+    try std.testing.expectEqualStrings(tag.core[0..], fetched_tag.core[0..]);
 }
