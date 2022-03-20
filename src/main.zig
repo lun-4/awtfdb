@@ -205,7 +205,7 @@ pub const Context = struct {
             try self.db.?.exec(
                 "insert into tag_cores (core_hash, core_data) values (?, ?)",
                 .{},
-                .{ .core_hash = core_hash_text, .core_data = core_data },
+                .{ .core_hash = core_hash_text, .core_data = &core_data },
             );
             core_hash = core_hash_text.*;
 
