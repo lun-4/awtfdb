@@ -245,6 +245,22 @@ pub const Context = struct {
             );
             std.log.debug("link file {s} (hash {s}) with tag core hash {s}", .{ self.local_path, self.hash, core_hash });
         }
+
+        //const HashList = std.ArrayList(Blake3HashHex);
+
+        pub fn fetchTags(self: *FileSelf, allocator: std.mem.Allocator) ![]Blake3HashHex {
+            var stmt = try self.ctx.db.?.prepare(
+                "select core_hash from tag_files where file_hash = ?",
+            );
+            defer stmt.deinit();
+
+            return try stmt.all(
+                [64]u8,
+                allocator,
+                .{},
+                .{ .file_hash = &self.hash },
+            );
+        }
     };
 
     /// Caller owns returned memory.
@@ -532,6 +548,35 @@ test "file creation" {
     var path_indexed_file = try ctx.createFileFromPath(full_tmp_file);
     defer path_indexed_file.deinit();
 
-    try std.testing.expect(std.mem.endsWith(u8, path_indexed_file.local_path, "/test_file"));
+    try std.testing.expectStringEndsWith(path_indexed_file.local_path, "/test_file");
     try std.testing.expectEqualStrings(indexed_file.hash[0..], path_indexed_file.hash[0..]);
+}
+
+test "file and tags" {
+    var ctx = try makeTestContext();
+    defer ctx.deinit();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var file = try tmp.dir.createFile("test_file", .{});
+    defer file.close();
+    _ = try file.write("awooga");
+
+    var indexed_file = try ctx.createFileFromDir(tmp.dir, "test_file");
+    defer indexed_file.deinit();
+
+    var tag = try ctx.createNamedTag("test_tag", "en", null);
+    try indexed_file.addTag(tag.core);
+
+    var tag_cores = try indexed_file.fetchTags(std.testing.allocator);
+    defer std.testing.allocator.free(tag_cores);
+
+    var saw_correct_tag_core = false;
+
+    for (tag_cores) |core| {
+        if (std.mem.eql(u8, &tag.core, &core))
+            saw_correct_tag_core = true;
+    }
+
+    try std.testing.expect(saw_correct_tag_core);
 }
