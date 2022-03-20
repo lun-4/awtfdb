@@ -194,16 +194,12 @@ pub fn main() anyerror!void {
         .{ .fd = wait_pipe[0], .events = std.os.POLL.IN, .revents = 0 },
     };
 
-    var oldnames_in_heap = try allocator.create(NameMap);
-    defer allocator.destroy(oldnames_in_heap);
-    oldnames_in_heap.* = NameMap.init(allocator);
-    var newnames_in_heap = try allocator.create(NameMap);
-    defer allocator.destroy(newnames_in_heap);
-    newnames_in_heap.* = NameMap.init(allocator);
+    var oldnames = NameMap.init(allocator);
+    var newnames = NameMap.init(allocator);
 
     var rename_ctx = RenameContext{
-        .oldnames = oldnames_in_heap,
-        .newnames = newnames_in_heap,
+        .oldnames = &oldnames,
+        .newnames = &newnames,
     };
     defer rename_ctx.deinit();
 
