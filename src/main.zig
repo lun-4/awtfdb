@@ -143,15 +143,61 @@ pub const Context = struct {
     const Blake3Hash = [std.crypto.hash.Blake3.digest_length]u8;
     const Blake3HashHex = [std.crypto.hash.Blake3.digest_length * 2]u8;
 
+    const NamedTagValue = struct {
+        text: []const u8,
+        language: []const u8,
+    };
+
     const Tag = struct {
         core: Blake3HashHex,
         kind: union(enum) {
-            Named: struct {
-                text: []const u8,
-                language: []const u8,
-            },
+            Named: NamedTagValue,
         },
     };
+
+    const OwnedTagList = struct {
+        allocator: std.mem.Allocator,
+        items: []Tag,
+        pub fn deinit(self: @This()) void {
+            for (self.items) |*tag| {
+                switch (tag.kind) {
+                    .Named => |named_tag| {
+                        self.allocator.free(named_tag.text);
+                        self.allocator.free(named_tag.language);
+                    },
+                }
+                self.allocator.destroy(tag);
+            }
+        }
+    };
+
+    const TagList = std.ArrayList(Tag);
+
+    /// Caller owns returned memory.
+    pub fn fetchTagsFromCore(self: *Self, allocator: std.mem.Allocator, core_hash: Blake3HashHex) !OwnedTagList {
+        var maybe_named_tag = try self.db.?.oneAlloc(
+            NamedTagValue,
+            allocator,
+            "select tag_text, tag_language from tag_names where core_hash = ?",
+            .{},
+            .{ .core_hash = &core_hash },
+        );
+
+        var list = TagList.init(allocator);
+        defer list.deinit();
+
+        if (maybe_named_tag) |named_tag| {
+            try list.append(Tag{
+                .core = core_hash,
+                .kind = .{ .Named = named_tag },
+            });
+        }
+
+        return OwnedTagList{
+            .allocator = allocator,
+            .items = list.toOwnedSlice(),
+        };
+    }
 
     pub fn fetchNamedTag(self: *Self, text: []const u8, language: []const u8) !?Tag {
         var maybe_core_hash = try self.db.?.one(
@@ -529,6 +575,12 @@ test "tag creation" {
     var fetched_same_core_tag = (try ctx.fetchNamedTag("another_test_tag", "en")).?;
     try std.testing.expectEqualStrings(tag.core[0..], same_core_tag.core[0..]);
     try std.testing.expectEqualStrings(fetched_tag.core[0..], fetched_same_core_tag.core[0..]);
+
+    var tags_from_core = try ctx.fetchTagsFromCore(std.testing.allocator, tag.core);
+    defer tags_from_core.deinit();
+
+    try std.testing.expectEqual(@as(usize, 1), tags_from_core.items.len);
+    try std.testing.expectEqualStrings(tag.core[0..], tags_from_core.items[0].core[0..]);
 }
 
 test "file creation" {
