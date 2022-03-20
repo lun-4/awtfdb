@@ -147,14 +147,16 @@ pub fn main() anyerror!void {
         for (sockets) |pollfd| {
             if (pollfd.revents == 0) continue;
 
-            if (pollfd.fd == proc.stdout.?.handle) {
+            if (proc.stdout != null and pollfd.fd == proc.stdout.?.handle) {
                 // have a max of 16kb per line given by bpftrace
                 const line = try proc.stdout.?.reader().readUntilDelimiterAlloc(allocator, '\n', 16 * 1024);
+                defer allocator.free(line);
                 log.warn("got stdout: {s}", .{line});
-            } else if (pollfd.fd == proc.stderr.?.handle) {
+            } else if (proc.stderr != null and pollfd.fd == proc.stderr.?.handle) {
                 // max(usize) yolo
-                const line = try proc.stdout.?.reader().readAllAlloc(allocator, std.math.maxInt(usize));
-                log.warn("got stderr: {s}", .{line});
+                const line = try proc.stderr.?.reader().readAllAlloc(allocator, std.math.maxInt(usize));
+                defer allocator.free(line);
+                log.warn("got stderr: {d} {s}", .{ line.len, line });
             } else if (pollfd.fd == pipe_receiver.handle) {
                 const exit_code = pipe_receiver.reader().readIntNative(u32);
                 log.err("bpftrace exited with {d}", .{exit_code});
