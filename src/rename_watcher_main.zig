@@ -43,6 +43,74 @@ fn waiterThread(pipe_fd: std.os.fd_t, proc: *std.ChildProcess) !void {
     try pipe_writer.writer().writeIntNative(u32, exit_code);
 }
 
+const PidTid = struct { pid: std.os.pid_t, tid: std.os.pid_t };
+const NameMap = std.AutoHashMap(PidTid, []const u8);
+
+const RenameContext = struct {
+    oldnames: *NameMap,
+    newnames: *NameMap,
+
+    const Self = @This();
+
+    pub fn deinit(self: *Self) void {
+        self.oldnames.deinit();
+        self.newnames.deinit();
+    }
+
+    pub fn processLine(self: *Self, line: []const u8) !void {
+        var line_it = std.mem.split(u8, line, ":");
+
+        const version_string = line_it.next().?;
+        const is_v1_message = std.mem.eql(u8, version_string, "v1");
+        if (!is_v1_message) return;
+
+        const message_type = line_it.next().?;
+
+        const pid_string = line_it.next().?;
+        const tid_string = line_it.next().?;
+        const pid = try std.fmt.parseInt(std.os.pid_t, pid_string, 10);
+        const tid = try std.fmt.parseInt(std.os.pid_t, tid_string, 10);
+        const pid_tid_key = PidTid{ .pid = pid, .tid = tid };
+
+        const is_oldname_message = std.mem.eql(u8, message_type, "oldname");
+        const is_newname_message = std.mem.eql(u8, message_type, "newname");
+
+        if (is_oldname_message or is_newname_message) {
+            // i do this to account for paths that have the : character
+            // in them. do not use line_it after this
+            const path = line[(version_string.len + 1 + message_type.len + 1 + pid_string.len + 1 + tid_string.len + 1)..line.len];
+            var map_to_put_in: *NameMap =
+                if (is_oldname_message) self.oldnames else self.newnames;
+
+            try map_to_put_in.put(
+                pid_tid_key,
+                try map_to_put_in.allocator.dupe(u8, path),
+            );
+            std.debug.assert(map_to_put_in.count() > 0);
+        } else if (std.mem.eql(u8, message_type, "ret")) {
+            // got a return from one of the rename syscalls,
+            // we must (try to) resolve it
+            const return_value_as_string = line_it.next().?;
+
+            const old_name = self.oldnames.get(pid_tid_key);
+            const new_name = self.newnames.get(pid_tid_key);
+
+            std.debug.assert(self.oldnames.count() > 0);
+            std.debug.assert(self.newnames.count() > 0);
+
+            if (std.mem.eql(u8, return_value_as_string, "0")) {
+                defer _ = self.oldnames.remove(pid_tid_key);
+                defer _ = self.newnames.remove(pid_tid_key);
+
+                defer self.oldnames.allocator.free(old_name.?);
+                defer self.newnames.allocator.free(new_name.?);
+
+                log.info("successful rename by {d},{d}: {s} -> {s}", .{ pid, tid, old_name.?, new_name.? });
+            }
+        }
+    }
+};
+
 pub fn main() anyerror!void {
     const rc = sqlite.c.sqlite3_config(sqlite.c.SQLITE_CONFIG_LOG, manage_main.sqliteLog, @as(?*anyopaque, null));
     if (rc != sqlite.c.SQLITE_OK) {
@@ -111,17 +179,6 @@ pub fn main() anyerror!void {
     proc.stderr_behavior = .Pipe;
     try proc.spawn();
 
-    const NameMap = std.AutoHashMap(struct { pid: std.os.pid_t, tid: std.os.pid_t }, []const u8);
-
-    var rename_ctx = struct {
-        oldnames: NameMap,
-        newnames: NameMap,
-    }{
-        .oldnames = NameMap.init(allocator),
-        .newnames = NameMap.init(allocator),
-    };
-    _ = rename_ctx;
-
     var wait_pipe = try std.os.pipe();
     defer std.os.close(wait_pipe[0]);
     defer std.os.close(wait_pipe[1]);
@@ -137,6 +194,19 @@ pub fn main() anyerror!void {
         .{ .fd = wait_pipe[0], .events = std.os.POLL.IN, .revents = 0 },
     };
 
+    var oldnames_in_heap = try allocator.create(NameMap);
+    defer allocator.destroy(oldnames_in_heap);
+    oldnames_in_heap.* = NameMap.init(allocator);
+    var newnames_in_heap = try allocator.create(NameMap);
+    defer allocator.destroy(newnames_in_heap);
+    newnames_in_heap.* = NameMap.init(allocator);
+
+    var rename_ctx = RenameContext{
+        .oldnames = oldnames_in_heap,
+        .newnames = newnames_in_heap,
+    };
+    defer rename_ctx.deinit();
+
     while (true) {
         const available = try std.os.poll(&sockets, -1);
         if (available == 0) {
@@ -149,9 +219,14 @@ pub fn main() anyerror!void {
 
             if (proc.stdout != null and pollfd.fd == proc.stdout.?.handle) {
                 // have a max of 16kb per line given by bpftrace
+                //
+                // TODO maybe we shouldn't use heap memory for this since its
+                // the hot path? (i should learn how to profile those things)
                 const line = try proc.stdout.?.reader().readUntilDelimiterAlloc(allocator, '\n', 16 * 1024);
                 defer allocator.free(line);
-                log.warn("got stdout: {s}", .{line});
+                //log.warn("got stdout: {s}", .{line});
+
+                try rename_ctx.processLine(line);
             } else if (proc.stderr != null and pollfd.fd == proc.stderr.?.handle) {
                 // max(usize) yolo
                 const line = try proc.stderr.?.reader().readAllAlloc(allocator, std.math.maxInt(usize));
