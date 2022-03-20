@@ -525,4 +525,13 @@ test "file creation" {
     defer indexed_file.deinit();
 
     try std.testing.expect(std.mem.endsWith(u8, indexed_file.local_path, "/test_file"));
+
+    // also try to create indexed file via absolute path
+    const full_tmp_file = try tmp.dir.realpathAlloc(std.testing.allocator, "test_file");
+    defer std.testing.allocator.free(full_tmp_file);
+    var path_indexed_file = try ctx.createFileFromPath(full_tmp_file);
+    defer path_indexed_file.deinit();
+
+    try std.testing.expect(std.mem.endsWith(u8, path_indexed_file.local_path, "/test_file"));
+    try std.testing.expectEqualStrings(indexed_file.hash[0..], path_indexed_file.hash[0..]);
 }
