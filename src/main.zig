@@ -509,3 +509,20 @@ test "tag creation" {
 
     try std.testing.expectEqualStrings(tag.core[0..], fetched_tag.core[0..]);
 }
+
+test "file creation" {
+    var ctx = try makeTestContext();
+    defer ctx.deinit();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    var file = try tmp.dir.createFile("test_file", .{});
+    defer file.close();
+    _ = try file.write("awooga");
+
+    var indexed_file = try ctx.createFileFromDir(tmp.dir, "test_file");
+    defer indexed_file.deinit();
+
+    try std.testing.expect(std.mem.endsWith(u8, indexed_file.local_path, "/test_file"));
+}
