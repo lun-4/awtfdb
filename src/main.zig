@@ -524,6 +524,11 @@ test "tag creation" {
     try std.testing.expectEqualStrings("en", fetched_tag.kind.Named.language);
 
     try std.testing.expectEqualStrings(tag.core[0..], fetched_tag.core[0..]);
+
+    var same_core_tag = try ctx.createNamedTag("another_test_tag", "en", tag.core);
+    var fetched_same_core_tag = (try ctx.fetchNamedTag("another_test_tag", "en")).?;
+    try std.testing.expectEqualStrings(tag.core[0..], same_core_tag.core[0..]);
+    try std.testing.expectEqualStrings(fetched_tag.core[0..], fetched_same_core_tag.core[0..]);
 }
 
 test "file creation" {
