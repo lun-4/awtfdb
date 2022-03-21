@@ -47,8 +47,10 @@ const PidTid = struct { pid: std.os.pid_t, tid: std.os.pid_t };
 const NameMap = std.AutoHashMap(PidTid, []const u8);
 
 const RenameContext = struct {
+    allocator: std.mem.Allocator,
     oldnames: *NameMap,
     newnames: *NameMap,
+    ctx: *Context,
 
     const Self = @This();
 
@@ -84,7 +86,7 @@ const RenameContext = struct {
 
             try map_to_put_in.put(
                 pid_tid_key,
-                try map_to_put_in.allocator.dupe(u8, path),
+                try self.allocator.dupe(u8, path),
             );
             std.debug.assert(map_to_put_in.count() > 0);
         } else if (std.mem.eql(u8, message_type, "ret")) {
@@ -102,12 +104,48 @@ const RenameContext = struct {
                 defer _ = self.oldnames.remove(pid_tid_key);
                 defer _ = self.newnames.remove(pid_tid_key);
 
-                defer self.oldnames.allocator.free(old_name.?);
-                defer self.newnames.allocator.free(new_name.?);
+                defer self.allocator.free(old_name.?);
+                defer self.allocator.free(new_name.?);
 
-                log.info("successful rename by {d},{d}: {s} -> {s}", .{ pid, tid, old_name.?, new_name.? });
+                try self.handleSucessfulRename(pid_tid_key, old_name.?, new_name.?);
             }
         }
+    }
+
+    fn handleSucessfulRename(self: *Self, pidtid_pair: PidTid, relative_old_name: []const u8, relative_new_name: []const u8) !void {
+        const pid = pidtid_pair.pid;
+
+        var cwd_proc_path = try std.fmt.allocPrint(self.allocator, "/proc/{d}/cwd", .{pid});
+        defer self.allocator.free(cwd_proc_path);
+
+        var cwd_path = std.fs.realpathAlloc(self.allocator, cwd_proc_path) catch |err| switch (err) {
+            error.AccessDenied, error.FileNotFound => {
+                log.debug("can't access cwd for {d}, ignoring rename", .{pid});
+                return;
+            },
+            else => return err,
+        };
+        defer self.allocator.free(cwd_path);
+
+        var oldpath = try std.fs.path.join(self.allocator, &[_][]const u8{
+            cwd_path,
+            relative_old_name,
+        });
+        defer self.allocator.free(oldpath);
+        var newpath = try std.fs.path.join(self.allocator, &[_][]const u8{
+            cwd_path,
+            relative_new_name,
+        });
+        defer self.allocator.free(newpath);
+
+        const is_old_in_home = std.mem.startsWith(u8, oldpath, self.ctx.home_path.?);
+        const is_new_in_home = std.mem.startsWith(u8, newpath, self.ctx.home_path.?);
+
+        if (!(is_new_in_home or is_old_in_home)) {
+            log.debug("{d}: neither {s} or {s} are in home", .{ pid, oldpath, newpath });
+            return;
+        }
+        log.info("{d}: relevant rename: {s} -> {s}", .{ pid, oldpath, newpath });
     }
 };
 
@@ -130,6 +168,7 @@ pub fn main() anyerror!void {
     const Args = struct {
         help: bool = false,
         version: bool = false,
+        home_path: ?[]const u8 = null,
     };
 
     var given_args = Args{};
@@ -139,8 +178,7 @@ pub fn main() anyerror!void {
         } else if (std.mem.eql(u8, arg, "-V")) {
             given_args.version = true;
         } else {
-            std.debug.print("unknown argument: {s}", .{arg});
-            return error.UnknownArgument;
+            given_args.home_path = arg;
         }
     }
 
@@ -152,7 +190,13 @@ pub fn main() anyerror!void {
         return;
     }
 
+    if (given_args.home_path == null) {
+        std.debug.print("home path is a required argument", .{});
+        return;
+    }
+
     var ctx = Context{
+        .home_path = given_args.home_path,
         .args_it = undefined,
         .stdout = undefined,
         .db = null,
@@ -195,8 +239,10 @@ pub fn main() anyerror!void {
     var newnames = NameMap.init(allocator);
 
     var rename_ctx = RenameContext{
+        .allocator = allocator,
         .oldnames = &oldnames,
         .newnames = &newnames,
+        .ctx = &ctx,
     };
     defer rename_ctx.deinit();
 
