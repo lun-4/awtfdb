@@ -207,25 +207,44 @@ pub fn main() anyerror!void {
             continue;
         }
 
-        // have a max of 16kb per line given by bpftrace
-        var stdout_buffer: [16 * 1024]u8 = undefined;
-        var stderr_buffer: [16 * 1024]u8 = undefined;
+        // have a max of 16kb per thing given by bpftrace
+        var line_buffer: [16 * 1024]u8 = undefined;
 
         for (sockets) |pollfd| {
             if (pollfd.revents == 0) continue;
 
             if (proc.stdout != null and pollfd.fd == proc.stdout.?.handle) {
-                const line = try proc.stdout.?.reader().readUntilDelimiter(&stdout_buffer, '\n');
-                //log.warn("got stdout: {s}", .{line});
+                const line = proc.stdout.?.reader().readUntilDelimiter(&line_buffer, '\n') catch |err| {
+                    log.err("error reading from stdout {s}", .{@errorName(err)});
+                    switch (err) {
+                        // process might have died while we're in the middle of a read
+                        error.NotOpenForReading, error.EndOfStream => {
+                            proc.stdout = null;
+                            continue;
+                        },
+                        else => return err,
+                    }
+                };
                 try rename_ctx.processLine(line);
             } else if (proc.stderr != null and pollfd.fd == proc.stderr.?.handle) {
-                const buffer_offset = try proc.stderr.?.reader().readAll(&stderr_buffer);
-                const line = stderr_buffer[0..buffer_offset];
+                const buffer_offset = proc.stderr.?.reader().readAll(&line_buffer) catch |err| {
+                    log.err("error reading from stderr {s}", .{@errorName(err)});
+                    switch (err) {
+                        // process might have died while we're in the middle of a read
+                        error.NotOpenForReading => {
+                            proc.stderr = null;
+                            continue;
+                        },
+                        else => return err,
+                    }
+                };
+
+                const line = line_buffer[0..buffer_offset];
                 log.warn("got stderr: {s}", .{line});
             } else if (pollfd.fd == pipe_receiver.handle) {
                 const exit_code = pipe_receiver.reader().readIntNative(u32);
                 log.err("bpftrace exited with {d}", .{exit_code});
-                return error.BpfTraceExit;
+                return;
             }
         }
     }
