@@ -210,25 +210,21 @@ pub fn main() anyerror!void {
             continue;
         }
 
+        // have a max of 16kb per line given by bpftrace
         var stdout_buffer: [16 * 1024]u8 = undefined;
+        var stderr_buffer: [16 * 1024]u8 = undefined;
 
         for (sockets) |pollfd| {
             if (pollfd.revents == 0) continue;
 
             if (proc.stdout != null and pollfd.fd == proc.stdout.?.handle) {
-                // have a max of 16kb per line given by bpftrace
-                //
-                // TODO maybe we shouldn't use heap memory for this since its
-                // the hot path? (i should learn how to profile those things)
                 const line = try proc.stdout.?.reader().readUntilDelimiter(&stdout_buffer, '\n');
                 //log.warn("got stdout: {s}", .{line});
-
                 try rename_ctx.processLine(line);
             } else if (proc.stderr != null and pollfd.fd == proc.stderr.?.handle) {
-                // max(usize) yolo
-                const line = try proc.stderr.?.reader().readAllAlloc(allocator, std.math.maxInt(usize));
-                defer allocator.free(line);
-                log.warn("got stderr: {d} {s}", .{ line.len, line });
+                const buffer_offset = try proc.stderr.?.reader().readAll(&stderr_buffer);
+                const line = stderr_buffer[0..buffer_offset];
+                log.warn("got stderr: {s}", .{line});
             } else if (pollfd.fd == pipe_receiver.handle) {
                 const exit_code = pipe_receiver.reader().readIntNative(u32);
                 log.err("bpftrace exited with {d}", .{exit_code});
