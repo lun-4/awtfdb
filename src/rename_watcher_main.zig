@@ -171,9 +171,6 @@ pub fn main() anyerror!void {
         allocator,
     );
     defer proc.deinit();
-    errdefer _ = proc.kill() catch |err| {
-        log.err("attempted to kill bpftrace process, got {s}", .{@errorName(err)});
-    };
 
     proc.stdout_behavior = .Pipe;
     proc.stderr_behavior = .Pipe;
