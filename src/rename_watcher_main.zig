@@ -50,11 +50,13 @@ const RenameContext = struct {
     allocator: std.mem.Allocator,
     oldnames: *NameMap,
     newnames: *NameMap,
+    cwds: *NameMap,
     ctx: *Context,
 
     const Self = @This();
 
     pub fn deinit(self: *Self) void {
+        self.cwds.deinit();
         self.oldnames.deinit();
         self.newnames.deinit();
     }
@@ -77,7 +79,33 @@ const RenameContext = struct {
         const is_oldname_message = std.mem.eql(u8, message_type, "oldname");
         const is_newname_message = std.mem.eql(u8, message_type, "newname");
 
-        if (is_oldname_message or is_newname_message) {
+        if (std.mem.eql(u8, message_type, "execve")) {
+            var cwd_proc_path = try std.fmt.allocPrint(self.allocator, "/proc/{d}/cwd", .{pid});
+            defer self.allocator.free(cwd_proc_path);
+
+            var cwd_path = std.fs.realpathAlloc(self.allocator, cwd_proc_path) catch |err| switch (err) {
+                error.AccessDenied, error.FileNotFound => {
+                    log.debug("can't access cwd for {d}, ignoring rename", .{pid});
+                    return;
+                },
+                else => return err,
+            };
+
+            try self.cwds.put(pid_tid_key, cwd_path);
+        } else if (std.mem.eql(u8, message_type, "exit_execve")) {
+            const return_value_as_string = line_it.next().?;
+
+            // if unsuccessful execve, remove cwd
+            if (!std.mem.eql(u8, return_value_as_string, "0")) {
+                const cwd_path = self.cwds.get(pid_tid_key);
+                defer if (cwd_path) |unpacked| self.allocator.free(unpacked);
+                _ = self.cwds.remove(pid_tid_key);
+            }
+        } else if (std.mem.eql(u8, message_type, "exit_process")) {
+            const cwd_path = self.cwds.get(pid_tid_key);
+            defer if (cwd_path) |unpacked| self.allocator.free(unpacked);
+            _ = self.cwds.remove(pid_tid_key);
+        } else if (is_oldname_message or is_newname_message) {
             // i do this to account for paths that have the : character
             // in them. do not use line_it after this
             const path = line[(version_string.len + 1 + message_type.len + 1 + pid_string.len + 1 + tid_string.len + 1)..line.len];
@@ -89,13 +117,14 @@ const RenameContext = struct {
                 try self.allocator.dupe(u8, path),
             );
             std.debug.assert(map_to_put_in.count() > 0);
-        } else if (std.mem.eql(u8, message_type, "ret")) {
+        } else if (std.mem.eql(u8, message_type, "exit_rename")) {
             // got a return from one of the rename syscalls,
             // we must (try to) resolve it
             const return_value_as_string = line_it.next().?;
 
             const old_name = self.oldnames.get(pid_tid_key);
             const new_name = self.newnames.get(pid_tid_key);
+            const maybe_cwd = self.cwds.get(pid_tid_key);
 
             std.debug.assert(self.oldnames.count() > 0);
             std.debug.assert(self.newnames.count() > 0);
@@ -103,37 +132,56 @@ const RenameContext = struct {
             if (std.mem.eql(u8, return_value_as_string, "0")) {
                 defer _ = self.oldnames.remove(pid_tid_key);
                 defer _ = self.newnames.remove(pid_tid_key);
+                defer _ = self.cwds.remove(pid_tid_key);
 
                 defer self.allocator.free(old_name.?);
                 defer self.allocator.free(new_name.?);
+                defer if (maybe_cwd) |cwd| self.allocator.free(cwd);
 
-                try self.handleSucessfulRename(pid_tid_key, old_name.?, new_name.?);
+                try self.handleSucessfulRename(pid_tid_key, old_name.?, new_name.?, maybe_cwd);
             }
         }
     }
 
-    fn handleSucessfulRename(self: *Self, pidtid_pair: PidTid, relative_old_name: []const u8, relative_new_name: []const u8) !void {
+    fn handleSucessfulRename(
+        self: *Self,
+        pidtid_pair: PidTid,
+        relative_old_name: []const u8,
+        relative_new_name: []const u8,
+        maybe_cwd: ?[]const u8,
+    ) !void {
         const pid = pidtid_pair.pid;
 
-        var cwd_proc_path = try std.fmt.allocPrint(self.allocator, "/proc/{d}/cwd", .{pid});
-        defer self.allocator.free(cwd_proc_path);
+        var cwd_path: ?[]const u8 = null;
+        if (maybe_cwd) |unpacked| {
+            cwd_path = unpacked;
+        } else {
+            // if we don't have it already, try to fetch it from procfs
+            // as this might be a process we didn't know about before
 
-        var cwd_path = std.fs.realpathAlloc(self.allocator, cwd_proc_path) catch |err| switch (err) {
-            error.AccessDenied, error.FileNotFound => {
-                log.debug("can't access cwd for {d}, ignoring rename", .{pid});
-                return;
-            },
-            else => return err,
-        };
-        defer self.allocator.free(cwd_path);
+            var cwd_proc_path = try std.fmt.allocPrint(self.allocator, "/proc/{d}/cwd", .{pid});
+            defer self.allocator.free(cwd_proc_path);
+
+            cwd_path = std.fs.realpathAlloc(self.allocator, cwd_proc_path) catch |err| switch (err) {
+                error.AccessDenied, error.FileNotFound => {
+                    log.debug("can't access cwd for {d}, ignoring rename", .{pid});
+                    return;
+                },
+                else => return err,
+            };
+        }
+
+        // if we didn't receive maybe_cwd, that means we had to allocate
+        // cwd_path ourselves by reading from /proc. so we own the lifetime here
+        defer if (maybe_cwd == null) self.allocator.free(cwd_path.?);
 
         var oldpath = try std.fs.path.join(self.allocator, &[_][]const u8{
-            cwd_path,
+            cwd_path.?,
             relative_old_name,
         });
         defer self.allocator.free(oldpath);
         var newpath = try std.fs.path.join(self.allocator, &[_][]const u8{
-            cwd_path,
+            cwd_path.?,
             relative_new_name,
         });
         defer self.allocator.free(newpath);
@@ -237,11 +285,13 @@ pub fn main() anyerror!void {
 
     var oldnames = NameMap.init(allocator);
     var newnames = NameMap.init(allocator);
+    var cwds = NameMap.init(allocator);
 
     var rename_ctx = RenameContext{
         .allocator = allocator,
         .oldnames = &oldnames,
         .newnames = &newnames,
+        .cwds = &cwds,
         .ctx = &ctx,
     };
     defer rename_ctx.deinit();
