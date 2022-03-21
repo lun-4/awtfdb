@@ -210,6 +210,8 @@ pub fn main() anyerror!void {
             continue;
         }
 
+        var stdout_buffer: [16 * 1024]u8 = undefined;
+
         for (sockets) |pollfd| {
             if (pollfd.revents == 0) continue;
 
@@ -218,8 +220,7 @@ pub fn main() anyerror!void {
                 //
                 // TODO maybe we shouldn't use heap memory for this since its
                 // the hot path? (i should learn how to profile those things)
-                const line = try proc.stdout.?.reader().readUntilDelimiterAlloc(allocator, '\n', 16 * 1024);
-                defer allocator.free(line);
+                const line = try proc.stdout.?.reader().readUntilDelimiter(&stdout_buffer, '\n');
                 //log.warn("got stdout: {s}", .{line});
 
                 try rename_ctx.processLine(line);
