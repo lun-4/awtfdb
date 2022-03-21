@@ -83,6 +83,7 @@ const MIGRATION_LOG_TABLE =
 ;
 
 pub const Context = struct {
+    home_path: ?[]const u8 = null,
     args_it: *std.process.ArgIterator,
     stdout: std.fs.File,
     allocator: std.mem.Allocator,
@@ -99,15 +100,22 @@ pub const Context = struct {
         // itself but it just hates me (SQLITE_CANTOPEN my beloathed).
 
         // TODO other people do exist! (use HOME env var)
-        const path = "/home/luna/boorufs.db";
+        const db_path = try std.fs.path.join(
+            self.allocator,
+            &[_][]const u8{ self.home_path orelse "/home/luna", "boorufs.db" },
+        );
+        defer self.allocator.free(db_path);
+
         {
-            var file = try std.fs.cwd().createFile(path, .{ .truncate = false });
+            var file = try std.fs.cwd().createFile(db_path, .{ .truncate = false });
             defer file.close();
         }
+        const db_path_cstr = try std.cstr.addNullByte(self.allocator, db_path);
+        defer self.allocator.free(db_path_cstr);
 
         var diags: sqlite.Diagnostics = undefined;
         self.db = try sqlite.Db.init(.{
-            .mode = sqlite.Db.Mode{ .File = path },
+            .mode = sqlite.Db.Mode{ .File = db_path_cstr },
             .open_flags = .{
                 .write = true,
                 .create = true,
@@ -516,6 +524,7 @@ pub fn main() anyerror!void {
     }
 
     var ctx = Context{
+        .home_path = null,
         .args_it = &args_it,
         .stdout = stdout,
         .allocator = undefined,

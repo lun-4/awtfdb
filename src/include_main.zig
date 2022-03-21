@@ -124,6 +124,7 @@ pub fn main() anyerror!void {
     }
 
     var ctx = Context{
+        .home_path = null,
         .args_it = undefined,
         .stdout = undefined,
         .db = null,
