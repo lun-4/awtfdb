@@ -14,8 +14,43 @@ tracepoint:syscalls:sys_enter_exit_group {
 tracepoint:syscalls:sys_enter_renameat2,
 tracepoint:syscalls:sys_enter_renameat,
 tracepoint:syscalls:sys_enter_rename {
-    printf("v1:oldname:%d:%d:%s\n", pid, tid, str(args->oldname));
-    printf("v1:newname:%d:%d:%s\n", pid, tid, str(args->newname));
+    // NAME_MAX is 255, but PATH_MAX is 4096.
+    // bpftrace only gives us, at time of writing (2022-03-22), a maximum of
+    // 200 bytes per str() call (thanks to BPFTRACE_STRLEN env variable)
+    // (see https://github.com/iovisor/bpftrace/issues/305)
+    // (and a PR that could fix it https://github.com/iovisor/bpftrace/pull/1360)
+
+    // since this issue isn't fixed yet, we make hacks!
+    // it takes 4096 / 200 = 20.48 calls to str() to get a full file path
+    // so, we unroll() 21 times and send up-to-4KB chunks of data to whoever
+    // wants it! i am clever and this won't fall apart in an spetacular way.
+    // (very clear drawback: we always need to read 4KB out of oldname's
+    //  address, which means i will always be sending PARTS OF PROGRAM MEMORY.
+    //  I KNOW THIS IS A BAD IDEA.)
+
+    // (we also can't really implement a strlen() in bpftrace as indexing
+    // a string is not.. possible? if i could do that at least i could
+    // prevent us from having to iterate 21 times, but oh well...)
+    $i = 0;
+    while ($i <= 21) {
+        // note, if BPFTRACE_STRLEN is set to N, then the constant being used
+        // in this call must be N-1, to prevent us from off-by-one'ing data
+        // away.
+        printf(
+            "v1:oldname:%d:%d:%s\n",
+            pid, tid, str(args->oldname + ($i * 199))
+        );
+        $i += 1;
+    }
+
+    $i = 0;
+    while ($i <= 21) {
+        printf(
+            "v1:newname:%d:%d:%s\n",
+            pid, tid, str(args->newname + ($i * 199))
+        );
+        $i += 1;
+    }
 }
 
 tracepoint:syscalls:sys_exit_renameat2,
