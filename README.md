@@ -77,14 +77,45 @@ create db, run some statistics, show migration warnings, etc
 
 the watcher stays as is, just a watcher for file renames
 
-## how
+#### job system
+
+the purpose of a job system in awtfdb
+
+- schedule periodic boorufs jobs (every week there should be a checkup of
+  all paths and their hashes, for example. that job would be a "janitor")
+- get job status and _historical_ reports
+  - understand failure rate of jobs, if a job fails too much, alerts should
+    be dispatched to the user via `notify-send`
+  - if the example "janitor" job found a discrepancy between file and hash,
+    should it email, fix it automatically, notify-send, or leave a track
+    record? that should be configurable by the user.
+
+the implementation proposal for this is as follows:
+
+- job watcher daemon
+- `job_configs` table has:
+  - id of job
+  - configuration of job (json string with well-defined schema in tool?)
+  - enabled flag (removing jobs is always a soft delete)
+  - executable path of tool
+    - the watcher does not run jobs itself, just delegates and supervises
+      execution of other executables that actually run what theyre supposed to
+- `job_runs` table with historical evidence
+
+technically possible to leave some functionality of the daemon to the
+system's initd (systemd, runit+snooze, cron), but i think i might tire myself
+out from having to autogenerate service units and connect it all together
+and HOPE for a LIGHT FROM GOD that it's going to work as intended. god fuck
+linux
+
+## how build
 
 WIP.
 
-## install
+## install thing
 
 WIP.
 
-## roadmap
+## roadmap for the thing
 
 WIP.
