@@ -262,6 +262,12 @@ pub fn main() anyerror!void {
         &[_][]const u8{ "bpftrace", "-e", bpftrace_program },
         allocator,
     );
+
+    var envmap = std.BufMap.init(allocator);
+    defer envmap.deinit();
+    try envmap.put("BPFTRACE_STRLEN", "200");
+    proc.env_map = &envmap;
+
     defer proc.deinit();
 
     proc.stdout_behavior = .Pipe;
