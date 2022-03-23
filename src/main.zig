@@ -150,8 +150,8 @@ pub const Context = struct {
         }
     }
 
-    const Blake3Hash = [std.crypto.hash.Blake3.digest_length]u8;
-    const Blake3HashHex = [std.crypto.hash.Blake3.digest_length * 2]u8;
+    pub const Blake3Hash = [std.crypto.hash.Blake3.digest_length]u8;
+    pub const Blake3HashHex = [std.crypto.hash.Blake3.digest_length * 2]u8;
 
     const NamedTagValue = struct {
         text: []const u8,
