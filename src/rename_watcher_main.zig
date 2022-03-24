@@ -42,7 +42,6 @@ const RenameContext = struct {
         self.cwds.deinit();
         self.oldnames.deinit();
         self.newnames.deinit();
-        self.ctx.deinit();
     }
 
     pub fn processLine(self: *Self, line: []const u8) !void {
