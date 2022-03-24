@@ -22,27 +22,6 @@ const HELPTEXT =
     \\ 	-V				prints version and exits
 ;
 
-fn waiterThread(pipe_fd: std.os.fd_t, proc: *std.ChildProcess) !void {
-    var pipe_writer = std.fs.File{ .handle = pipe_fd };
-
-    const term_result = proc.wait() catch |err| blk: {
-        log.err(
-            "failed to wait for process ({s}), attempting forceful exit of daemon.",
-            .{@errorName(err)},
-        );
-        break :blk std.ChildProcess.Term{ .Exited = 0 };
-    };
-
-    const exit_code: u32 = switch (term_result) {
-        .Exited => |term_code| @as(u32, term_code),
-        .Signal, .Stopped, .Unknown => |term_code| blk: {
-            break :blk term_code;
-        },
-    };
-
-    try pipe_writer.writer().writeIntNative(u32, exit_code);
-}
-
 const PidTid = struct { pid: std.os.pid_t, tid: std.os.pid_t };
 const StringAsList = std.ArrayList(u8);
 const ChunkedName = struct { state: enum { NeedMore, Complete }, data: StringAsList };
@@ -55,6 +34,7 @@ const RenameContext = struct {
     newnames: *ChunkedNameMap,
     cwds: *NameMap,
     ctx: *Context,
+    keep_running: bool = true,
 
     const Self = @This();
 
@@ -62,6 +42,7 @@ const RenameContext = struct {
         self.cwds.deinit();
         self.oldnames.deinit();
         self.newnames.deinit();
+        self.ctx.deinit();
     }
 
     pub fn processLine(self: *Self, line: []const u8) !void {
@@ -275,7 +256,48 @@ const RenameContext = struct {
             );
         }
     }
+
+    pub fn handleNewSignals(self: *Self) !void {
+        while (true) {
+            const signal_data = maybe_self_pipe.?.reader.reader().readStruct(SignalData) catch |err| switch (err) {
+                error.EndOfStream => break,
+                else => return err,
+            };
+            log.info("exiting! with signal {d}", .{signal_data.signal});
+            self.keep_running = false;
+            return;
+        }
+    }
 };
+
+const Pipe = struct {
+    reader: std.fs.File,
+    writer: std.fs.File,
+};
+
+var maybe_self_pipe: ?Pipe = null;
+
+const SignalData = extern struct {
+    signal: c_int,
+    info: std.os.siginfo_t,
+    uctx: ?*const anyopaque,
+};
+const SignalList = std.ArrayList(SignalData);
+
+fn signalHandler(
+    signal: c_int,
+    info: *const std.os.siginfo_t,
+    uctx: ?*const anyopaque,
+) callconv(.C) void {
+    if (maybe_self_pipe) |self_pipe| {
+        const signal_data = SignalData{
+            .signal = signal,
+            .info = info.*,
+            .uctx = uctx,
+        };
+        self_pipe.writer.writer().writeStruct(signal_data) catch return;
+    }
+}
 
 pub fn main() anyerror!void {
     const rc = sqlite.c.sqlite3_config(sqlite.c.SQLITE_CONFIG_LOG, manage_main.sqliteLog, @as(?*anyopaque, null));
@@ -285,6 +307,28 @@ pub fn main() anyerror!void {
         });
         return error.ConfigFail;
     }
+
+    const self_pipe_fds = try std.os.pipe();
+    maybe_self_pipe = .{
+        .reader = .{ .handle = self_pipe_fds[0] },
+        .writer = .{ .handle = self_pipe_fds[1] },
+    };
+    defer {
+        maybe_self_pipe.?.reader.close();
+        maybe_self_pipe.?.writer.close();
+    }
+
+    var mask = std.os.empty_sigset;
+    // only linux and darwin implement sigaddset() on zig stdlib. huh.
+    std.os.linux.sigaddset(&mask, std.os.SIG.TERM);
+    std.os.linux.sigaddset(&mask, std.os.SIG.INT);
+    var sa = std.os.Sigaction{
+        .handler = .{ .sigaction = signalHandler },
+        .mask = mask,
+        .flags = 0,
+    };
+    try std.os.sigaction(std.os.SIG.TERM, &sa, null);
+    try std.os.sigaction(std.os.SIG.INT, &sa, null);
 
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
@@ -358,15 +402,24 @@ pub fn main() anyerror!void {
     defer std.os.close(wait_pipe[0]);
     defer std.os.close(wait_pipe[1]);
 
-    var pipe_receiver = std.fs.File{ .handle = wait_pipe[0] };
+    var pidfd: ?std.os.fd_t = null;
 
-    var waiter_thread = try std.Thread.spawn(.{}, waiterThread, .{ wait_pipe[1], proc });
-    waiter_thread.detach();
+    const pidfd_rc = std.os.linux.pidfd_open(proc.pid, 0);
+    switch (std.os.errno(pidfd_rc)) {
+        .SUCCESS => pidfd = @intCast(std.os.fd_t, pidfd_rc),
+        .INVAL => unreachable,
+        .NFILE, .MFILE => return error.TooManyFileDescriptors,
+        .NODEV => return error.NoDevice,
+        .NOMEM => return error.SystemResources,
+        .SRCH => unreachable, // race condition
+        else => |err| return std.os.unexpectedErrno(err),
+    }
 
     var sockets = [_]std.os.pollfd{
         .{ .fd = proc.stdout.?.handle, .events = std.os.POLL.IN, .revents = 0 },
         .{ .fd = proc.stderr.?.handle, .events = std.os.POLL.IN, .revents = 0 },
-        .{ .fd = wait_pipe[0], .events = std.os.POLL.IN, .revents = 0 },
+        .{ .fd = pidfd orelse return error.InvalidPidFd, .events = std.os.POLL.IN, .revents = 0 },
+        .{ .fd = maybe_self_pipe.?.reader.handle, .events = std.os.POLL.IN, .revents = 0 },
     };
 
     var oldnames = ChunkedNameMap.init(allocator);
@@ -382,7 +435,7 @@ pub fn main() anyerror!void {
     };
     defer rename_ctx.deinit();
 
-    while (true) {
+    while (rename_ctx.keep_running) {
         const available = try std.os.poll(&sockets, -1);
         if (available == 0) {
             log.info("timed out, retrying", .{});
@@ -395,7 +448,10 @@ pub fn main() anyerror!void {
         for (sockets) |pollfd| {
             if (pollfd.revents == 0) continue;
 
-            if (proc.stdout != null and pollfd.fd == proc.stdout.?.handle) {
+            if (pollfd.fd == maybe_self_pipe.?.reader.handle) {
+                try rename_ctx.handleNewSignals();
+                _ = try proc.kill();
+            } else if (proc.stdout != null and pollfd.fd == proc.stdout.?.handle) {
                 const line = proc.stdout.?.reader().readUntilDelimiter(&line_buffer, '\n') catch |err| {
                     log.err("error reading from stdout {s}", .{@errorName(err)});
                     switch (err) {
@@ -423,11 +479,23 @@ pub fn main() anyerror!void {
 
                 const line = line_buffer[0..buffer_offset];
                 log.warn("got stderr: {s}", .{line});
-            } else if (pollfd.fd == pipe_receiver.handle) {
-                const exit_code = pipe_receiver.reader().readIntNative(u32);
-                log.err("bpftrace exited with {d}", .{exit_code});
+            } else if (pollfd.fd == pidfd) {
+                var siginfo: std.os.siginfo_t = undefined;
+                const waitid_rc = std.os.linux.waitid(.PIDFD, pidfd.?, &siginfo, 0);
+                switch (std.os.errno(waitid_rc)) {
+                    .SUCCESS => {},
+                    .CHILD => unreachable, // unknown process. race condition
+                    .INVAL => unreachable, // programming error
+                    else => |err| {
+                        log.err("wtf {}", .{err});
+                        return std.os.unexpectedErrno(err);
+                    },
+                }
+                log.err("bpftrace exited with {d}", .{siginfo.signo});
                 return;
             }
         }
     }
+
+    log.info("exiting main loop", .{});
 }
