@@ -234,7 +234,46 @@ const RenameContext = struct {
             log.debug("{d}: neither {s} or {s} are in home", .{ pid, oldpath, newpath });
             return;
         }
+
         log.info("{d}: relevant rename: {s} -> {s}", .{ pid, oldpath, newpath });
+
+        var is_directory_move = false;
+        {
+            var dir: ?std.fs.Dir = std.fs.cwd().openDir(newpath, .{}) catch |err| switch (err) {
+                error.FileNotFound, error.NotDir => null,
+                else => return err,
+            };
+            defer if (dir) |*unpacked_dir| unpacked_dir.close();
+            is_directory_move = dir != null;
+        }
+
+        if (is_directory_move) std.debug.todo("todo folders");
+
+        // TODO use ? || '%' for the where clause in the case we're trying
+        // to access the directory but it was already deleted
+        var stmt = try self.ctx.db.?.prepare("select file_hash, local_path from files where local_path = ?");
+        defer stmt.deinit();
+
+        const maybe_file = try stmt.oneAlloc(
+            struct {
+                file_hash: Context.Blake3HashHex,
+                local_path: []const u8,
+            },
+            self.allocator,
+            .{},
+            .{ .local_path = oldpath },
+        );
+        defer {
+            if (maybe_file) |file| {
+                self.allocator.free(file.local_path);
+            }
+        }
+        if (maybe_file) |file| {
+            log.info(
+                "File {s} was renamed from {s} to {s}",
+                .{ &file.file_hash, oldpath, newpath },
+            );
+        }
     }
 };
 
