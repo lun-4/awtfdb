@@ -44,12 +44,15 @@ fn waiterThread(pipe_fd: std.os.fd_t, proc: *std.ChildProcess) !void {
 }
 
 const PidTid = struct { pid: std.os.pid_t, tid: std.os.pid_t };
+const StringAsList = std.ArrayList(u8);
+const ChunkedName = struct { state: enum { NeedMore, Complete }, data: StringAsList };
+const ChunkedNameMap = std.AutoHashMap(PidTid, ChunkedName);
 const NameMap = std.AutoHashMap(PidTid, []const u8);
 
 const RenameContext = struct {
     allocator: std.mem.Allocator,
-    oldnames: *NameMap,
-    newnames: *NameMap,
+    oldnames: *ChunkedNameMap,
+    newnames: *ChunkedNameMap,
     cwds: *NameMap,
     ctx: *Context,
 
@@ -107,15 +110,41 @@ const RenameContext = struct {
             _ = self.cwds.remove(pid_tid_key);
         } else if (is_oldname_message or is_newname_message) {
             // i do this to account for paths that have the : character
-            // in them. do not use line_it after this
-            const path = line[(version_string.len + 1 + message_type.len + 1 + pid_string.len + 1 + tid_string.len + 1)..line.len];
-            var map_to_put_in: *NameMap =
+            // in them. do not use line_it after this, or, use it very cautiously
+            const chunk_data = line[(version_string.len + 1 + message_type.len + 1 + pid_string.len + 1 + tid_string.len + 1)..line.len];
+            var map_to_put_in: *ChunkedNameMap =
                 if (is_oldname_message) self.oldnames else self.newnames;
 
-            try map_to_put_in.put(
-                pid_tid_key,
-                try self.allocator.dupe(u8, path),
-            );
+            var maybe_chunk = map_to_put_in.getPtr(pid_tid_key);
+
+            if (maybe_chunk) |chunk| {
+                switch (chunk.state) {
+                    .NeedMore => {
+                        const written_bytes = try chunk.data.writer().write(chunk_data);
+                        std.debug.assert(written_bytes == chunk_data.len);
+                        if (chunk_data.len < 200) {
+                            chunk.state = .Complete;
+                        }
+                    },
+                    .Complete => {},
+                }
+            } else {
+                var chunk = ChunkedName{
+                    .state = .NeedMore,
+                    .data = StringAsList.init(self.allocator),
+                };
+
+                const written_bytes = try chunk.data.writer().write(chunk_data);
+                std.debug.assert(written_bytes == chunk_data.len);
+                if (chunk_data.len < 200) {
+                    chunk.state = .Complete;
+                }
+
+                try map_to_put_in.put(
+                    pid_tid_key,
+                    chunk,
+                );
+            }
             std.debug.assert(map_to_put_in.count() > 0);
         } else if (std.mem.eql(u8, message_type, "exit_rename")) {
             // got a return from one of the rename syscalls,
@@ -134,11 +163,11 @@ const RenameContext = struct {
                 defer _ = self.newnames.remove(pid_tid_key);
                 defer _ = self.cwds.remove(pid_tid_key);
 
-                defer self.allocator.free(old_name.?);
-                defer self.allocator.free(new_name.?);
+                defer old_name.?.data.deinit();
+                defer new_name.?.data.deinit();
                 defer if (maybe_cwd) |cwd| self.allocator.free(cwd);
 
-                try self.handleSucessfulRename(pid_tid_key, old_name.?, new_name.?, maybe_cwd);
+                try self.handleSucessfulRename(pid_tid_key, old_name.?.data.items, new_name.?.data.items, maybe_cwd);
             }
         }
     }
@@ -152,10 +181,14 @@ const RenameContext = struct {
     ) !void {
         const pid = pidtid_pair.pid;
 
+        const is_oldname_absolute = std.fs.path.isAbsolute(relative_old_name);
+        const is_newname_absolute = std.fs.path.isAbsolute(relative_new_name);
+
         var cwd_path: ?[]const u8 = null;
         if (maybe_cwd) |unpacked| {
             cwd_path = unpacked;
-        } else {
+            // if neither paths are absolute, construct cwd_path and use it later
+        } else if (!(is_oldname_absolute or is_newname_absolute)) {
             // if we don't have it already, try to fetch it from procfs
             // as this might be a process we didn't know about before
 
@@ -173,18 +206,26 @@ const RenameContext = struct {
 
         // if we didn't receive maybe_cwd, that means we had to allocate
         // cwd_path ourselves by reading from /proc. so we own the lifetime here
-        defer if (maybe_cwd == null) self.allocator.free(cwd_path.?);
+        defer if (maybe_cwd == null and cwd_path != null)
+            self.allocator.free(cwd_path.?);
 
-        var oldpath = try std.fs.path.join(self.allocator, &[_][]const u8{
-            cwd_path.?,
-            relative_old_name,
-        });
-        defer self.allocator.free(oldpath);
-        var newpath = try std.fs.path.join(self.allocator, &[_][]const u8{
-            cwd_path.?,
-            relative_new_name,
-        });
-        defer self.allocator.free(newpath);
+        // applying cwd_path if the path is already absolute is incorrect behavior.
+        var oldpath = if (!is_oldname_absolute)
+            try std.fs.path.join(self.allocator, &[_][]const u8{
+                cwd_path.?,
+                relative_old_name,
+            })
+        else
+            relative_old_name;
+        defer if (!is_oldname_absolute) self.allocator.free(oldpath);
+        var newpath = if (!is_newname_absolute)
+            try std.fs.path.join(self.allocator, &[_][]const u8{
+                cwd_path.?,
+                relative_new_name,
+            })
+        else
+            relative_new_name;
+        defer if (!is_newname_absolute) self.allocator.free(newpath);
 
         const is_old_in_home = std.mem.startsWith(u8, oldpath, self.ctx.home_path.?);
         const is_new_in_home = std.mem.startsWith(u8, newpath, self.ctx.home_path.?);
@@ -289,8 +330,8 @@ pub fn main() anyerror!void {
         .{ .fd = wait_pipe[0], .events = std.os.POLL.IN, .revents = 0 },
     };
 
-    var oldnames = NameMap.init(allocator);
-    var newnames = NameMap.init(allocator);
+    var oldnames = ChunkedNameMap.init(allocator);
+    var newnames = ChunkedNameMap.init(allocator);
     var cwds = NameMap.init(allocator);
 
     var rename_ctx = RenameContext{
