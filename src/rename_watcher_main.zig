@@ -223,22 +223,12 @@ const RenameContext = struct {
         //  that only has 1 indexed file or not
         // if its more than 1, it's 100% a folder, and we don't need to openDir
 
-        var is_directory_move = false;
-        {
-            var dir: ?std.fs.Dir = std.fs.cwd().openDir(newpath, .{}) catch |err| switch (err) {
-                error.FileNotFound, error.NotDir => null,
-                else => return err,
-            };
-            defer if (dir) |*unpacked_dir| unpacked_dir.close();
-            is_directory_move = dir != null;
-        }
-
-        if (is_directory_move) std.debug.todo("todo folders");
-
-        var stmt = try self.ctx.db.?.prepare("select file_hash, local_path from files where local_path = ?");
+        var stmt = try self.ctx.db.?.prepare(
+            "select file_hash, local_path from files where local_path LIKE ? || '%'",
+        );
         defer stmt.deinit();
 
-        const maybe_raw_file = try stmt.oneAlloc(
+        const raw_files = try stmt.all(
             struct {
                 file_hash: Context.Blake3HashHex,
                 local_path: []const u8,
@@ -248,29 +238,74 @@ const RenameContext = struct {
             .{ .local_path = oldpath },
         );
 
-        if (maybe_raw_file) |raw_file| {
-            log.info(
-                "File {s} was renamed from {s} to {s}",
-                .{ &raw_file.file_hash, oldpath, newpath },
-            );
+        if (raw_files.len >= 1) {
+            // consider the following folder structure:
+            //
+            // /home/luna/b
+            // /home/luna/abc/d
+            //
+            // if /home/luna/b gets renamed to /home/luna/a we would get
+            // two elements in raw_files, so we have to disambiguate
+            //
+            // we do not want to access the filesystem as that can crash us
+            // due to race conditions, so we must try to infer as much as
+            // possible from db data
 
-            try self.ctx.db.?.exec("BEGIN TRANSACTION", .{}, .{});
-            defer _ = self.ctx.db.?.exec("COMMIT", .{}, .{}) catch {};
-            errdefer _ = self.ctx.db.?.exec("ROLLBACK", .{}, .{}) catch {};
+            // fact 1: if we have a file that has an exact match with newpath,
+            // then we have a single file rather than folder (as folders cant
+            // be indexed themselves)
 
-            // we own local_path already, so it is safe to deinit() here
-            var file = Context.File{
-                .ctx = self.ctx,
-                .local_path = raw_file.local_path,
-                .hash = raw_file.file_hash,
-            };
-            defer file.deinit();
-            try file.setLocalPath(newpath);
+            var starts_with_count: usize = 0;
 
-            log.info(
-                "NOW {s} {s}",
-                .{ &raw_file.file_hash, file.local_path },
-            );
+            for (raw_files) |raw_file| {
+                if (std.mem.eql(u8, raw_file.local_path, oldpath)) {
+                    // confirmed single file
+                    log.info(
+                        "File {s} was renamed from {s} to {s}",
+                        .{ &raw_file.file_hash, oldpath, newpath },
+                    );
+
+                    // we own local_path already, so it is safe to deinit() here
+                    var file = Context.File{
+                        .ctx = self.ctx,
+                        .local_path = raw_file.local_path,
+                        .hash = raw_file.file_hash,
+                    };
+                    defer file.deinit();
+                    try file.setLocalPath(newpath);
+
+                    return;
+                } else if (std.mem.startsWith(u8, oldpath, raw_file.local_path)) {
+                    starts_with_count += 1;
+                }
+            }
+
+            var is_directory_move = false;
+
+            // fact 2: if we had more than one path that starts with
+            // the newpath, it's definitely a folder. rename it accordingly
+            if (starts_with_count > 0) is_directory_move = true;
+
+            // fact 3: if neither 1 or 2 are true, go to the filesystem and
+            // find out
+
+            if (!is_directory_move) {
+                var dir: ?std.fs.Dir = std.fs.cwd().openDir(newpath, .{}) catch |err| switch (err) {
+                    error.NotDir => null,
+                    else => return err,
+                };
+                defer if (dir) |*unpacked_dir| unpacked_dir.close();
+                is_directory_move = dir != null;
+            }
+
+            if (is_directory_move) {
+                std.debug.todo("todo folders");
+            } else {
+                // if not, then we don't update anything (we already should
+                // have updated from fact 1).
+            }
+        } else {
+            // nothing about this path is in the database, so, don't give a fuck.
         }
     }
 
