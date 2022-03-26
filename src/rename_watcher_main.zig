@@ -217,6 +217,12 @@ const RenameContext = struct {
 
         log.info("{d}: relevant rename: {s} -> {s}", .{ pid, oldpath, newpath });
 
+        // find out if this is a folder or not by sql count(*)
+        //  with (local_path LIKE ? || '%')
+        // if its 1, we need to compare paths to see if newpath is a folder
+        //  that only has 1 indexed file or not
+        // if its more than 1, it's 100% a folder, and we don't need to openDir
+
         var is_directory_move = false;
         {
             var dir: ?std.fs.Dir = std.fs.cwd().openDir(newpath, .{}) catch |err| switch (err) {
@@ -229,12 +235,10 @@ const RenameContext = struct {
 
         if (is_directory_move) std.debug.todo("todo folders");
 
-        // TODO use ? || '%' for the where clause in the case we're trying
-        // to access the directory but it was already deleted
         var stmt = try self.ctx.db.?.prepare("select file_hash, local_path from files where local_path = ?");
         defer stmt.deinit();
 
-        const maybe_file = try stmt.oneAlloc(
+        const maybe_raw_file = try stmt.oneAlloc(
             struct {
                 file_hash: Context.Blake3HashHex,
                 local_path: []const u8,
@@ -243,15 +247,29 @@ const RenameContext = struct {
             .{},
             .{ .local_path = oldpath },
         );
-        defer {
-            if (maybe_file) |file| {
-                self.allocator.free(file.local_path);
-            }
-        }
-        if (maybe_file) |file| {
+
+        if (maybe_raw_file) |raw_file| {
             log.info(
                 "File {s} was renamed from {s} to {s}",
-                .{ &file.file_hash, oldpath, newpath },
+                .{ &raw_file.file_hash, oldpath, newpath },
+            );
+
+            try self.ctx.db.?.exec("BEGIN TRANSACTION", .{}, .{});
+            defer _ = self.ctx.db.?.exec("COMMIT", .{}, .{}) catch {};
+            errdefer _ = self.ctx.db.?.exec("ROLLBACK", .{}, .{}) catch {};
+
+            // we own local_path already, so it is safe to deinit() here
+            var file = Context.File{
+                .ctx = self.ctx,
+                .local_path = raw_file.local_path,
+                .hash = raw_file.file_hash,
+            };
+            defer file.deinit();
+            try file.setLocalPath(newpath);
+
+            log.info(
+                "NOW {s} {s}",
+                .{ &raw_file.file_hash, file.local_path },
             );
         }
     }
@@ -462,6 +480,7 @@ pub fn main() anyerror!void {
                         else => return err,
                     }
                 };
+                //log.info("got out: {s}", .{line});
                 try rename_ctx.processLine(line);
             } else if (proc.stderr != null and pollfd.fd == proc.stderr.?.handle) {
                 const buffer_offset = proc.stderr.?.reader().readAll(&line_buffer) catch |err| {

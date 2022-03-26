@@ -1,9 +1,34 @@
-tracepoint:syscalls:sys_enter_execve {
-    printf("v1:execve:%d:%d\n", pid, tid);
+/*
+#include <linux/fs_struct.h>
+#include <linux/sched.h>
+#include <linux/time.h>
+#include <linux/sched.h>
+#include <linux/dcache.h>
+
+kfunc:do_execve_common {
+  $task = (struct task_struct *)curtask;
+  $constructed_path = "";
+  $current_dentry = $task->fs->pwd.dentry;
+  printf("v1:execve:%d:%d:", pid, tid);
+  printf("%s", path($task->fs->pwd));
+  printf("%s", str($task->fs->pwd.dentry->d_parent->d_name.name));
+  printf("%s", str($task->fs->root.dentry->d_name.name));
+  printf("%d.", $task->fs->pwd.dentry->d_name.len);
+  printf("%d.", $task->fs->pwd.dentry->d_parent->d_name.len);
+  printf("%d.", $task->fs->pwd.dentry->d_parent->d_parent->d_name.len);
+  printf("%d.", $task->fs->pwd.dentry->d_parent->d_parent->d_parent->d_name.len);
+  printf("\n");
+}
+*/
+
+tracepoint:syscalls:sys_enter_execve,
+tracepoint:syscalls:sys_enter_execveat {
+  printf("v1:execve:%d:%d\n", pid, tid);
 }
 
-tracepoint:syscalls:sys_exit_execve {
-    printf("v1:exit_execve:%d:%d:%d\n", pid, tid, args->ret);
+tracepoint:syscalls:sys_exit_execve,
+tracepoint:syscalls:sys_exit_execveat {
+  printf("v1:exit_execve:%d:%d:%d\n", pid, tid, args->ret);
 }
 
 tracepoint:syscalls:sys_enter_exit,

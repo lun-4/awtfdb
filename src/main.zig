@@ -284,7 +284,7 @@ pub const Context = struct {
         };
     }
 
-    const File = struct {
+    pub const File = struct {
         ctx: *Context,
         local_path: []const u8,
         hash: Blake3HashHex,
@@ -302,6 +302,17 @@ pub const Context = struct {
                 .{ .core_hash = &core_hash, .file_hash = &self.hash },
             );
             std.log.debug("link file {s} (hash {s}) with tag core hash {s}", .{ self.local_path, self.hash, core_hash });
+        }
+
+        pub fn setLocalPath(self: *FileSelf, new_local_path: []const u8) !void {
+            try self.ctx.db.?.exec(
+                "update files set local_path = ? where file_hash = ?",
+                .{},
+                .{ new_local_path, &self.hash },
+            );
+
+            self.ctx.allocator.free(self.local_path);
+            self.local_path = try self.ctx.allocator.dupe(u8, new_local_path);
         }
 
         pub fn fetchTags(self: *FileSelf, allocator: std.mem.Allocator) ![]Blake3HashHex {
