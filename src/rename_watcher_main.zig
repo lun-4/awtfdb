@@ -238,9 +238,6 @@ const RenameContext = struct {
             .{ .local_path = oldpath },
         );
 
-        defer for (raw_files) |raw_file| {
-            self.allocator.free(raw_file.local_path);
-        };
         defer self.allocator.free(raw_files);
 
         if (raw_files.len >= 1) {
