@@ -304,11 +304,12 @@ pub const Context = struct {
             std.log.debug("link file {s} (hash {s}) with tag core hash {s}", .{ self.local_path, self.hash, core_hash });
         }
 
+        // Copies ownership of given new_local_path
         pub fn setLocalPath(self: *FileSelf, new_local_path: []const u8) !void {
             try self.ctx.db.?.exec(
-                "update files set local_path = ? where file_hash = ?",
+                "update files set local_path = ? where file_hash = ? and local_path = ?",
                 .{},
-                .{ new_local_path, &self.hash },
+                .{ new_local_path, &self.hash, self.local_path },
             );
 
             self.ctx.allocator.free(self.local_path);

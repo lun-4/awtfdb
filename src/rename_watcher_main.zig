@@ -238,6 +238,11 @@ const RenameContext = struct {
             .{ .local_path = oldpath },
         );
 
+        defer for (raw_files) |raw_file| {
+            self.allocator.free(raw_file.local_path);
+        };
+        defer self.allocator.free(raw_files);
+
         if (raw_files.len >= 1) {
             // consider the following folder structure:
             //
@@ -265,12 +270,13 @@ const RenameContext = struct {
                         .{ &raw_file.file_hash, oldpath, newpath },
                     );
 
-                    // we own local_path already, so it is safe to deinit() here
+                    // we free memory later
                     var file = Context.File{
                         .ctx = self.ctx,
                         .local_path = raw_file.local_path,
                         .hash = raw_file.file_hash,
                     };
+                    // since setLocalPath copies ownership, deinit here
                     defer file.deinit();
                     try file.setLocalPath(newpath);
 
@@ -299,7 +305,46 @@ const RenameContext = struct {
             }
 
             if (is_directory_move) {
-                std.debug.todo("todo folders");
+                var oldpath_assumed_folder_buffer: [std.os.PATH_MAX]u8 = undefined;
+                const oldpath_assumed_folder = try std.fmt.bufPrint(
+                    &oldpath_assumed_folder_buffer,
+                    "{s}{s}",
+                    .{ oldpath, std.fs.path.sep_str },
+                );
+
+                for (raw_files) |raw_file| {
+                    var replace_buffer: [std.os.PATH_MAX]u8 = undefined;
+                    if (std.mem.startsWith(u8, raw_file.local_path, oldpath_assumed_folder)) {
+                        // this is a file in a folder, update it accordingly
+
+                        // to do this, we need to replace oldpath by newpath
+                        // since we know it starts with oldpath, we just need
+                        // to slice oldpath out of local_path
+                        //
+                        // then construct it back together by prepending
+                        // newpath_assumed_folder into this
+                        const path_after_oldpath = raw_file.local_path[oldpath.len + 1 ..];
+                        const replaced_path = try std.fmt.bufPrint(
+                            &replace_buffer,
+                            "{s}{s}{s}",
+                            .{ newpath, std.fs.path.sep_str, path_after_oldpath },
+                        );
+
+                        log.info(
+                            "File {s} was renamed from {s} to {s}",
+                            .{ &raw_file.file_hash, raw_file.local_path, replaced_path },
+                        );
+
+                        var file = Context.File{
+                            .ctx = self.ctx,
+                            .local_path = raw_file.local_path,
+                            .hash = raw_file.file_hash,
+                        };
+                        // since setLocalPath copies ownership, deinit here
+                        defer file.deinit();
+                        try file.setLocalPath(replaced_path);
+                    }
+                }
             } else {
                 // if not, then we don't update anything (we already should
                 // have updated from fact 1).
