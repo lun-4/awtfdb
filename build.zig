@@ -43,10 +43,10 @@ pub fn build(b: *std.build.Builder) void {
 
     deps.addAllTo(watcher_exe);
 
-    //const include_exe = b.addExecutable("ainclude", "src/include_main.zig");
-    //include_exe.setTarget(target);
-    //include_exe.setBuildMode(mode);
-    //include_exe.install();
+    const include_exe = b.addExecutable("ainclude", "src/include_main.zig");
+    include_exe.setTarget(target);
+    include_exe.setBuildMode(mode);
+    include_exe.install();
 
-    //deps.addAllTo(include_exe);
+    deps.addAllTo(include_exe);
 }

@@ -349,7 +349,7 @@ pub const Context = struct {
         };
     }
 
-    const HashList = std.ArrayList(Hash);
+    pub const HashList = std.ArrayList(Hash);
 
     pub const File = struct {
         ctx: *Context,

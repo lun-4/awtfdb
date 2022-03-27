@@ -48,7 +48,6 @@ pub fn main() anyerror!void {
     _ = args_it.skip();
 
     const StringList = std.ArrayList([]const u8);
-    const HashList = std.ArrayList([64]u8);
 
     const Args = struct {
         help: bool = false,
@@ -137,7 +136,7 @@ pub fn main() anyerror!void {
     std.log.info("args: {}", .{given_args});
 
     // map tag names to their relevant cores in db
-    var default_tag_cores = HashList.init(allocator);
+    var default_tag_cores = Context.HashList.init(allocator);
     defer default_tag_cores.deinit();
     for (given_args.default_tags.items) |named_tag_text| {
         const maybe_tag = try ctx.fetchNamedTag(named_tag_text, "en");
