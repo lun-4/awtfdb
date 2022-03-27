@@ -36,12 +36,12 @@ pub fn build(b: *std.build.Builder) void {
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&exe_tests.step);
 
-    //const watcher_exe = b.addExecutable("awtfdb-watcher", "src/rename_watcher_main.zig");
-    //watcher_exe.setTarget(target);
-    //watcher_exe.setBuildMode(mode);
-    //watcher_exe.install();
+    const watcher_exe = b.addExecutable("awtfdb-watcher", "src/rename_watcher_main.zig");
+    watcher_exe.setTarget(target);
+    watcher_exe.setBuildMode(mode);
+    watcher_exe.install();
 
-    //deps.addAllTo(watcher_exe);
+    deps.addAllTo(watcher_exe);
 
     //const include_exe = b.addExecutable("ainclude", "src/include_main.zig");
     //include_exe.setTarget(target);
