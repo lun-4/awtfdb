@@ -339,7 +339,7 @@ pub const Context = struct {
     pub const File = struct {
         ctx: *Context,
         local_path: []const u8,
-        hash: Blake3HashHex,
+        hash: Hash,
 
         const FileSelf = @This();
 
@@ -351,7 +351,7 @@ pub const Context = struct {
             try self.ctx.db.?.exec(
                 "insert into tag_files (core_hash, file_hash) values (?, ?) on conflict do nothing",
                 .{},
-                .{ .core_hash = &core_hash, .file_hash = &self.hash },
+                .{ .core_hash = &core_hash, .file_hash = self.hash.id },
             );
             std.log.debug("link file {s} (hash {s}) with tag core hash {s}", .{ self.local_path, self.hash, core_hash });
         }
@@ -361,7 +361,7 @@ pub const Context = struct {
             try self.ctx.db.?.exec(
                 "update files set local_path = ? where file_hash = ? and local_path = ?",
                 .{},
-                .{ new_local_path, &self.hash, self.local_path },
+                .{ new_local_path, self.hash.id, self.local_path },
             );
 
             self.ctx.allocator.free(self.local_path);
@@ -378,21 +378,23 @@ pub const Context = struct {
                 [64]u8,
                 allocator,
                 .{},
-                .{ .file_hash = &self.hash },
+                .{ .file_hash = self.hash.id },
             );
         }
     };
 
     /// Caller owns returned memory.
     pub fn createFileFromPath(self: *Self, local_path: []const u8) !File {
-        const absolute_local_path = try std.fs.cwd().realpathAlloc(self.allocator, local_path);
+        // TODO decrease repetition between this and createFileFromDir
+        const absolute_local_path = try std.fs.realpathAlloc(self.allocator, local_path);
 
-        var file_hash_text_buffer: [std.crypto.hash.Blake3.digest_length * 2]u8 = undefined;
-        var file_hash_text: Blake3HashHex = undefined;
+        var file_hash: Hash = undefined;
         {
             var file = try std.fs.openFileAbsolute(absolute_local_path, .{ .mode = .read_only });
             defer file.close();
 
+            // hash file in 1kb chunks (maybe it'd be more efficient to hash
+            // it in bigger chunks?? how does this magic number work?)
             var data_chunk_buffer: [1024]u8 = undefined;
             var hasher = std.crypto.hash.Blake3.initKdf(AWTFDB_BLAKE3_CONTEXT, .{});
             while (true) {
@@ -402,44 +404,54 @@ pub const Context = struct {
                 hasher.update(data_chunk);
             }
 
-            var file_hash_bytes: [std.crypto.hash.Blake3.digest_length]u8 = undefined;
-            hasher.final(&file_hash_bytes);
+            hasher.final(&file_hash.hash_data);
 
-            _ = try std.fmt.bufPrint(
-                &file_hash_text_buffer,
-                "{x}",
-                .{std.fmt.fmtSliceHexLower(&file_hash_bytes)},
+            const hash_blob = sqlite.Blob{ .data = &file_hash.hash_data };
+            const maybe_hash_id = try self.db.?.one(
+                i64,
+                "select id from hashes where hash_data = ?",
+                .{},
+                .{hash_blob},
             );
-
-            file_hash_text = file_hash_text_buffer[0..(std.crypto.hash.Blake3.digest_length * 2)].*;
+            if (maybe_hash_id) |hash_id| {
+                file_hash.id = hash_id;
+            } else {
+                file_hash.id = (try self.db.?.one(
+                    i64,
+                    "insert into hashes (hash_data) values (?) returning id",
+                    .{},
+                    .{hash_blob},
+                )).?;
+            }
         }
 
         try self.db.?.exec(
             "insert into files (file_hash, local_path) values (?, ?) on conflict do nothing",
             .{},
-            .{ .file_hash = &file_hash_text, .local_path = absolute_local_path },
+            .{ file_hash.id, absolute_local_path },
         );
         std.log.debug("created file entry hash={s} path={s}", .{
             absolute_local_path,
-            file_hash_text,
+            file_hash,
         });
 
         return File{
             .ctx = self,
             .local_path = absolute_local_path,
-            .hash = file_hash_text,
+            .hash = file_hash,
         };
     }
 
     pub fn createFileFromDir(self: *Self, dir: std.fs.Dir, dir_path: []const u8) !File {
         const absolute_local_path = try dir.realpathAlloc(self.allocator, dir_path);
 
-        var file_hash_text_buffer: [std.crypto.hash.Blake3.digest_length * 2]u8 = undefined;
-        var file_hash_text: Blake3HashHex = undefined;
+        var file_hash: Hash = undefined;
         {
             var file = try dir.openFile(dir_path, .{ .mode = .read_only });
             defer file.close();
 
+            // hash file in 1kb chunks (maybe it'd be more efficient to hash
+            // it in bigger chunks?? how does this magic number work?)
             var data_chunk_buffer: [1024]u8 = undefined;
             var hasher = std.crypto.hash.Blake3.initKdf(AWTFDB_BLAKE3_CONTEXT, .{});
             while (true) {
@@ -449,32 +461,31 @@ pub const Context = struct {
                 hasher.update(data_chunk);
             }
 
-            var file_hash_bytes: [std.crypto.hash.Blake3.digest_length]u8 = undefined;
-            hasher.final(&file_hash_bytes);
+            hasher.final(&file_hash.hash_data);
 
-            _ = try std.fmt.bufPrint(
-                &file_hash_text_buffer,
-                "{x}",
-                .{std.fmt.fmtSliceHexLower(&file_hash_bytes)},
-            );
-
-            file_hash_text = file_hash_text_buffer[0..(std.crypto.hash.Blake3.digest_length * 2)].*;
+            const hash_blob = sqlite.Blob{ .data = &file_hash.hash_data };
+            file_hash.id = (try self.db.?.one(
+                i64,
+                "insert into hashes (hash_data) values (?) returning id",
+                .{},
+                .{hash_blob},
+            )).?;
         }
 
         try self.db.?.exec(
             "insert into files (file_hash, local_path) values (?, ?) on conflict do nothing",
             .{},
-            .{ .file_hash = &file_hash_text, .local_path = absolute_local_path },
+            .{ file_hash.id, absolute_local_path },
         );
         std.log.debug("created file entry hash={s} path={s}", .{
             absolute_local_path,
-            file_hash_text,
+            file_hash,
         });
 
         return File{
             .ctx = self,
             .local_path = absolute_local_path,
-            .hash = file_hash_text,
+            .hash = file_hash,
         };
     }
 
@@ -663,31 +674,32 @@ test "tag creation" {
     try std.testing.expectEqualStrings(tag.core.hash_data[0..], tags_from_core.items[1].core.hash_data[0..]);
 }
 
-// test "file creation" {
-//     var ctx = try makeTestContext();
-//     defer ctx.deinit();
+test "file creation" {
+    var ctx = try makeTestContext();
+    defer ctx.deinit();
 
-//     var tmp = std.testing.tmpDir(.{});
-//     defer tmp.cleanup();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
 
-//     var file = try tmp.dir.createFile("test_file", .{});
-//     defer file.close();
-//     _ = try file.write("awooga");
+    var file = try tmp.dir.createFile("test_file", .{});
+    defer file.close();
+    _ = try file.write("awooga");
 
-//     var indexed_file = try ctx.createFileFromDir(tmp.dir, "test_file");
-//     defer indexed_file.deinit();
+    var indexed_file = try ctx.createFileFromDir(tmp.dir, "test_file");
+    defer indexed_file.deinit();
 
-//     try std.testing.expect(std.mem.endsWith(u8, indexed_file.local_path, "/test_file"));
+    try std.testing.expect(std.mem.endsWith(u8, indexed_file.local_path, "/test_file"));
 
-//     // also try to create indexed file via absolute path
-//     const full_tmp_file = try tmp.dir.realpathAlloc(std.testing.allocator, "test_file");
-//     defer std.testing.allocator.free(full_tmp_file);
-//     var path_indexed_file = try ctx.createFileFromPath(full_tmp_file);
-//     defer path_indexed_file.deinit();
+    // also try to create indexed file via absolute path
+    const full_tmp_file = try tmp.dir.realpathAlloc(std.testing.allocator, "test_file");
+    defer std.testing.allocator.free(full_tmp_file);
+    var path_indexed_file = try ctx.createFileFromPath(full_tmp_file);
+    defer path_indexed_file.deinit();
 
-//     try std.testing.expectStringEndsWith(path_indexed_file.local_path, "/test_file");
-//     try std.testing.expectEqualStrings(indexed_file.hash[0..], path_indexed_file.hash[0..]);
-// }
+    try std.testing.expectStringEndsWith(path_indexed_file.local_path, "/test_file");
+    try std.testing.expectEqual(indexed_file.hash.id, path_indexed_file.hash.id);
+    try std.testing.expectEqualStrings(indexed_file.hash.hash_data[0..], path_indexed_file.hash.hash_data[0..]);
+}
 
 // test "file and tags" {
 //     var ctx = try makeTestContext();
