@@ -486,7 +486,7 @@ pub fn main() anyerror!void {
     };
     defer ctx.deinit();
 
-    try ctx.loadDatabase();
+    try ctx.loadDatabase(.{});
 
     std.log.info("args: {}", .{given_args});
 

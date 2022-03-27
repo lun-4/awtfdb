@@ -101,7 +101,11 @@ pub const Context = struct {
 
     const Self = @This();
 
-    pub fn loadDatabase(self: *Self) !void {
+    const LoadDatabaseOptions = struct {
+        create: bool = false,
+    };
+
+    pub fn loadDatabase(self: *Self, options: LoadDatabaseOptions) !void {
         if (self.db != null) return;
 
         // try to create the file always. this is done because
@@ -115,9 +119,11 @@ pub const Context = struct {
         );
         defer self.allocator.free(db_path);
 
-        {
+        if (options.create) {
             var file = try std.fs.cwd().createFile(db_path, .{ .truncate = false });
             defer file.close();
+        } else {
+            try std.fs.cwd().access(db_path, .{});
         }
         const db_path_cstr = try std.cstr.addNullByte(self.allocator, db_path);
         defer self.allocator.free(db_path_cstr);
@@ -531,12 +537,12 @@ pub const Context = struct {
     }
 
     pub fn createCommand(self: *Self) !void {
-        try self.loadDatabase();
+        try self.loadDatabase(.{ .create = true });
         try self.migrateCommand();
     }
 
     pub fn migrateCommand(self: *Self) !void {
-        try self.loadDatabase();
+        try self.loadDatabase(.{});
 
         // migration log table is forever
         try self.executeOnce(MIGRATION_LOG_TABLE);
@@ -577,11 +583,11 @@ pub const Context = struct {
     }
 
     pub fn statsCommand(self: *Self) !void {
-        try self.loadDatabase();
+        try self.loadDatabase(.{});
     }
 
     pub fn jobsCommand(self: *Self) !void {
-        try self.loadDatabase();
+        try self.loadDatabase(.{});
     }
 };
 
