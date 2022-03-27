@@ -495,12 +495,22 @@ pub const Context = struct {
             hasher.final(&file_hash.hash_data);
 
             const hash_blob = sqlite.Blob{ .data = &file_hash.hash_data };
-            file_hash.id = (try self.db.?.one(
+            const maybe_hash_id = try self.db.?.one(
                 i64,
-                "insert into hashes (hash_data) values (?) returning id",
+                "select id from hashes where hash_data = ?",
                 .{},
                 .{hash_blob},
-            )).?;
+            );
+            if (maybe_hash_id) |hash_id| {
+                file_hash.id = hash_id;
+            } else {
+                file_hash.id = (try self.db.?.one(
+                    i64,
+                    "insert into hashes (hash_data) values (?) returning id",
+                    .{},
+                    .{hash_blob},
+                )).?;
+            }
         }
 
         try self.db.?.exec(
