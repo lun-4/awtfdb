@@ -167,8 +167,8 @@ const RenameContext = struct {
         var cwd_path: ?[]const u8 = null;
         if (maybe_cwd) |unpacked| {
             cwd_path = unpacked;
-            // if neither paths are absolute, construct cwd_path and use it later
-        } else if (!(is_oldname_absolute or is_newname_absolute)) {
+            // if any of them is relative, construct cwd_path and use it later
+        } else if (!(is_oldname_absolute and is_newname_absolute)) {
             // if we don't have it already, try to fetch it from procfs
             // as this might be a process we didn't know about before
 
