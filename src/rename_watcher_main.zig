@@ -224,13 +224,18 @@ const RenameContext = struct {
         // if its more than 1, it's 100% a folder, and we don't need to openDir
 
         var stmt = try self.ctx.db.?.prepare(
-            "select file_hash, local_path from files where local_path LIKE ? || '%'",
+            \\ select file_hash, hashes.hash_data, local_path
+            \\ from files
+            \\ join hashes
+            \\  on files.file_hash = hashes.id
+            \\ where local_path LIKE ? || '%'
         );
         defer stmt.deinit();
 
         const raw_files = try stmt.all(
             struct {
-                file_hash: Context.Blake3HashHex,
+                file_hash: i64,
+                hash_data: sqlite.Blob,
                 local_path: []const u8,
             },
             self.allocator,
@@ -261,20 +266,25 @@ const RenameContext = struct {
 
             for (raw_files) |raw_file| {
                 if (std.mem.eql(u8, raw_file.local_path, oldpath)) {
-                    // confirmed single file
-                    log.info(
-                        "File {s} was renamed from {s} to {s}",
-                        .{ &raw_file.file_hash, oldpath, newpath },
-                    );
+                    const real_hash = (Context.HashWithBlob{
+                        .id = raw_file.file_hash,
+                        .hash_data = raw_file.hash_data,
+                    }).toRealHash();
 
-                    // we free memory later
                     var file = Context.File{
                         .ctx = self.ctx,
                         .local_path = raw_file.local_path,
-                        .hash = raw_file.file_hash,
+                        .hash = real_hash,
                     };
-                    // since setLocalPath copies ownership, deinit here
+                    // since setLocalPath copies ownership, deinit afterwards
                     defer file.deinit();
+
+                    // confirmed single file
+                    log.info(
+                        "File {s} was renamed from {s} to {s}",
+                        .{ real_hash, oldpath, newpath },
+                    );
+
                     try file.setLocalPath(newpath);
 
                     return;
@@ -332,11 +342,17 @@ const RenameContext = struct {
                             .{ &raw_file.file_hash, raw_file.local_path, replaced_path },
                         );
 
+                        const real_hash = (Context.HashWithBlob{
+                            .id = raw_file.file_hash,
+                            .hash_data = raw_file.hash_data,
+                        }).toRealHash();
+
                         var file = Context.File{
                             .ctx = self.ctx,
                             .local_path = raw_file.local_path,
-                            .hash = raw_file.file_hash,
+                            .hash = real_hash,
                         };
+
                         // since setLocalPath copies ownership, deinit here
                         defer file.deinit();
                         try file.setLocalPath(replaced_path);
