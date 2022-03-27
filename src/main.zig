@@ -35,7 +35,7 @@ const MIGRATIONS = .{
         \\     hash blob
         \\     	constraint hashes_length check (length(hash) == 32)
         \\     	constraint hashes_unique unique
-        \\ );
+        \\ ) strict;
         \\
         \\ -- uniquely identifies a tag in the ENTIRE UNIVERSE!!!
         \\ -- since this uses random data for core_data, and core_hash is blake3
@@ -50,7 +50,7 @@ const MIGRATIONS = .{
         \\     	constraint tag_cores_hash_fk references hashes (id) on delete restrict
         \\     	constraint tag_cores_pk primary key,
         \\     core_data blob not null
-        \\ );
+        \\ ) strict;
         \\ 
         \\ -- files that are imported into the index are here
         \\ -- this is how we learn that a certain path means a certain hash without
@@ -60,7 +60,7 @@ const MIGRATIONS = .{
         \\     	constraint files_hash_fk references hashes (id) on delete restrict,
         \\     local_path text not null,
         \\     constraint files_pk primary key (file_hash, local_path)
-        \\ );
+        \\ ) strict;
         \\ 
         \\ -- this is the main tag<->file mapping. to find out which tags a file has,
         \\ -- execute your SELECT here.
@@ -70,7 +70,7 @@ const MIGRATIONS = .{
         \\     core_hash int not null
         \\     	constraint tag_files_core_fk references tag_cores (core_hash) on delete cascade,
         \\     constraint tag_files_pk primary key (file_hash, core_hash)
-        \\ );
+        \\ ) strict;
         \\ 
         \\ -- this is the main name<->tag mapping.
         \\ create table tag_names (
@@ -79,7 +79,7 @@ const MIGRATIONS = .{
         \\     core_hash int not null
         \\     	constraint tag_names_core_fk references tag_cores (core_hash) on delete cascade,
         \\     constraint tag_names_pk primary key (tag_text, tag_language, core_hash)
-        \\ );
+        \\ ) strict;
     },
 };
 
