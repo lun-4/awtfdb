@@ -27,6 +27,16 @@ const HELPTEXT =
 const MIGRATIONS = .{
     .{
         1, "initial table",
+        \\ -- we optimize table size by storing hashes in a dedicated table
+        \\ -- and then only using the int id (which is more efficiency) for
+        \\ -- references into other tables
+        \\ create table hashes (
+        \\     id integer primary key autoincrement,
+        \\     hash blob
+        \\     	constraint hashes_length check (length(hash) == 32)
+        \\     	constraint hashes_unique unique
+        \\ );
+        \\
         \\ -- uniquely identifies a tag in the ENTIRE UNIVERSE!!!
         \\ -- since this uses random data for core_data, and core_hash is blake3
         \\ --
@@ -36,16 +46,18 @@ const MIGRATIONS = .{
         \\ -- enabling different language representations of the same tag
         \\ -- (since they all reference the core!)
         \\ create table tag_cores (
-        \\     core_hash text,
-        \\     core_data blob not null,
-        \\     constraint tag_cores_pk primary key (core_hash)
+        \\     core_hash int
+        \\     	constraint tag_cores_hash_fk references hashes (id) on delete restrict
+        \\     	constraint tag_cores_pk primary key,
+        \\     core_data blob not null
         \\ );
         \\ 
-        \\ -- files that are imported by bimport/badd are here
+        \\ -- files that are imported into the index are here
         \\ -- this is how we learn that a certain path means a certain hash without
         \\ -- having to recalculate the hash over and over.
         \\ create table files (
-        \\     file_hash text not null,
+        \\     file_hash int not null
+        \\     	constraint files_hash_fk references hashes (id) on delete restrict,
         \\     local_path text not null,
         \\     constraint files_pk primary key (file_hash, local_path)
         \\ );
@@ -53,22 +65,19 @@ const MIGRATIONS = .{
         \\ -- this is the main tag<->file mapping. to find out which tags a file has,
         \\ -- execute your SELECT here.
         \\ create table tag_files (
-        \\     file_hash text not null,
-        \\     core_hash text not null,
-        \\     constraint tag_files_core_fk foreign key (core_hash)
-        \\         references tag_cores (core_hash) on delete cascade,
-        \\     constraint tag_files_file_fk foreign key (file_hash)
-        \\         references files (file_hash) on delete cascade,
+        \\     file_hash int not null
+        \\     	constraint tag_files_file_fk references files (file_hash) on delete cascade,
+        \\     core_hash int not null
+        \\     	constraint tag_files_core_fk references tag_cores (core_hash) on delete cascade,
         \\     constraint tag_files_pk primary key (file_hash, core_hash)
         \\ );
         \\ 
-        \\ -- this is the main name<->tag mapping. to find out the
-        \\ -- UNIVERSALLY RECOGNIZABLE id of a tag name, execute your SELECT here.
+        \\ -- this is the main name<->tag mapping.
         \\ create table tag_names (
         \\     tag_text text not null,
         \\     tag_language text not null,
-        \\     core_hash text not null,
-        \\     constraint tag_names_core_fk foreign key (core_hash) references tag_cores on delete cascade,
+        \\     core_hash int not null
+        \\     	constraint tag_names_core_fk references tag_cores (core_hash) on delete cascade,
         \\     constraint tag_names_pk primary key (tag_text, tag_language, core_hash)
         \\ );
     },
