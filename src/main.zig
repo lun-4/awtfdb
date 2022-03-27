@@ -221,9 +221,21 @@ pub const Context = struct {
         };
     }
 
+    pub const HashWithBlob = struct {
+        id: i64,
+        hash_data: sqlite.Blob,
+
+        pub fn toRealHash(self: @This()) Hash {
+            var hash_value: [32]u8 = undefined;
+            std.mem.copy(u8, &hash_value, self.hash_data.data);
+            return Hash{ .id = self.id, .hash_data = hash_value };
+        }
+    };
+
     pub fn fetchNamedTag(self: *Self, text: []const u8, language: []const u8) !?Tag {
-        var maybe_core_hash = try self.db.?.one(
-            Hash,
+        var maybe_core_hash = try self.db.?.oneAlloc(
+            HashWithBlob,
+            self.allocator,
             \\ select hashes.id, hashes.hash_data
             \\ from tag_names
             \\ join hashes
@@ -233,10 +245,11 @@ pub const Context = struct {
             .{},
             .{ text, language },
         );
+        defer if (maybe_core_hash) |hash| self.allocator.free(hash.hash_data.data);
 
         if (maybe_core_hash) |core_hash| {
             return Tag{
-                .core = core_hash,
+                .core = core_hash.toRealHash(),
                 .kind = .{ .Named = .{ .text = text, .language = language } },
             };
         } else {
@@ -257,7 +270,7 @@ pub const Context = struct {
 
     const Hash = struct {
         id: i64,
-        hash_data: Blake3Hash,
+        hash_data: [32]u8,
 
         const HashSelf = @This();
 
@@ -336,6 +349,8 @@ pub const Context = struct {
         };
     }
 
+    const HashList = std.ArrayList(Hash);
+
     pub const File = struct {
         ctx: *Context,
         local_path: []const u8,
@@ -347,11 +362,11 @@ pub const Context = struct {
             self.ctx.allocator.free(self.local_path);
         }
 
-        pub fn addTag(self: *FileSelf, core_hash: Blake3HashHex) !void {
+        pub fn addTag(self: *FileSelf, core_hash: Hash) !void {
             try self.ctx.db.?.exec(
                 "insert into tag_files (core_hash, file_hash) values (?, ?) on conflict do nothing",
                 .{},
-                .{ .core_hash = &core_hash, .file_hash = self.hash.id },
+                .{ core_hash.id, self.hash.id },
             );
             std.log.debug("link file {s} (hash {s}) with tag core hash {s}", .{ self.local_path, self.hash, core_hash });
         }
@@ -368,18 +383,34 @@ pub const Context = struct {
             self.local_path = try self.ctx.allocator.dupe(u8, new_local_path);
         }
 
-        pub fn fetchTags(self: *FileSelf, allocator: std.mem.Allocator) ![]Blake3HashHex {
+        /// Returns all tag core hashes for the file.
+        pub fn fetchTags(self: *FileSelf, allocator: std.mem.Allocator) ![]Hash {
             var stmt = try self.ctx.db.?.prepare(
-                "select core_hash from tag_files where file_hash = ?",
+                \\ select hashes.id, hashes.hash_data
+                \\ from tag_files
+                \\ join hashes
+                \\ 	on tag_files.file_hash = hashes.id
+                \\ where tag_files.file_hash = ?
             );
             defer stmt.deinit();
 
-            return try stmt.all(
-                [64]u8,
+            const internal_hashes = try stmt.all(
+                HashWithBlob,
                 allocator,
                 .{},
-                .{ .file_hash = self.hash.id },
+                .{self.hash.id},
             );
+            defer for (internal_hashes) |hash| allocator.free(hash.hash_data.data);
+            defer allocator.free(internal_hashes);
+
+            var list = HashList.init(allocator);
+            defer list.deinit();
+
+            for (internal_hashes) |hash| {
+                try list.append(hash.toRealHash());
+            }
+
+            return list.toOwnedSlice();
         }
     };
 
