@@ -191,21 +191,21 @@ const RenameContext = struct {
 
         // applying cwd_path if the path is already absolute is incorrect behavior.
         var oldpath = if (!is_oldname_absolute)
-            try std.fs.path.join(self.allocator, &[_][]const u8{
+            try std.fs.path.resolve(self.allocator, &[_][]const u8{
                 cwd_path.?,
                 relative_old_name,
             })
         else
-            relative_old_name;
-        defer if (!is_oldname_absolute) self.allocator.free(oldpath);
+            try std.fs.path.resolve(self.allocator, &[_][]const u8{relative_old_name});
+        defer self.allocator.free(oldpath);
         var newpath = if (!is_newname_absolute)
-            try std.fs.path.join(self.allocator, &[_][]const u8{
+            try std.fs.path.resolve(self.allocator, &[_][]const u8{
                 cwd_path.?,
                 relative_new_name,
             })
         else
-            relative_new_name;
-        defer if (!is_newname_absolute) self.allocator.free(newpath);
+            try std.fs.path.resolve(self.allocator, &[_][]const u8{relative_new_name});
+        defer self.allocator.free(newpath);
 
         const is_old_in_home = std.mem.startsWith(u8, oldpath, self.ctx.home_path.?);
         const is_new_in_home = std.mem.startsWith(u8, newpath, self.ctx.home_path.?);
