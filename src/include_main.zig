@@ -18,8 +18,8 @@ const HELPTEXT =
     \\ 	-v				turns on verbosity (debug logging)
     \\ 	--tag <tag>			add the following tag to the given path
     \\ 					 (if its a folder, add the tag to all files in the folder)
-    \\ 	--infer-more-tags <inferrer>	infer tags using a processor
-    \\ 					 (available processors: TODO)
+    \\ 	--infer-tags <inferrer>		infer tags using a processor
+    \\ 					 (available processors: regex)
     \\
     \\ example, adding a single file:
     \\  ainclude --tag format:mp4 --tag "meme:what the dog doing" /downloads/funny_meme.mp4
@@ -28,8 +28,68 @@ const HELPTEXT =
     \\  ainclude --tag format:mp4 --tag "meme:what the dog doing" /downloads/funny_meme.mp4 /download/another_dog_meme.mp4 /downloads/butter_dog.mp4
     \\
     \\ example, adding a media library:
-    \\  ainclude --tag type:music --infer-more-tags media /my/music/collection
+    \\  ainclude --tag type:music --infer-tags media /my/music/collection
+    \\
+    \\ example, using regex to infer tags:
+    \\  ainclude --infer-tags regex --regex '\[(.*)\]' --regex-text-scope test: --regex-cast-lowercase /home/luna/media
 ;
+
+const TagInferrer = enum {
+    regex,
+};
+
+const TagInferrerConfig = struct {
+    last_argument: []const u8,
+    config: union(TagInferrer) {
+        regex: struct {
+            text: ?[]const u8 = null,
+            tag_scope: ?[]const u8 = null,
+            cast_lowercase: bool = false,
+        },
+    },
+};
+
+const RegexTagInferrer = struct {
+    pub fn consumeArguments(args_it: *std.process.ArgIterator) !TagInferrerConfig {
+        var arg_state: enum { None, Text, TagScope } = .None;
+        var config: TagInferrerConfig = .{ .last_argument = undefined, .config = .{ .regex = .{} } };
+        var arg: []const u8 = undefined;
+        while (args_it.next()) |arg_from_loop| {
+            arg = arg_from_loop;
+            log.debug("(regex tag inferrer) state: {} arg: {s}", .{ arg_state, arg });
+
+            switch (arg_state) {
+                .None => {},
+                .Text => config.config.regex.text = arg,
+                .TagScope => config.config.regex.tag_scope = arg,
+            }
+
+            // if we hit non-None states, we need to know if we're going
+            // to have another configuration parameter or not
+            //
+            // and we do this by next()'ing into the next argument
+            if (arg_state != .None) {
+                arg = args_it.next() orelse break;
+                arg_state = .None;
+            }
+            log.debug("(regex tag inferrer, main loop) state: {s} arg: {s}", .{ arg_state, arg });
+
+            if (std.mem.eql(u8, arg, "--regex")) {
+                arg_state = .Text;
+            } else if (std.mem.eql(u8, arg, "--regex-text-scope")) {
+                arg_state = .TagScope;
+            } else if (std.mem.eql(u8, arg, "--regex-cast-lowercase")) {
+                config.config.regex.cast_lowercase = true;
+            } else {
+                config.last_argument = arg;
+                break;
+            }
+        }
+
+        if (config.config.regex.text == null) return error.RegexArgumentRequired;
+        return config;
+    }
+};
 
 pub fn main() anyerror!void {
     const rc = sqlite.c.sqlite3_config(sqlite.c.SQLITE_CONFIG_LOG, manage_main.sqliteLog, @as(?*anyopaque, null));
@@ -48,13 +108,14 @@ pub fn main() anyerror!void {
     _ = args_it.skip();
 
     const StringList = std.ArrayList([]const u8);
+    const ConfigList = std.ArrayList(TagInferrerConfig);
 
     const Args = struct {
         help: bool = false,
         verbose: bool = false,
         version: bool = false,
         default_tags: StringList,
-        wanted_inferrers: StringList,
+        wanted_inferrers: ConfigList,
         include_paths: StringList,
 
         pub fn deinit(self: *@This()) void {
@@ -70,12 +131,15 @@ pub fn main() anyerror!void {
 
     var given_args = Args{
         .default_tags = StringList.init(allocator),
-        .wanted_inferrers = StringList.init(allocator),
+        .wanted_inferrers = ConfigList.init(allocator),
         .include_paths = StringList.init(allocator),
     };
     defer given_args.deinit();
 
-    while (args_it.next()) |arg| {
+    var arg: []const u8 = undefined;
+    while (args_it.next()) |arg_from_loop| {
+        arg = arg_from_loop;
+        log.debug("state: {s} arg: {s}", .{ state, arg });
         switch (state) {
             .FetchTag => {
                 try given_args.default_tags.append(arg);
@@ -83,12 +147,20 @@ pub fn main() anyerror!void {
                 continue;
             },
             .InferMoreTags => {
-                try given_args.wanted_inferrers.append(arg);
+                const tag_inferrer = std.meta.stringToEnum(TagInferrer, arg) orelse return error.InvalidTagInferrer;
+                const InferrerType = switch (tag_inferrer) {
+                    .regex => RegexTagInferrer,
+                };
+
+                var inferrer_config = try InferrerType.consumeArguments(&args_it);
+                try given_args.wanted_inferrers.append(inferrer_config);
+
+                arg = inferrer_config.last_argument;
                 state = .None;
-                continue;
             },
             .None => {},
         }
+        log.debug("(possible transition) state: {s} arg: {s}", .{ state, arg });
 
         if (std.mem.eql(u8, arg, "-h")) {
             given_args.help = true;
@@ -98,7 +170,9 @@ pub fn main() anyerror!void {
             given_args.version = true;
         } else if (std.mem.eql(u8, arg, "--tag")) {
             state = .FetchTag;
-        } else if (std.mem.eql(u8, arg, "--infer-more-tags")) {
+            // tag inferrers require more than one arg, so we need to load
+            // those args beforehand and then pass the arg state forward
+        } else if (std.mem.eql(u8, arg, "--infer-tags")) {
             state = .InferMoreTags;
         } else {
             try given_args.include_paths.append(arg);
@@ -157,9 +231,10 @@ pub fn main() anyerror!void {
         }
     }
 
-    for (given_args.wanted_inferrers.items) |inferrer_text| {
-        _ = inferrer_text;
-        std.debug.todo("add any inferrer logic");
+    for (given_args.wanted_inferrers.items) |inferrer_config| {
+        _ = inferrer_config;
+        log.info("found config for  {}", .{inferrer_config});
+        std.debug.todo("add any logic for inferrers");
     }
 
     for (given_args.include_paths.items) |path_to_include| {
