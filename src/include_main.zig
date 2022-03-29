@@ -149,7 +149,25 @@ const RegexTagInferrer = struct {
                 for (captures[1..]) |capture| {
                     const tag_group = capture.?;
 
-                    const tag_text = basename[offset + tag_group.start .. offset + tag_group.end];
+                    const raw_tag_text = basename[offset + tag_group.start .. offset + tag_group.end];
+                    var tag_text_list = std.ArrayList(u8).init(self.allocator);
+                    defer tag_text_list.deinit();
+
+                    if (self.config.tag_scope) |tag_scope| {
+                        const written = try tag_text_list.writer().write(tag_scope);
+                        std.debug.assert(written == tag_scope.len);
+                    }
+                    if (self.config.cast_lowercase) {
+                        for (raw_tag_text) |raw_tag_character| {
+                            const written = try tag_text_list.writer().write(&[_]u8{std.ascii.toLower(raw_tag_character)});
+                            std.debug.assert(written == 1);
+                        }
+                    } else {
+                        const written = try tag_text_list.writer().write(raw_tag_text);
+                        std.debug.assert(written == raw_tag_text.len);
+                    }
+
+                    const tag_text = tag_text_list.items;
                     var maybe_tag = try ctx.fetchNamedTag(tag_text, "en");
                     if (maybe_tag) |tag| {
                         try file.addTag(tag.core);
