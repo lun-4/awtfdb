@@ -140,7 +140,7 @@ const RegexTagInferrer = struct {
 
         var offset: usize = 0;
         while (true) {
-            var maybe_captures = try self.regex.capturess(self.allocator, basename[offset..], .{});
+            var maybe_captures = try self.regex.captures(self.allocator, basename[offset..], .{});
 
             if (maybe_captures) |captures| {
                 defer self.allocator.free(captures);
