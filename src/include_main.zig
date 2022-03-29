@@ -3,6 +3,8 @@ const sqlite = @import("sqlite");
 const manage_main = @import("main.zig");
 const Context = manage_main.Context;
 
+const libpcre = @import("libpcre");
+
 const log = std.log.scoped(.ainclude);
 
 const VERSION = "0.0.1";
@@ -18,9 +20,12 @@ const HELPTEXT =
     \\ 	-v				turns on verbosity (debug logging)
     \\ 	--tag <tag>			add the following tag to the given path
     \\ 					 (if its a folder, add the tag to all files in the folder)
-    \\ 	--infer-tags <inferrer>		infer tags using a processor
+    \\ 	--infer-tags <inferrer>		infer tags using a processor.
+    \\					all tags after that argument shall be
+    \\					processed using that inferrer's options,
+    \\					if any of them don't match, then argument
+    \\					processing comes back to normal options
     \\ 					 (available processors: regex)
-    \\
     \\ example, adding a single file:
     \\  ainclude --tag format:mp4 --tag "meme:what the dog doing" /downloads/funny_meme.mp4
     \\
@@ -30,8 +35,20 @@ const HELPTEXT =
     \\ example, adding a media library:
     \\  ainclude --tag type:music --infer-tags media /my/music/collection
     \\
-    \\ example, using regex to infer tags:
-    \\  ainclude --infer-tags regex --regex '\[(.*)\]' --regex-text-scope test: --regex-cast-lowercase /home/luna/media
+    \\ regex tag inferrer:
+    \\ 	runs a regex over the filename of each included file and adds every
+    \\ 	match as a tag for that file in the index.
+    \\
+    \\ 	every match group in the regex will be processed as a new tag
+    \\
+    \\ regex tag inferrer options:
+    \\ 	--regex text			the regex to use (PCRE syntax)
+    \\ 	--regex-text-scope scope	the tag scope to use (say, "mytag:")
+    \\ 	--regex-cast-lowercase		if the content of the tag should be
+    \\ 					converted to lowercase before adding it
+    \\
+    \\ example, using regex to infer tags based on filenames with "[tag]" as tags:
+    \\  ainclude --infer-tags regex --regex '\[(.*?)\]' /my/movies/collection
 ;
 
 const TagInferrer = enum {
@@ -41,15 +58,28 @@ const TagInferrer = enum {
 const TagInferrerConfig = struct {
     last_argument: []const u8,
     config: union(TagInferrer) {
-        regex: struct {
-            text: ?[]const u8 = null,
-            tag_scope: ?[]const u8 = null,
-            cast_lowercase: bool = false,
-        },
+        regex: RegexTagInferrer.Config,
     },
 };
 
+const TagInferrerContext = union(TagInferrer) {
+    regex: RegexTagInferrer.RunContext,
+};
+
 const RegexTagInferrer = struct {
+    pub const Config = struct {
+        text: ?[]const u8 = null,
+        tag_scope: ?[]const u8 = null,
+        cast_lowercase: bool = false,
+    };
+
+    pub const RunContext = struct {
+        allocator: std.mem.Allocator,
+        config: Config,
+        regex_cstr: [:0]const u8,
+        regex: libpcre.Regex,
+    };
+
     pub fn consumeArguments(args_it: *std.process.ArgIterator) !TagInferrerConfig {
         var arg_state: enum { None, Text, TagScope } = .None;
         var config: TagInferrerConfig = .{ .last_argument = undefined, .config = .{ .regex = .{} } };
@@ -88,6 +118,52 @@ const RegexTagInferrer = struct {
 
         if (config.config.regex.text == null) return error.RegexArgumentRequired;
         return config;
+    }
+
+    pub fn init(config: TagInferrerConfig, allocator: std.mem.Allocator) !RunContext {
+        const regex_config = config.config.regex;
+        const regex_cstr = try std.cstr.addNullByte(allocator, regex_config.text.?);
+        return RunContext{
+            .allocator = allocator,
+            .config = regex_config,
+            .regex_cstr = regex_cstr,
+            .regex = try libpcre.Regex.compile(regex_cstr, .{}),
+        };
+    }
+
+    pub fn deinit(self: *RunContext) void {
+        self.allocator.free(self.regex_cstr);
+    }
+
+    pub fn run(self: *RunContext, ctx: *Context, file: *Context.File) !void {
+        const basename = std.fs.path.basename(file.local_path);
+
+        var offset: usize = 0;
+        while (true) {
+            var maybe_captures = try self.regex.capturess(self.allocator, basename[offset..], .{});
+
+            if (maybe_captures) |captures| {
+                defer self.allocator.free(captures);
+
+                const full_match = captures[0].?;
+                for (captures[1..]) |capture| {
+                    const tag_group = capture.?;
+
+                    const tag_text = basename[offset + tag_group.start .. offset + tag_group.end];
+                    var maybe_tag = try ctx.fetchNamedTag(tag_text, "en");
+                    if (maybe_tag) |tag| {
+                        try file.addTag(tag.core);
+                    } else {
+                        var tag = try ctx.createNamedTag(tag_text, "en", null);
+                        try file.addTag(tag.core);
+                    }
+                }
+
+                offset += full_match.end;
+            } else {
+                break;
+            }
+        }
     }
 };
 
@@ -231,11 +307,14 @@ pub fn main() anyerror!void {
         }
     }
 
+    var contexts = std.ArrayList(TagInferrerContext).init(allocator);
+    defer contexts.deinit();
     for (given_args.wanted_inferrers.items) |inferrer_config| {
-        _ = inferrer_config;
-        log.info("found config for  {}", .{inferrer_config});
-        std.debug.todo("add any logic for inferrers");
+        try contexts.append(.{ .regex = try RegexTagInferrer.init(inferrer_config, allocator) });
     }
+    defer for (contexts.items) |*context| switch (context.*) {
+        .regex => |*regex_ctx| RegexTagInferrer.deinit(regex_ctx),
+    };
 
     for (given_args.include_paths.items) |path_to_include| {
         var dir: ?std.fs.Dir = std.fs.cwd().openDir(path_to_include, .{ .iterate = true }) catch |err| blk: {
@@ -255,6 +334,14 @@ pub fn main() anyerror!void {
 
             for (default_tag_cores.items) |tag_core| {
                 try file.addTag(tag_core);
+            }
+
+            for (given_args.wanted_inferrers.items) |inferrer_config, index| {
+                log.info("found config for  {}", .{inferrer_config});
+                var inferrer_ctx = &contexts.items[index];
+                switch (inferrer_ctx.*) {
+                    .regex => |*regex_ctx| try RegexTagInferrer.run(regex_ctx, &ctx, &file),
+                }
             }
         } else {
             var walker = try dir.?.walk(allocator);
