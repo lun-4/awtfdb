@@ -113,9 +113,10 @@ pub const Context = struct {
         // itself but it just hates me (SQLITE_CANTOPEN my beloathed).
 
         // TODO use different way to get env
+        self.home_path = self.home_path orelse std.os.getenv("HOME");
         const db_path = try std.fs.path.resolve(
             self.allocator,
-            &[_][]const u8{ "/home/luna", "boorufs.db" },
+            &[_][]const u8{ self.home_path.?, "boorufs.db" },
         );
         defer self.allocator.free(db_path);
 
@@ -666,12 +667,13 @@ pub fn main() anyerror!void {
     }
 }
 
-fn makeTestContext() !Context {
+pub fn makeTestContext() !Context {
     var ctx = Context{
         .args_it = undefined,
         .stdout = undefined,
         .db = null,
         .allocator = std.testing.allocator,
+        .home_path = std.os.getenv("HOME"),
     };
 
     ctx.db = try sqlite.Db.init(.{
