@@ -69,6 +69,7 @@ const TagInferrerContext = union(TagInferrer) {
 const RegexTagInferrer = struct {
     pub const Config = struct {
         text: ?[]const u8 = null,
+        use_full_path: bool = false,
         tag_scope: ?[]const u8 = null,
         cast_lowercase: bool = false,
     };
@@ -110,6 +111,8 @@ const RegexTagInferrer = struct {
                 arg_state = .TagScope;
             } else if (std.mem.eql(u8, arg, "--regex-cast-lowercase")) {
                 config.config.regex.cast_lowercase = true;
+            } else if (std.mem.eql(u8, arg, "--regex-use-full-path")) {
+                config.config.regex.use_full_path = true;
             } else {
                 config.last_argument = arg;
                 break;
@@ -136,7 +139,7 @@ const RegexTagInferrer = struct {
     }
 
     pub fn run(self: *RunContext, ctx: *Context, file: *Context.File) !void {
-        const basename = std.fs.path.basename(file.local_path);
+        const basename = if (self.config.use_full_path) file.local_path else std.fs.path.basename(file.local_path);
 
         var offset: usize = 0;
         while (true) {
@@ -168,6 +171,7 @@ const RegexTagInferrer = struct {
                     }
 
                     const tag_text = tag_text_list.items;
+                    log.info("found tag: {s}", .{tag_text});
                     var maybe_tag = try ctx.fetchNamedTag(tag_text, "en");
                     if (maybe_tag) |tag| {
                         try file.addTag(tag.core);
@@ -268,6 +272,9 @@ pub fn main() anyerror!void {
             // those args beforehand and then pass the arg state forward
         } else if (std.mem.eql(u8, arg, "--infer-tags")) {
             state = .InferMoreTags;
+            // TODO check if this is supposed to be an argument or an
+            // actual option by peeking over args_it. paths can have --
+            // after all.
         } else if (std.mem.startsWith(u8, arg, "--")) {
             return error.InvalidArgument;
         } else {
