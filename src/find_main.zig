@@ -86,6 +86,33 @@ pub fn main() anyerror!void {
     const result = try SqlGiver.giveMeSql(allocator, query);
     defer allocator.free(result.query);
     defer allocator.free(result.tags);
+
+    var resolved_tag_cores = std.ArrayList(i64).init(allocator);
+    defer resolved_tag_cores.deinit();
+
+    for (result.tags) |tag_text| {
+        const maybe_tag = try ctx.fetchNamedTag(tag_text, "en");
+        if (maybe_tag) |tag| {
+            try resolved_tag_cores.append(tag.core.id);
+        } else {
+            log.err("unknown tag '{s}'", .{tag_text});
+        }
+    }
+
+    var stmt = try ctx.db.?.prepareDynamic(result.query);
+    defer stmt.deinit();
+
+    log.info("query: {s}", .{result.query});
+    log.info("tag cores: {any}", .{resolved_tag_cores.items});
+
+    var it = try stmt.iterator(i64, resolved_tag_cores.items);
+    var count: usize = 0;
+    while (try it.next(.{})) |file_hash| {
+        log.info("found file with id {d}", .{file_hash});
+        count += 1;
+    }
+
+    log.info("found {d} files", .{count});
 }
 
 const SqlGiver = struct {
