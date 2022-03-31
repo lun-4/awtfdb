@@ -185,7 +185,10 @@ const SqlGiver = struct {
 
                 switch (captured_regex_index) {
                     0 => try list.writer().print(" or", .{}),
-                    1 => try list.writer().print(" and", .{}),
+                    1 => {
+                        try list.writer().print(" intersect", .{});
+                        try list.writer().print(" select file_hash from tag_files where", .{});
+                    },
                     2, 3 => {
                         try list.writer().print(" core_hash = ?", .{});
                         // if we're matching raw_tag_regex (tags that have
