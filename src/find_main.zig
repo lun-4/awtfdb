@@ -124,7 +124,7 @@ const SqlGiver = struct {
     pub fn giveMeSql(allocator: std.mem.Allocator, query: []const u8) !Result {
         var or_operator = try libpcre.Regex.compile("( +)?\\|( +)?", .{});
         var and_operator = try libpcre.Regex.compile(" +", .{});
-        var tag_regex = try libpcre.Regex.compile("[a-zA-Z-_]+", .{});
+        var tag_regex = try libpcre.Regex.compile("[a-zA-Z-_0-9:;&\\*]+", .{});
         var raw_tag_regex = try libpcre.Regex.compile("\".*?\"", .{});
 
         const capture_order = [_]*libpcre.Regex{
@@ -227,6 +227,4 @@ test "sql parser" {
     inline for (expected_tags) |expected_tag, index| {
         try std.testing.expectEqualStrings(expected_tag, result.tags[index]);
     }
-
-    // TODO expectEqualStrings on tags contents
 }
