@@ -268,6 +268,8 @@ pub fn main() anyerror!void {
             // those args beforehand and then pass the arg state forward
         } else if (std.mem.eql(u8, arg, "--infer-tags")) {
             state = .InferMoreTags;
+        } else if (std.mem.startsWith(u8, arg, "--")) {
+            return error.InvalidArgument;
         } else {
             try given_args.include_paths.append(arg);
         }
