@@ -152,7 +152,7 @@ const SqlGiver = struct {
                 defer allocator.free(captures);
 
                 const full_match = captures[0].?;
-                const match_text = query[index + full_match.start .. index + full_match.end];
+                var match_text = query[index + full_match.start .. index + full_match.end];
                 index += full_match.end;
 
                 switch (captured_regex_index) {
@@ -160,11 +160,20 @@ const SqlGiver = struct {
                     1 => try list.writer().print(" and", .{}),
                     2, 3 => {
                         try list.writer().print(" core_hash = ?", .{});
+                        // if we're matching raw_tag_regex (tags that have
+                        // quotemarks around them), index forward and backward
+                        // so that we don't pass those quotemarks to query
+                        // processors.
+                        if (captured_regex_index == 3) {
+                            match_text = match_text[1 .. match_text.len - 1];
+                        }
                         try tags.append(match_text);
                     },
                     else => unreachable,
                 }
             } else {
+                // TODO add better parse errors (maybe return an union on
+                // Result? and add relevant crash info for the ParseError part)
                 return error.UnexpectedCharacters;
             }
         }
