@@ -43,6 +43,8 @@ const HELPTEXT =
     \\
     \\ regex tag inferrer options:
     \\ 	--regex text			the regex to use (PCRE syntax)
+    \\ 	--regex-use-full-path		if we should infer tags from the entire
+    \\ 					path, instead of only the filename
     \\ 	--regex-text-scope scope	the tag scope to use (say, "mytag:")
     \\ 	--regex-cast-lowercase		if the content of the tag should be
     \\ 					converted to lowercase before adding it
