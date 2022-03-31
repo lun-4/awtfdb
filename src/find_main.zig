@@ -1,6 +1,7 @@
 const std = @import("std");
 const sqlite = @import("sqlite");
 const manage_main = @import("main.zig");
+const libpcre = @import("libpcre");
 const Context = manage_main.Context;
 
 const log = std.log.scoped(.awtfdb_watcher);
@@ -82,189 +83,114 @@ pub fn main() anyerror!void {
     // afind '(tag1 | tag2) tag3' (tag1 OR tag2, AND tag3)
     // afind '"tag3 2"' ("tag3 2" is a tag, actually)
 
-    var scanner = Scanner.init(query);
-    while (true) {
-        var token = scanner.next() catch |err| {
-            log.err("error parsing query. around '{s}': {s}", .{ scanner.currentLexeme(), @errorName(err) });
-            return error.ParseError;
-        };
-
-        log.info("{s}", .{token});
-    }
+    const result = try SqlGiver.giveMeSql(allocator, query);
+    defer allocator.free(result.query);
+    defer allocator.free(result.tags);
 }
 
-pub const ScannerError = error{
-    Unexpected,
-    Unterminated,
-};
+const SqlGiver = struct {
+    const Result = struct {
+        query: []const u8,
+        tags: [][]const u8,
+    };
 
-pub const TokenType = enum {
-    LeftParen,
-    RightParen,
-    Dot,
-    Pipe,
-    Space,
-    Tag,
-    EOF,
-};
+    pub fn giveMeSql(allocator: std.mem.Allocator, query: []const u8) !Result {
+        var or_operator = try libpcre.Regex.compile("( +)?\\|( +)?", .{});
+        var and_operator = try libpcre.Regex.compile(" +", .{});
+        var tag_regex = try libpcre.Regex.compile("[a-zA-Z-_]+", .{});
+        var raw_tag_regex = try libpcre.Regex.compile("\".*?\"", .{});
 
-pub const Token = struct {
-    typ: TokenType,
-    lexeme: []const u8,
-    source_start_character: usize,
-};
-
-pub const Scanner = struct {
-    source: []const u8,
-
-    start: usize = 0,
-    current: usize = 0,
-
-    pub fn init(source: []const u8) Scanner {
-        return Scanner{ .source = source };
-    }
-
-    pub fn reset(self: *Scanner) void {
-        self.start = 0;
-        self.current = 0;
-    }
-
-    fn isAtEnd(self: Scanner) bool {
-        return self.current >= self.source.len;
-    }
-
-    fn advance(self: *Scanner) u8 {
-        self.current += 1;
-        return self.source[self.current - 1];
-    }
-
-    fn rollback(self: *Scanner) void {
-        self.current -= 1;
-    }
-
-    pub fn currentLexeme(self: Scanner) []const u8 {
-        return self.source[self.start..self.current];
-    }
-
-    fn makeToken(self: Scanner, ttype: TokenType) Token {
-        return Token{
-            .typ = ttype,
-            .lexeme = self.currentLexeme(),
-            .source_start_character = self.current,
+        const capture_order = [_]*libpcre.Regex{
+            &or_operator,
+            &and_operator,
+            &tag_regex,
+            &raw_tag_regex,
         };
-    }
 
-    fn makeTokenLexeme(self: Scanner, ttype: TokenType, lexeme: []const u8) Token {
-        return Token{
-            .typ = ttype,
-            .lexeme = lexeme,
-            .source_start_character = self.current,
-        };
-    }
+        var index: usize = 0;
 
-    /// Peek at the current character in the scanner
-    fn peek(self: Scanner) u8 {
-        if (self.isAtEnd()) return 0;
-        if (self.current == 0) return 0;
-        return self.source[self.current - 1];
-    }
+        var list = std.ArrayList(u8).init(allocator);
+        defer list.deinit();
 
-    /// Peek at the next character in the scanner
-    fn peekNext(self: Scanner) u8 {
-        if (self.current + 1 > self.source.len) return 0;
-        return self.source[self.current];
-    }
+        var tags = std.ArrayList([]const u8).init(allocator);
+        defer tags.deinit();
 
-    /// Consume a string. stop_char is used to determine
-    /// if the string is a single quote or double quote string
-    fn doString(self: *Scanner, stop_char: u8) !Token {
-        // consume entire string
-        while (self.peekNext() != stop_char and !self.isAtEnd()) {
-            _ = self.advance();
+        try list.writer().print("select file_hash from tag_files where", .{});
+
+        while (true) {
+            // try to match on every regex with that same order:
+            // tag_regex, raw_tag_regex, or_operator, and_operator
+            // if any of those match first, emit the relevant SQL for that
+            // type of tag.
+
+            // TODO paren support "(" and ")"
+            // TODO NOT operator support (-tag means NOT tag)
+
+            const query_slice = query[index..];
+            if (query_slice.len == 0) break;
+
+            var maybe_captures: ?[]?libpcre.Capture = null;
+            var captured_regex_index: usize = 0;
+            for (capture_order) |regex, current_regex_index| {
+                log.debug("try regex {d} on query '{s}'", .{ current_regex_index, query_slice });
+                maybe_captures = try regex.captures(allocator, query_slice, .{});
+                captured_regex_index = current_regex_index;
+                log.debug("raw capture? {any}", .{maybe_captures});
+                if (maybe_captures) |captures| {
+                    const capture = captures[0].?;
+                    if (capture.start != 0) {
+                        allocator.free(captures);
+                        maybe_captures = null;
+                    } else {
+                        log.debug("captured!!! {any}", .{maybe_captures});
+                        break;
+                    }
+                }
+            }
+
+            if (maybe_captures) |captures| {
+                defer allocator.free(captures);
+
+                const full_match = captures[0].?;
+                const match_text = query[index + full_match.start .. index + full_match.end];
+                index += full_match.end;
+
+                switch (captured_regex_index) {
+                    0 => try list.writer().print(" or", .{}),
+                    1 => try list.writer().print(" and", .{}),
+                    2, 3 => {
+                        try list.writer().print(" core_hash = ?", .{});
+                        try tags.append(match_text);
+                    },
+                    else => unreachable,
+                }
+            } else {
+                return error.UnexpectedCharacters;
+            }
         }
 
-        // unterminated string.
-        if (self.isAtEnd()) {
-            return error.NonTerminatedString;
-        }
-
-        // the closing character of the string
-        _ = self.advance();
-
-        // remove the starting and ending chars of the string
-        const lexeme = self.currentLexeme();
-        return self.makeTokenLexeme(
-            .Tag,
-            lexeme[1 .. lexeme.len - 1],
-        );
-    }
-
-    fn doIdentifier(self: *Scanner) Token {
-        while (std.ascii.isAlNum(self.peek())) {
-            _ = self.advance();
-        }
-
-        if (self.peekNext() != 0) {
-            self.rollback(); // ugly hack
-        }
-
-        return self.makeToken(.Tag);
-    }
-
-    pub fn next(self: *Scanner) !Token {
-        self.start = self.current;
-
-        if (self.isAtEnd()) return self.makeToken(.EOF);
-
-        var c = self.advance();
-        if (std.ascii.isAlNum(c)) return self.doIdentifier();
-
-        return switch (c) {
-            '(' => self.makeToken(.LeftParen),
-            ')' => self.makeToken(.RightParen),
-            '.' => self.makeToken(.Dot),
-
-            // '\'' => try self.doString('\''),
-            '"' => try self.doString('"'),
-
-            ' ' => self.makeToken(.Space),
-            //'\r', '\t'=>null,
-            //'\n' => blk: {
-            //    self.line += 1;
-            //    break :blk null;
-            //},
-
-            else => return error.UnexpectedCharacter,
-        };
+        return Result{ .query = list.toOwnedSlice(), .tags = tags.toOwnedSlice() };
     }
 };
 
-fn expectFollowingTokens(scanner: *Scanner, expected: anytype) !void {
-    inline for (expected) |expected_element| {
-        var token = try scanner.next();
-        try std.testing.expectEqual(expected_element.@"0", token.typ);
-        try std.testing.expectEqualStrings(expected_element.@"1", token.lexeme);
-    }
-}
+test "sql parser" {
+    const allocator = std.testing.allocator;
+    const result = try SqlGiver.giveMeSql(allocator, "a b | \"cd\"|e");
+    defer allocator.free(result.query);
+    defer allocator.free(result.tags);
 
-fn expectSameTokenFromExpr(queries: anytype, expected: anytype) !void {
-    inline for (queries) |query| {
-        var scanner = Scanner.init(query);
-        try expectFollowingTokens(&scanner, expected);
-    }
-}
+    try std.testing.expectEqualStrings(
+        "select file_hash from tag_files where core_hash = ? and core_hash = ? or core_hash = ? or core_hash = ?",
+        result.query,
+    );
 
-test "scanner basics" {
-    try expectSameTokenFromExpr(.{
-        "a b c",
-        "a \"b\" c",
-        "a \"b\" \"c\"",
-        "\"a\" \"b\" \"c\"",
-    }, .{
-        .{ TokenType.Tag, "a" },
-        .{ TokenType.Space, " " },
-        .{ TokenType.Tag, "b" },
-        .{ TokenType.Space, " " },
-        .{ TokenType.Tag, "c" },
-    });
+    try std.testing.expectEqual(@as(usize, 4), result.tags.len);
+
+    const expected_tags = .{ "a", "b", "cd", "e" };
+
+    inline for (expected_tags) |expected_tag, index| {
+        try std.testing.expectEqualStrings(expected_tag, result.tags[index]);
+    }
+
+    // TODO expectEqualStrings on tags contents
 }

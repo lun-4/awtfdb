@@ -242,7 +242,7 @@ const RenameContext = struct {
             .{},
             .{ .local_path = oldpath },
         );
-
+        defer for (raw_files) |*raw_file| raw_file.hash_data.close() catch unreachable;
         defer self.allocator.free(raw_files);
 
         if (raw_files.len >= 1) {
@@ -610,3 +610,86 @@ pub fn main() anyerror!void {
 
     log.info("exiting main loop", .{});
 }
+
+//test "rename syscalls trigger db rename" {
+//    const allocator = std.testing.allocator;
+//
+//    var ctx = try manage_main.makeTestContext();
+//    defer ctx.deinit();
+//
+//    var oldnames = ChunkedNameMap.init(allocator);
+//    var newnames = ChunkedNameMap.init(allocator);
+//    var cwds = NameMap.init(allocator);
+//
+//    var rename_ctx = RenameContext{
+//        .allocator = allocator,
+//        .oldnames = &oldnames,
+//        .newnames = &newnames,
+//        .cwds = &cwds,
+//        .ctx = &ctx,
+//    };
+//    defer rename_ctx.deinit();
+//
+//    var tmp = std.testing.tmpDir(.{});
+//    defer tmp.cleanup();
+//
+//    var file = try tmp.dir.createFile("test_file", .{});
+//    defer file.close();
+//    _ = try file.write("awooga");
+//
+//    var indexed_file = try ctx.createFileFromDir(tmp.dir, "test_file");
+//    defer indexed_file.deinit();
+//
+//    // TODO system layer so we can attach a test procfs and test filesystem too
+//    // also should help if we think about going beyond bpftrace
+//    //  (dtrace for macos and bsds maybe?)
+//
+//    var full_tmp_dir_path = try tmp.dir.realpathAlloc(allocator, ".");
+//    defer allocator.free(full_tmp_dir_path);
+//
+//    var oldname = try std.fs.path.resolve(allocator, &[_][]const u8{
+//        full_tmp_dir_path,
+//        "test_file",
+//    });
+//    defer allocator.free(oldname);
+//    var newname = try std.fs.path.resolve(allocator, &[_][]const u8{
+//        full_tmp_dir_path,
+//        "test_file2",
+//    });
+//    defer allocator.free(newname);
+//
+//    const lines_preprint =
+//        \\v1:oldname:6969:6969:{s}
+//        \\v1:newname:6969:6969:{s}
+//        \\v1:exit_rename:6969:6969:0
+//    ;
+//
+//    var buf: [8192]u8 = undefined;
+//    const lines = try std.fmt.bufPrint(
+//        &buf,
+//        lines_preprint,
+//        .{ oldname, newname },
+//    );
+//
+//    // give those lines to context
+//    var it = std.mem.split(u8, lines, "\n");
+//    while (it.next()) |line|
+//        try rename_ctx.processLine(line);
+//
+//    const oldname_count = (try ctx.db.?.one(
+//        usize,
+//        "select count(*) from files where local_path = ?",
+//        .{},
+//        .{oldname},
+//    )).?;
+//
+//    try std.testing.expectEqual(@as(usize, 0), oldname_count);
+//
+//    const newname_count = (try ctx.db.?.one(
+//        usize,
+//        "select count(*) from files where local_path = ?",
+//        .{},
+//        .{newname},
+//    )).?;
+//    try std.testing.expectEqual(@as(usize, 1), newname_count);
+//}
