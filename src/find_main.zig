@@ -96,6 +96,7 @@ pub fn main() anyerror!void {
             try resolved_tag_cores.append(tag.core.id);
         } else {
             log.err("unknown tag '{s}'", .{tag_text});
+            return error.UnknownTag;
         }
     }
 
