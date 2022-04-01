@@ -220,7 +220,7 @@ test "sql parser" {
     defer allocator.free(result.tags);
 
     try std.testing.expectEqualStrings(
-        "select file_hash from tag_files where core_hash = ? and core_hash = ? or core_hash = ? or core_hash = ?",
+        "select file_hash from tag_files where core_hash = ? intersect select file_hash from tag_files where core_hash = ? or core_hash = ? or core_hash = ?",
         result.query,
     );
 
