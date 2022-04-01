@@ -537,7 +537,9 @@ pub const Context = struct {
         };
     }
 
-    pub fn fetchFile(self: *Self, hash: Hash) !?File {
+    // TODO create fetchFileFromHash that receives full hash object and automatically
+    // prefers hash instead of id-search
+    pub fn fetchFile(self: *Self, hash_id: i64) !?File {
         var maybe_local_path = try self.db.?.oneAlloc(
             struct {
                 local_path: []const u8,
@@ -551,7 +553,7 @@ pub const Context = struct {
             \\ where files.file_hash = ?
         ,
             .{},
-            .{hash.id},
+            .{hash_id},
         );
 
         if (maybe_local_path) |*local_path| {
@@ -559,7 +561,7 @@ pub const Context = struct {
             defer self.allocator.free(local_path.hash_data.data);
 
             const almost_good_hash = HashWithBlob{
-                .id = hash.id,
+                .id = hash_id,
                 .hash_data = local_path.hash_data,
             };
             return File{
@@ -784,7 +786,7 @@ test "file creation" {
     try std.testing.expectEqual(indexed_file.hash.id, path_indexed_file.hash.id);
     try std.testing.expectEqualStrings(indexed_file.hash.hash_data[0..], path_indexed_file.hash.hash_data[0..]);
 
-    var fetched_file = (try ctx.fetchFile(indexed_file.hash)).?;
+    var fetched_file = (try ctx.fetchFile(indexed_file.hash.id)).?;
     defer fetched_file.deinit();
     try std.testing.expectStringEndsWith(fetched_file.local_path, "/test_file");
     try std.testing.expectEqual(indexed_file.hash.id, fetched_file.hash.id);
