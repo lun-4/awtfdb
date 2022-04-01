@@ -538,22 +538,38 @@ pub const Context = struct {
     }
 
     pub fn fetchFile(self: *Self, hash: Hash) !?File {
-        const maybe_local_path = try self.db.?.oneAlloc(
-            []const u8,
+        var maybe_local_path = try self.db.?.oneAlloc(
+            struct {
+                local_path: []const u8,
+                hash_data: sqlite.Blob,
+            },
             self.allocator,
-            "select local_path from files where file_hash = ?",
+            \\ select local_path, hashes.hash_data
+            \\ from files
+            \\ join hashes
+            \\ 	on files.file_hash = hashes.id
+            \\ where files.file_hash = ?
+        ,
             .{},
             .{hash.id},
         );
 
-        if (maybe_local_path) |local_path|
+        if (maybe_local_path) |*local_path| {
+            // string memory is passed to client
+            defer self.allocator.free(local_path.hash_data.data);
+
+            const almost_good_hash = HashWithBlob{
+                .id = hash.id,
+                .hash_data = local_path.hash_data,
+            };
             return File{
                 .ctx = self,
-                .local_path = local_path,
-                .hash = hash,
-            }
-        else
+                .local_path = local_path.local_path,
+                .hash = almost_good_hash.toRealHash(),
+            };
+        } else {
             return null;
+        }
     }
 
     pub fn createCommand(self: *Self) !void {
