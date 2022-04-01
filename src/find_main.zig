@@ -108,8 +108,12 @@ pub fn main() anyerror!void {
 
     var it = try stmt.iterator(i64, resolved_tag_cores.items);
     var count: usize = 0;
+    var stdout = std.io.getStdOut();
     while (try it.next(.{})) |file_hash| {
-        log.info("found file with id {d}", .{file_hash});
+        var file = (try ctx.fetchFile(file_hash)).?;
+        defer file.deinit();
+
+        try stdout.writer().print("{s} {s}\n", .{ file.hash, file.local_path });
         count += 1;
     }
 
