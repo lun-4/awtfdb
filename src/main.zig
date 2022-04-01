@@ -537,6 +537,25 @@ pub const Context = struct {
         };
     }
 
+    pub fn fetchFile(self: *Self, hash: Hash) !?File {
+        const maybe_local_path = try self.db.?.oneAlloc(
+            []const u8,
+            self.allocator,
+            "select local_path from files where file_hash = ?",
+            .{},
+            .{hash.id},
+        );
+
+        if (maybe_local_path) |local_path|
+            return File{
+                .ctx = self,
+                .local_path = local_path,
+                .hash = hash,
+            }
+        else
+            return null;
+    }
+
     pub fn createCommand(self: *Self) !void {
         try self.loadDatabase(.{ .create = true });
         try self.migrateCommand();
@@ -748,6 +767,12 @@ test "file creation" {
     try std.testing.expectStringEndsWith(path_indexed_file.local_path, "/test_file");
     try std.testing.expectEqual(indexed_file.hash.id, path_indexed_file.hash.id);
     try std.testing.expectEqualStrings(indexed_file.hash.hash_data[0..], path_indexed_file.hash.hash_data[0..]);
+
+    var fetched_file = (try ctx.fetchFile(indexed_file.hash)).?;
+    defer fetched_file.deinit();
+    try std.testing.expectStringEndsWith(fetched_file.local_path, "/test_file");
+    try std.testing.expectEqual(indexed_file.hash.id, fetched_file.hash.id);
+    try std.testing.expectEqualStrings(indexed_file.hash.hash_data[0..], fetched_file.hash.hash_data[0..]);
 }
 
 // test "file and tags" {
