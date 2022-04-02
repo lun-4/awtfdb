@@ -1,19 +1,79 @@
-# boorufs
+# awtfdb
 
-(wip) a "many-compromises" file indexing system
+(wip) a "many-compromises" file indexing system.
 
-NOT READY. DO NOT USE. NOT READY. DO NOT USE.
+## project state
+
+v0.1 is soon to be released:
+
+this is the first proper release of it, where i plan to dogfood my own media
+libraries into the system to find out if all the tools are going to work as
+expected.
+
+there is no specification yet that would enable others to contribute to the
+system by writing their own tools on top, but _that is planned_.
+
+you _can_ use this now, but the UX is very dependant on a developer's pov.
+
+as this is v0.x, it is **NOT PRODUCTION READY**. **THERE IS NO WARRANTY PROVIDED
+BY ME. I WORK ON THIS PART TIME. BEWARE OF BUGS.**
+
+## how build
+
+- almost everything is cross-platform, save for `awtfdb-watcher`
+  - this was not tested as part of the v0.1 effort.
+- get [zig](https://github.com/ziglang/zig) (using recent unstable master)
+  - yes that means things break from time to time
+- get [zigmod](https://github.com/nektro/zigmod) (tested with r77)
+
+```
+git clone https://github.com/lun-4/awtfdb
+cd awtfdb
+zig build
+```
+
+## install thing
+
+```
+zig build install --prefix ~/.local
+```
+
+## using it
+
+```
+# create the awtfdb index file on your home directory
+awtfdb-manage create
+
+# add files into the index
+# the ainclude tool contains a lot of tag inferrers
+# you can see 'ainclude -h' for explanations into such
+ainclude --tag meme:what_the_dog_doing ~/my/folder/dog_doing.jpg
+
+# find files with tags
+afind meme:what_the_dog_doing
+
+# spawn the rename watcher for libraries that have minimal rename changes
+# as the watcher is relatively unstable.
+#
+# install bpftrace and a recent linux kernel,
+# then add this to your init system
+awtfdb-watcher /home/user
+```
+
+## roadmap for the thing
+
+WIP.
 
 ## inspiration
 
 - hydrus
-- booru-ware
+- booru software
 
 ## design notes
 
-if i could make it a single phrase: boorufs is an incremental non-destructive tagging system for your life's files full of compromises.
+if i could make it a single phrase: awtfdb is an incremental non-destructive tagging system for your life's files full of compromises.
 
-you start it with 'boorufs path/to/home/directory', it'll create a sqlite file on homedir/boorufs.db, and run necessary migrations
+you start it with 'awtfdb path/to/home/directory', it'll create a sqlite file on homedir/awtfdb.db, and run necessary migrations
 
 then, say, you have a folder full of music. you can track them with 'binclude mediadir', but that'd just track them without tags. we know its a media directory, why not infer tags based on content?
 
@@ -49,7 +109,7 @@ now that i have a bit of spec like the db, what happens for implementation?
 
 i want to have something that isnt monolithic, there is no http api of the sorts to manage the database, you just open it, and sqlite will take care of concurrent writers (file based locking)
 
-you just use libboorufs (name tbd) and itll provide you the high level api such as "execute this query"
+you just use libawtfdb (name tbd) and itll provide you the high level api such as "execute this query"
 
 there needs to be at least the watcher daemon, but what about secondary functionality? say, i want a program to ensure the hashes are fine for the files, but do it in an ultra slow way, generating reports or even calling notify-send when it finds a discrepancy in hashes
 
@@ -59,7 +119,7 @@ that is a feature way out of scope for the "watcher daemon that only checks up f
 
 this does infer that the database needs to have more than the tagging data
 
-but a way to become an IPC format between all boorufs utilities
+but a way to become an IPC format between all awtfdb utilities
 
 maybe a janitor process is ensuring all files exist and you want to see the progress bar and plan accordingly, while also ensuring there isn't two of them having to clash with each other's work
 
@@ -71,7 +131,7 @@ one tool will have to be database management though
 
 the database migrations will have to go to A Tool Somewhere
 
-maybe boorufs-manage
+maybe awtfdb-manage
 
 create db, run some statistics, show migration warnings, etc
 
@@ -81,7 +141,7 @@ the watcher stays as is, just a watcher for file renames
 
 the purpose of a job system in awtfdb
 
-- schedule periodic boorufs jobs (every week there should be a checkup of
+- schedule periodic awtfdb jobs (every week there should be a checkup of
   all paths and their hashes, for example. that job would be a "janitor")
 - get job status and _historical_ reports
   - understand failure rate of jobs, if a job fails too much, alerts should
@@ -107,15 +167,3 @@ system's initd (systemd, runit+snooze, cron), but i think i might tire myself
 out from having to autogenerate service units and connect it all together
 and HOPE for a LIGHT FROM GOD that it's going to work as intended. god fuck
 linux
-
-## how build
-
-WIP.
-
-## install thing
-
-WIP.
-
-## roadmap for the thing
-
-WIP.
