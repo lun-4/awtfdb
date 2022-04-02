@@ -377,7 +377,7 @@ pub const Context = struct {
 
         const FileSelf = @This();
 
-        pub fn deinit(self: *FileSelf) void {
+        pub fn deinit(self: FileSelf) void {
             self.ctx.allocator.free(self.local_path);
         }
 
