@@ -419,8 +419,10 @@ pub const Context = struct {
                 .{},
                 .{self.hash.id},
             );
-            defer for (internal_hashes) |hash| allocator.free(hash.hash_data.data);
-            defer allocator.free(internal_hashes);
+            defer {
+                for (internal_hashes) |hash| allocator.free(hash.hash_data.data);
+                allocator.free(internal_hashes);
+            }
 
             var list = HashList.init(allocator);
             defer list.deinit();
