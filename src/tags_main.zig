@@ -20,14 +20,14 @@ const HELPTEXT =
     \\ examples:
     \\ 	atags create tag
     \\ 	atags create --core lkdjfalskjg tag
-    \\ 	atags remove tag
-    \\ 	atags remove --core dslkjfsldkjf
     \\ 	atags search tag
+    \\ 	atags remove --tag tag
+    \\ 	atags remove --core dslkjfsldkjf
 ;
 
 const ActionConfig = union(enum) {
     Create: CreateAction.Config,
-    //Remove: RemoveAction.Config,
+    Remove: RemoveAction.Config,
     Search: SearchAction.Config,
 };
 
@@ -77,29 +77,7 @@ const CreateAction = struct {
         var raw_core_hash_buffer: [32]u8 = undefined;
 
         if (self.config.tag_core) |tag_core_hex_string| {
-            if (tag_core_hex_string.len != 64) {
-                log.err("hashes myst be 64 bytes long, got {d}", .{tag_core_hex_string.len});
-                return error.InvalidHashLength;
-            }
-            var raw_core_hash = try std.fmt.hexToBytes(&raw_core_hash_buffer, tag_core_hex_string);
-
-            const hash_blob = sqlite.Blob{ .data = raw_core_hash };
-            const hash_id = (try self.ctx.db.?.one(
-                i64,
-                \\ select hashes.id
-                \\ from hashes
-                \\ join tag_cores
-                \\  on tag_cores.core_hash = hashes.id
-                \\ where hashes.hash_data = ?
-            ,
-                .{},
-                .{hash_blob},
-            )) orelse {
-                return error.UnknownTagCore;
-            };
-
-            log.debug("found hash_id for the given core hash: {d}", .{hash_id});
-            maybe_core = Context.Hash{ .id = hash_id, .hash_data = raw_core_hash_buffer };
+            maybe_core = try consumeCoreHash(self.ctx, &raw_core_hash_buffer, tag_core_hex_string);
         }
 
         const tag = try self.ctx.createNamedTag(self.config.tag.?, "en", maybe_core);
@@ -111,14 +89,151 @@ const CreateAction = struct {
     }
 };
 
+fn consumeCoreHash(ctx: *Context, raw_core_hash_buffer: *[32]u8, tag_core_hex_string: []const u8) !Context.Hash {
+    if (tag_core_hex_string.len != 64) {
+        log.err("hashes myst be 64 bytes long, got {d}", .{tag_core_hex_string.len});
+        return error.InvalidHashLength;
+    }
+    var raw_core_hash = try std.fmt.hexToBytes(raw_core_hash_buffer, tag_core_hex_string);
+
+    const hash_blob = sqlite.Blob{ .data = raw_core_hash };
+    const hash_id = (try ctx.db.?.one(
+        i64,
+        \\ select hashes.id
+        \\ from hashes
+        \\ join tag_cores
+        \\  on tag_cores.core_hash = hashes.id
+        \\ where hashes.hash_data = ?
+    ,
+        .{},
+        .{hash_blob},
+    )) orelse {
+        return error.UnknownTagCore;
+    };
+
+    log.debug("found hash_id for the given core: {d}", .{hash_id});
+    return Context.Hash{ .id = hash_id, .hash_data = raw_core_hash_buffer.* };
+}
+
 const RemoveAction = struct {
     pub const Config = struct {
         tag_core: ?[]const u8 = null,
         tag: ?[]const u8 = null,
     };
+
     pub fn processArgs(args_it: *std.process.ArgIterator) !ActionConfig {
-        _ = args_it;
-        std.debug.todo("todo remove");
+        var config = Config{};
+
+        const ArgState = enum { None, NeedTagCore, NeedTag };
+        var state: ArgState = .None;
+        while (args_it.next()) |arg| {
+            if (state == .NeedTagCore) {
+                config.tag_core = arg;
+                state = .None;
+            } else if (state == .NeedTag) {
+                config.tag = arg;
+                state = .None;
+            } else if (std.mem.eql(u8, arg, "--core")) {
+                state = .NeedTagCore;
+            } else if (std.mem.eql(u8, arg, "--tag")) {
+                state = .NeedTag;
+            } else {
+                return error.InvalidArgument;
+            }
+        }
+        return ActionConfig{ .Remove = config };
+    }
+
+    ctx: *Context,
+    config: Config,
+
+    const Self = @This();
+
+    pub fn init(ctx: *Context, config: Config) !Self {
+        return Self{ .ctx = ctx, .config = config };
+    }
+
+    pub fn deinit(self: *Self) void {
+        _ = self;
+    }
+
+    pub fn run(self: *Self) !void {
+        _ = self;
+
+        var stdout = std.io.getStdOut().writer();
+        var stdin = std.io.getStdIn().reader();
+
+        var raw_core_hash_buffer: [32]u8 = undefined;
+
+        var amount: usize = 0;
+        try stdout.print("the following tags will be removed:\n", .{});
+
+        if (self.config.tag_core) |tag_core_hex_string| {
+            var core = try consumeCoreHash(self.ctx, &raw_core_hash_buffer, tag_core_hex_string);
+
+            // to delete the core, we need to delete every tag that references this tag core
+            //
+            // since this is a VERY destructive operation, we print the tag
+            // names that are affected by this command, requiring user
+            // confirmation to continue.
+
+            var stmt = try self.ctx.db.?.prepare(
+                "select tag_text, tag_language from tag_cores where core_hash = ?",
+            );
+            defer stmt.deinit();
+
+            var it = try stmt.iteratorAlloc(
+                struct {
+                    tag_text: []const u8,
+                    tag_language: []const u8,
+                },
+                self.ctx.allocator,
+                .{core.id},
+            );
+
+            while (try it.nextAlloc(self.ctx.allocator, .{})) |tag_name| {
+                try stdout.print(" {s}", .{tag_name.tag_text});
+                amount += 1;
+            }
+            try stdout.print("\n", .{});
+        } else if (self.config.tag) |tag_text| {
+            var maybe_tag = try self.ctx.fetchNamedTag(tag_text, "en");
+            if (maybe_tag) |tag| {
+                try stdout.print(" {s}", .{tag.kind.Named.text});
+                amount += 1;
+            } else {
+                return error.NamedTagNotFound;
+            }
+            try stdout.print("\n", .{});
+        }
+
+        var outcome: [1]u8 = undefined;
+        try stdout.print("do you want to remove {d} tags (y/n)? ", .{amount});
+        _ = try stdin.read(&outcome);
+
+        if (!std.mem.eql(u8, &outcome, "y")) return error.NotConfirmed;
+
+        var deleted_count: i64 = undefined;
+
+        if (self.config.tag_core) |tag_core_hex_string| {
+            var core = try consumeCoreHash(self.ctx, &raw_core_hash_buffer, tag_core_hex_string);
+            deleted_count = (try self.ctx.db.?.one(
+                i64,
+                "delete from tag_names where core_hash = ? returning count(*) as deleted_count",
+                .{},
+                .{core.id},
+            )).?;
+            try self.ctx.db.?.exec("delete from tag_cores where core_hash = ?", .{}, .{core.id});
+            try self.ctx.db.?.exec("delete from hashes where id = ?", .{}, .{core.id});
+        } else if (self.config.tag) |tag_text| {
+            deleted_count = (try self.ctx.db.?.one(
+                i64,
+                "delete from tag_names where tag_text = ? and tag_language = ? returning (select count(*) from tag_names where tag_text = ? and tag_language = ?)as deleted_count",
+                .{},
+                .{ tag_text, "en", tag_text, "en" },
+            )).?;
+        }
+        try stdout.print("deleted {d} tags\n", .{deleted_count});
     }
 };
 
@@ -234,6 +349,8 @@ pub fn main() anyerror!void {
                 given_args.action_config = try SearchAction.processArgs(&args_it);
             } else if (std.mem.eql(u8, arg, "create")) {
                 given_args.action_config = try CreateAction.processArgs(&args_it);
+            } else if (std.mem.eql(u8, arg, "remove")) {
+                given_args.action_config = try RemoveAction.processArgs(&args_it);
             }
         }
     }
@@ -271,6 +388,11 @@ pub fn main() anyerror!void {
         },
         .Create => |create_config| {
             var self = try CreateAction.init(&ctx, create_config);
+            defer self.deinit();
+            try self.run();
+        },
+        .Remove => |remove_config| {
+            var self = try RemoveAction.init(&ctx, remove_config);
             defer self.deinit();
             try self.run();
         },
