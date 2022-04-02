@@ -4,7 +4,7 @@
 
 ## project state
 
-v0.1 is soon to be released:
+v0.1 is released:
 
 this is the first proper release of it, where i plan to dogfood my own media
 libraries into the system to find out if all the tools are going to work as
