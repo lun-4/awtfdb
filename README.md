@@ -59,6 +59,17 @@ afind meme:what_the_dog_doing
 # install bpftrace and a recent linux kernel,
 # then add this to your init system
 awtfdb-watcher /home/user
+
+# list files and their tags with als
+als ~/my/folder
+
+# manage tags
+atags create my_new_funny_tag
+atags search funny
+atags delete my_new_funny_tag
+
+# remove files or directories from the index (does not remove from filesystem)
+arm -r ~/my/folder
 ```
 
 ## roadmap for the thing
