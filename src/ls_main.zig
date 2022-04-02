@@ -110,14 +110,20 @@ pub fn main() anyerror!void {
             if (entry.kind == .File) {
                 var realpath_buf: [std.os.PATH_MAX]u8 = undefined;
                 const full_path = try dir.realpath(entry.name, &realpath_buf);
-                var file = (try ctx.fetchFileByPath(full_path)) orelse unreachable;
-                defer file.deinit();
+                var maybe_inner_file = try ctx.fetchFileByPath(full_path);
+                if (maybe_inner_file) |*file| {
+                    defer file.deinit();
 
-                var tag_cores = try file.fetchTags(allocator);
-                for (tag_cores) |tag_core| {
-                    var tags = try ctx.fetchTagsFromCore(allocator, tag_core);
-                    defer tags.deinit();
-                    for (tags.items) |tag| try stdout.print("{s}", .{tag});
+                    var tag_cores = try file.fetchTags(allocator);
+                    defer allocator.free(tag_cores);
+
+                    for (tag_cores) |tag_core| {
+                        var tags = try ctx.fetchTagsFromCore(allocator, tag_core);
+                        defer tags.deinit();
+                        for (tags.items) |tag| {
+                            try stdout.print(" '{s}'", .{tag});
+                        }
+                    }
                 }
             }
             try stdout.print("\n", .{});
