@@ -179,6 +179,18 @@ pub const Context = struct {
         kind: union(enum) {
             Named: NamedTagValue,
         },
+
+        pub fn format(
+            self: @This(),
+            comptime fmt: []const u8,
+            options: std.fmt.FormatOptions,
+            writer: anytype,
+        ) !void {
+            _ = options;
+            _ = fmt;
+            // TODO better format logic (add switch case)
+            return std.fmt.format(writer, "{s}", .{self.kind.Named.text});
+        }
     };
 
     const OwnedTagList = struct {
