@@ -53,4 +53,16 @@ pub fn build(b: *std.build.Builder) void {
     find_exe.setBuildMode(mode);
     find_exe.install();
     deps.addAllTo(find_exe);
+
+    const ls_exe = b.addExecutable("als", "src/ls_main.zig");
+    ls_exe.setTarget(target);
+    ls_exe.setBuildMode(mode);
+    ls_exe.install();
+    deps.addAllTo(ls_exe);
+
+    // const rm_exe = b.addExecutable("arm", "src/rm_main.zig");
+    // rm_exe.setTarget(target);
+    // rm_exe.setBuildMode(mode);
+    // rm_exe.install();
+    // deps.addAllTo(rm_exe);
 }
