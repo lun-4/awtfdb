@@ -60,6 +60,12 @@ pub fn build(b: *std.build.Builder) void {
     ls_exe.install();
     deps.addAllTo(ls_exe);
 
+    const tags_exe = b.addExecutable("atags", "src/tags_main.zig");
+    tags_exe.setTarget(target);
+    tags_exe.setBuildMode(mode);
+    tags_exe.install();
+    deps.addAllTo(tags_exe);
+
     // const rm_exe = b.addExecutable("arm", "src/rm_main.zig");
     // rm_exe.setTarget(target);
     // rm_exe.setBuildMode(mode);
