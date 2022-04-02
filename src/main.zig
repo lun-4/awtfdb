@@ -287,7 +287,7 @@ pub const Context = struct {
         }
     }
 
-    const Hash = struct {
+    pub const Hash = struct {
         id: i64,
         hash_data: [32]u8,
 

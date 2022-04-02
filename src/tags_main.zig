@@ -19,14 +19,14 @@ const HELPTEXT =
     \\
     \\ examples:
     \\ 	atags create tag
-    \\ 	atags create --tag-core lkdjfalskjg tag
+    \\ 	atags create --core lkdjfalskjg tag
     \\ 	atags remove tag
-    \\ 	atags remove --tag-core dslkjfsldkjf
+    \\ 	atags remove --core dslkjfsldkjf
     \\ 	atags search tag
 ;
 
 const ActionConfig = union(enum) {
-    //Create: CreateAction.Config,
+    Create: CreateAction.Config,
     //Remove: RemoveAction.Config,
     Search: SearchAction.Config,
 };
@@ -36,9 +36,78 @@ const CreateAction = struct {
         tag_core: ?[]const u8 = null,
         tag: ?[]const u8 = null,
     };
+
     pub fn processArgs(args_it: *std.process.ArgIterator) !ActionConfig {
-        _ = args_it;
-        std.debug.todo("todo create");
+        var config = Config{};
+
+        const ArgState = enum { None, NeedTagCore };
+        var state: ArgState = .None;
+        while (args_it.next()) |arg| {
+            if (state == .NeedTagCore) {
+                config.tag_core = arg;
+                state = .None;
+            } else if (std.mem.eql(u8, arg, "--core")) {
+                state = .NeedTagCore;
+            } else {
+                config.tag = arg;
+            }
+        }
+        return ActionConfig{ .Create = config };
+    }
+
+    ctx: *Context,
+    config: Config,
+
+    const Self = @This();
+
+    pub fn init(ctx: *Context, config: Config) !Self {
+        return Self{ .ctx = ctx, .config = config };
+    }
+
+    pub fn deinit(self: *Self) void {
+        _ = self;
+    }
+
+    pub fn run(self: *Self) !void {
+        _ = self;
+
+        var stdout = std.io.getStdOut().writer();
+
+        var maybe_core: ?Context.Hash = null;
+        var raw_core_hash_buffer: [32]u8 = undefined;
+
+        if (self.config.tag_core) |tag_core_hex_string| {
+            if (tag_core_hex_string.len != 64) {
+                log.err("hashes myst be 64 bytes long, got {d}", .{tag_core_hex_string.len});
+                return error.InvalidHashLength;
+            }
+            var raw_core_hash = try std.fmt.hexToBytes(&raw_core_hash_buffer, tag_core_hex_string);
+
+            const hash_blob = sqlite.Blob{ .data = raw_core_hash };
+            const hash_id = (try self.ctx.db.?.one(
+                i64,
+                \\ select hashes.id
+                \\ from hashes
+                \\ join tag_cores
+                \\  on tag_cores.core_hash = hashes.id
+                \\ where hashes.hash_data = ?
+            ,
+                .{},
+                .{hash_blob},
+            )) orelse {
+                return error.UnknownTagCore;
+            };
+
+            log.debug("found hash_id for the given core hash: {d}", .{hash_id});
+            maybe_core = Context.Hash{ .id = hash_id, .hash_data = raw_core_hash_buffer };
+        }
+
+        const tag = try self.ctx.createNamedTag(self.config.tag.?, "en", maybe_core);
+
+        try stdout.print(
+            "created tag with core '{s}' name '{s}'\n",
+            .{ tag.core, tag },
+        );
     }
 };
 
@@ -163,6 +232,8 @@ pub fn main() anyerror!void {
         } else {
             if (std.mem.eql(u8, arg, "search")) {
                 given_args.action_config = try SearchAction.processArgs(&args_it);
+            } else if (std.mem.eql(u8, arg, "create")) {
+                given_args.action_config = try CreateAction.processArgs(&args_it);
             }
         }
     }
@@ -195,6 +266,11 @@ pub fn main() anyerror!void {
     switch (action_config) {
         .Search => |search_config| {
             var self = try SearchAction.init(&ctx, search_config);
+            defer self.deinit();
+            try self.run();
+        },
+        .Create => |create_config| {
+            var self = try CreateAction.init(&ctx, create_config);
             defer self.deinit();
             try self.run();
         },
