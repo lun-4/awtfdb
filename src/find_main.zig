@@ -16,6 +16,17 @@ const HELPTEXT =
     \\ options:
     \\ 	-h				prints this help and exits
     \\ 	-V				prints version and exits
+    \\
+    \\ query examples:
+    \\ 	afind 'mytag1'
+    \\ 		search all files with mytag1
+    \\ 	afind 'mytag1 mytag2'
+    \\ 		search all files with mytag1 AND mytag2
+    \\ 	afind 'mytag1 | mytag2'
+    \\ 		search all files with mytag1 OR mytag2
+    \\ 	afind '"mytag1" | "mytag2"'
+    \\ 		search all files with mytag1 OR mytag2 (raw tag syntax)
+    \\ 		not all characters are allowed in non-raw tag syntax
 ;
 
 pub fn main() anyerror!void {
