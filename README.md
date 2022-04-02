@@ -29,6 +29,7 @@ BY ME. I WORK ON THIS PART TIME. BEWARE OF BUGS.**
 ```
 git clone https://github.com/lun-4/awtfdb
 cd awtfdb
+zigmod fetch
 zig build
 ```
 
