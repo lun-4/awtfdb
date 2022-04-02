@@ -178,7 +178,7 @@ const RemoveAction = struct {
             // confirmation to continue.
 
             var stmt = try self.ctx.db.?.prepare(
-                "select tag_text, tag_language from tag_cores where core_hash = ?",
+                "select tag_text, tag_language from tag_names where core_hash = ?",
             );
             defer stmt.deinit();
 
