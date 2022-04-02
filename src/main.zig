@@ -402,6 +402,14 @@ pub const Context = struct {
             self.local_path = try self.ctx.allocator.dupe(u8, new_local_path);
         }
 
+        pub fn delete(self: FileSelf) !void {
+            try self.ctx.db.?.exec(
+                "delete from files where file_hash = ? and local_path = ?",
+                .{},
+                .{ self.hash.id, self.local_path },
+            );
+        }
+
         /// Returns all tag core hashes for the file.
         pub fn fetchTags(self: *FileSelf, allocator: std.mem.Allocator) ![]Hash {
             var stmt = try self.ctx.db.?.prepare(
