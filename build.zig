@@ -66,9 +66,9 @@ pub fn build(b: *std.build.Builder) void {
     tags_exe.install();
     deps.addAllTo(tags_exe);
 
-    // const rm_exe = b.addExecutable("arm", "src/rm_main.zig");
-    // rm_exe.setTarget(target);
-    // rm_exe.setBuildMode(mode);
-    // rm_exe.install();
-    // deps.addAllTo(rm_exe);
+    const rm_exe = b.addExecutable("arm", "src/rm_main.zig");
+    rm_exe.setTarget(target);
+    rm_exe.setBuildMode(mode);
+    rm_exe.install();
+    deps.addAllTo(rm_exe);
 }
