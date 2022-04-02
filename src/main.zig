@@ -116,7 +116,7 @@ pub const Context = struct {
         self.home_path = self.home_path orelse std.os.getenv("HOME");
         const db_path = try std.fs.path.resolve(
             self.allocator,
-            &[_][]const u8{ self.home_path.?, "boorufs.db" },
+            &[_][]const u8{ self.home_path.?, "awtf.db" },
         );
         defer self.allocator.free(db_path);
 
