@@ -574,6 +574,33 @@ pub const Context = struct {
         }
     }
 
+    pub fn fetchFileByPath(self: *Self, absolute_local_path: []const u8) !?File {
+        var maybe_hash = try self.db.?.oneAlloc(
+            HashWithBlob,
+            self.allocator,
+            \\ select hashes.id, hashes.hash_data
+            \\ from files
+            \\ join hashes
+            \\ 	on files.file_hash = hashes.id
+            \\ where files.local_path = ?
+        ,
+            .{},
+            .{absolute_local_path},
+        );
+
+        if (maybe_hash) |hash| {
+            // string memory is passed to client
+            defer self.allocator.free(hash.hash_data.data);
+            return File{
+                .ctx = self,
+                .local_path = try self.allocator.dupe(u8, absolute_local_path),
+                .hash = hash.toRealHash(),
+            };
+        } else {
+            return null;
+        }
+    }
+
     pub fn createCommand(self: *Self) !void {
         try self.loadDatabase(.{ .create = true });
         try self.migrateCommand();
@@ -791,6 +818,12 @@ test "file creation" {
     try std.testing.expectStringEndsWith(fetched_file.local_path, "/test_file");
     try std.testing.expectEqual(indexed_file.hash.id, fetched_file.hash.id);
     try std.testing.expectEqualStrings(indexed_file.hash.hash_data[0..], fetched_file.hash.hash_data[0..]);
+
+    var fetched_by_path_file = (try ctx.fetchFileByPath(indexed_file.local_path)).?;
+    defer fetched_by_path_file.deinit();
+    try std.testing.expectStringEndsWith(fetched_by_path_file.local_path, "/test_file");
+    try std.testing.expectEqual(indexed_file.hash.id, fetched_by_path_file.hash.id);
+    try std.testing.expectEqualStrings(indexed_file.hash.hash_data[0..], fetched_by_path_file.hash.hash_data[0..]);
 }
 
 // test "file and tags" {
