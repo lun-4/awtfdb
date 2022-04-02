@@ -408,7 +408,7 @@ pub const Context = struct {
                 \\ select hashes.id, hashes.hash_data
                 \\ from tag_files
                 \\ join hashes
-                \\ 	on tag_files.file_hash = hashes.id
+                \\ 	on tag_files.core_hash = hashes.id
                 \\ where tag_files.file_hash = ?
             );
             defer stmt.deinit();
