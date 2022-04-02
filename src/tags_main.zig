@@ -221,18 +221,33 @@ const RemoveAction = struct {
 
         if (self.config.tag_core) |tag_core_hex_string| {
             var core = try consumeCoreHash(self.ctx, &raw_core_hash_buffer, tag_core_hex_string);
+            // TODO fix deleted_count here
             deleted_count = (try self.ctx.db.?.one(
                 i64,
-                "delete from tag_names where core_hash = ? returning count(*) as deleted_count",
+                \\ delete from tag_names
+                \\ where core_hash = ?
+                \\ returning (
+                \\ 	select count(*)
+                \\ 	from tag_names
+                \\ 	where core_hash = ?
+                \\ ) as deleted_count
+            ,
                 .{},
-                .{core.id},
+                .{ core.id, core.id },
             )).?;
             try self.ctx.db.?.exec("delete from tag_cores where core_hash = ?", .{}, .{core.id});
             try self.ctx.db.?.exec("delete from hashes where id = ?", .{}, .{core.id});
         } else if (self.config.tag) |tag_text| {
             deleted_count = (try self.ctx.db.?.one(
                 i64,
-                "delete from tag_names where tag_text = ? and tag_language = ? returning (select count(*) from tag_names where tag_text = ? and tag_language = ?)as deleted_count",
+                \\ delete from tag_names
+                \\ where tag_text = ? and tag_language = ?
+                \\ returning (
+                \\ 	select count(*)
+                \\ 	from tag_names
+                \\ 	where tag_text = ? and tag_language = ?
+                \\ ) as deleted_count
+            ,
                 .{},
                 .{ tag_text, "en", tag_text, "en" },
             )).?;
