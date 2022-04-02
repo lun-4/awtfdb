@@ -4,7 +4,7 @@ const manage_main = @import("main.zig");
 const libpcre = @import("libpcre");
 const Context = manage_main.Context;
 
-const log = std.log.scoped(.awtfdb_watcher);
+const log = std.log.scoped(.afind);
 
 const VERSION = "0.0.1";
 const HELPTEXT =
