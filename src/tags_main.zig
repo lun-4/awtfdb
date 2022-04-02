@@ -192,6 +192,10 @@ const RemoveAction = struct {
             );
 
             while (try it.nextAlloc(self.ctx.allocator, .{})) |tag_name| {
+                defer {
+                    self.ctx.allocator.free(tag_name.tag_text);
+                    self.ctx.allocator.free(tag_name.tag_language);
+                }
                 try stdout.print(" {s}", .{tag_name.tag_text});
                 amount += 1;
             }
