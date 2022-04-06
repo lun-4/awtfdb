@@ -66,11 +66,7 @@ pub fn main() anyerror!void {
         return;
     }
 
-    if (given_args.query == null) {
-        std.log.err("query is a required argument", .{});
-        return error.MissingQuery;
-    }
-    const query = given_args.query.?;
+    const query = given_args.query orelse ".";
 
     var ctx = Context{
         .home_path = null,
