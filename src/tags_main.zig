@@ -171,10 +171,12 @@ const RemoveAction = struct {
         var raw_core_hash_buffer: [32]u8 = undefined;
 
         var amount: usize = 0;
+        var core_hash_id: ?i64 = null;
         try stdout.print("the following tags will be removed:\n", .{});
 
         if (self.config.tag_core) |tag_core_hex_string| {
             var core = try consumeCoreHash(self.ctx, &raw_core_hash_buffer, tag_core_hex_string);
+            core_hash_id = core.id;
 
             // to delete the core, we need to delete every tag that references this tag core
             //
@@ -209,11 +211,24 @@ const RemoveAction = struct {
             var maybe_tag = try self.ctx.fetchNamedTag(tag_text, "en");
             if (maybe_tag) |tag| {
                 try stdout.print(" {s}", .{tag.kind.Named.text});
+                core_hash_id = tag.core.id;
                 amount += 1;
             } else {
                 return error.NamedTagNotFound;
             }
             try stdout.print("\n", .{});
+        } else {
+            unreachable;
+        }
+
+        {
+            const referenced_files = try self.ctx.db.?.one(
+                i64,
+                "select count(*) from tag_files where core_hash = ?",
+                .{},
+                .{core_hash_id},
+            );
+            try stdout.print("{d} files reference this tag.\n", .{referenced_files});
         }
 
         if (self.config.given_args.ask_confirmation) {
@@ -224,7 +239,7 @@ const RemoveAction = struct {
             if (!std.mem.eql(u8, &outcome, "y")) return error.NotConfirmed;
         }
 
-        var deleted_count: i64 = 0;
+        var deleted_count: ?i64 = null;
 
         if (self.config.tag_core) |tag_core_hex_string| {
             var core = try consumeCoreHash(self.ctx, &raw_core_hash_buffer, tag_core_hex_string);
@@ -259,7 +274,7 @@ const RemoveAction = struct {
                 .{ tag_text, "en", tag_text, "en" },
             )).?;
         }
-        try stdout.print("deleted {d} tags\n", .{deleted_count});
+        try stdout.print("deleted {d} tags\n", .{deleted_count.?});
     }
 };
 
