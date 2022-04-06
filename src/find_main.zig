@@ -27,6 +27,9 @@ const HELPTEXT =
     \\ 	afind '"mytag1" | "mytag2"'
     \\ 		search all files with mytag1 OR mytag2 (raw tag syntax)
     \\ 		not all characters are allowed in non-raw tag syntax
+    \\ 	afind '"mytag1" -"mytag2"'
+    \\ 	afind 'mytag1 -mytag2'
+    \\ 		search all files with mytag1 but they do NOT have mytag2
 ;
 
 pub fn main() anyerror!void {
@@ -114,8 +117,8 @@ pub fn main() anyerror!void {
     var stmt = try ctx.db.?.prepareDynamic(result.query);
     defer stmt.deinit();
 
-    log.info("query: {s}", .{result.query});
-    log.info("tag cores: {any}", .{resolved_tag_cores.items});
+    log.debug("generated query: {s}", .{result.query});
+    log.debug("found tag cores: {any}", .{resolved_tag_cores.items});
 
     var it = try stmt.iterator(i64, resolved_tag_cores.items);
     var count: usize = 0;
@@ -141,12 +144,16 @@ const SqlGiver = struct {
 
     pub fn giveMeSql(allocator: std.mem.Allocator, query: []const u8) !Result {
         var or_operator = try libpcre.Regex.compile("( +)?\\|( +)?", .{});
+        var not_operator = try libpcre.Regex.compile("( +)?-( +)?", .{});
         var and_operator = try libpcre.Regex.compile(" +", .{});
         var tag_regex = try libpcre.Regex.compile("[a-zA-Z-_0-9:;&\\*]+", .{});
         var raw_tag_regex = try libpcre.Regex.compile("\".*?\"", .{});
 
+        const CaptureType = enum(usize) { Or = 0, Not, And, Tag, RawTag };
+
         const capture_order = [_]*libpcre.Regex{
             &or_operator,
+            &not_operator,
             &and_operator,
             &tag_regex,
             &raw_tag_regex,
@@ -175,11 +182,11 @@ const SqlGiver = struct {
             if (query_slice.len == 0) break;
 
             var maybe_captures: ?[]?libpcre.Capture = null;
-            var captured_regex_index: usize = 0;
+            var captured_regex_index: ?CaptureType = null;
             for (capture_order) |regex, current_regex_index| {
                 log.debug("try regex {d} on query '{s}'", .{ current_regex_index, query_slice });
                 maybe_captures = try regex.captures(allocator, query_slice, .{});
-                captured_regex_index = current_regex_index;
+                captured_regex_index = @intToEnum(CaptureType, current_regex_index);
                 log.debug("raw capture? {any}", .{maybe_captures});
                 if (maybe_captures) |captures| {
                     const capture = captures[0].?;
@@ -200,24 +207,27 @@ const SqlGiver = struct {
                 var match_text = query[index + full_match.start .. index + full_match.end];
                 index += full_match.end;
 
-                switch (captured_regex_index) {
-                    0 => try list.writer().print(" or", .{}),
-                    1 => {
+                switch (captured_regex_index.?) {
+                    .Or => try list.writer().print(" or", .{}),
+                    .Not => {
+                        try list.writer().print(" except", .{});
+                        try list.writer().print(" select file_hash from tag_files where", .{});
+                    },
+                    .And => {
                         try list.writer().print(" intersect", .{});
                         try list.writer().print(" select file_hash from tag_files where", .{});
                     },
-                    2, 3 => {
+                    .Tag, .RawTag => {
                         try list.writer().print(" core_hash = ?", .{});
                         // if we're matching raw_tag_regex (tags that have
                         // quotemarks around them), index forward and backward
                         // so that we don't pass those quotemarks to query
                         // processors.
-                        if (captured_regex_index == 3) {
+                        if (captured_regex_index.? == .RawTag) {
                             match_text = match_text[1 .. match_text.len - 1];
                         }
                         try tags.append(match_text);
                     },
-                    else => unreachable,
                 }
             } else {
                 // TODO add better parse errors (maybe return an union on
