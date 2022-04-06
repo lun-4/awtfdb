@@ -348,6 +348,7 @@ pub fn main() anyerror!void {
     for (given_args.include_paths.items) |path_to_include| {
         var dir: ?std.fs.Dir = std.fs.cwd().openDir(path_to_include, .{ .iterate = true }) catch |err| blk: {
             if (err == error.NotDir) break :blk null;
+            log.err("error while including path '{s}': {s}", .{ path_to_include, @errorName(err) });
             return err;
         };
         defer if (dir) |*unpacked_dir| unpacked_dir.close();
