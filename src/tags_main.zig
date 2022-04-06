@@ -16,6 +16,8 @@ const HELPTEXT =
     \\ options:
     \\ 	-h				prints this help and exits
     \\ 	-V				prints version and exits
+    \\ 	--no-confirm			do not ask for confirmation on remove
+    \\ 					commands.
     \\
     \\ examples:
     \\ 	atags create tag
@@ -37,7 +39,8 @@ const CreateAction = struct {
         tag: ?[]const u8 = null,
     };
 
-    pub fn processArgs(args_it: *std.process.ArgIterator) !ActionConfig {
+    pub fn processArgs(args_it: *std.process.ArgIterator, given_args: *Args) !ActionConfig {
+        _ = given_args;
         var config = Config{};
 
         const ArgState = enum { None, NeedTagCore };
@@ -119,10 +122,12 @@ const RemoveAction = struct {
     pub const Config = struct {
         tag_core: ?[]const u8 = null,
         tag: ?[]const u8 = null,
+        given_args: *Args,
     };
 
-    pub fn processArgs(args_it: *std.process.ArgIterator) !ActionConfig {
-        var config = Config{};
+    pub fn processArgs(args_it: *std.process.ArgIterator, given_args: *Args) !ActionConfig {
+        _ = given_args;
+        var config = Config{ .given_args = given_args };
 
         const ArgState = enum { None, NeedTagCore, NeedTag };
         var state: ArgState = .None;
@@ -211,13 +216,15 @@ const RemoveAction = struct {
             try stdout.print("\n", .{});
         }
 
-        var outcome: [1]u8 = undefined;
-        try stdout.print("do you want to remove {d} tags (y/n)? ", .{amount});
-        _ = try stdin.read(&outcome);
+        if (self.config.given_args.ask_confirmation) {
+            var outcome: [1]u8 = undefined;
+            try stdout.print("do you want to remove {d} tags (y/n)? ", .{amount});
+            _ = try stdin.read(&outcome);
 
-        if (!std.mem.eql(u8, &outcome, "y")) return error.NotConfirmed;
+            if (!std.mem.eql(u8, &outcome, "y")) return error.NotConfirmed;
+        }
 
-        var deleted_count: i64 = undefined;
+        var deleted_count: i64 = 0;
 
         if (self.config.tag_core) |tag_core_hex_string| {
             var core = try consumeCoreHash(self.ctx, &raw_core_hash_buffer, tag_core_hex_string);
@@ -261,7 +268,8 @@ const SearchAction = struct {
         query: ?[]const u8 = null,
     };
 
-    pub fn processArgs(args_it: *std.process.ArgIterator) !ActionConfig {
+    pub fn processArgs(args_it: *std.process.ArgIterator, given_args: *Args) !ActionConfig {
+        _ = given_args;
         var config = Config{};
         config.query = args_it.next() orelse return error.MissingQuery;
         return ActionConfig{ .Search = config };
@@ -334,6 +342,13 @@ const SearchAction = struct {
     }
 };
 
+const Args = struct {
+    help: bool = false,
+    version: bool = false,
+    ask_confirmation: bool = true,
+    action_config: ?ActionConfig = null,
+};
+
 pub fn main() anyerror!void {
     const rc = sqlite.c.sqlite3_config(sqlite.c.SQLITE_CONFIG_LOG, manage_main.sqliteLog, @as(?*anyopaque, null));
     if (rc != sqlite.c.SQLITE_OK) {
@@ -350,12 +365,6 @@ pub fn main() anyerror!void {
     var args_it = std.process.args();
     _ = args_it.skip();
 
-    const Args = struct {
-        help: bool = false,
-        version: bool = false,
-        action_config: ?ActionConfig = null,
-    };
-
     var given_args = Args{};
 
     while (args_it.next()) |arg| {
@@ -363,13 +372,15 @@ pub fn main() anyerror!void {
             given_args.help = true;
         } else if (std.mem.eql(u8, arg, "-V")) {
             given_args.version = true;
+        } else if (std.mem.eql(u8, arg, "--no-confirm")) {
+            given_args.ask_confirmation = false;
         } else {
             if (std.mem.eql(u8, arg, "search")) {
-                given_args.action_config = try SearchAction.processArgs(&args_it);
+                given_args.action_config = try SearchAction.processArgs(&args_it, &given_args);
             } else if (std.mem.eql(u8, arg, "create")) {
-                given_args.action_config = try CreateAction.processArgs(&args_it);
+                given_args.action_config = try CreateAction.processArgs(&args_it, &given_args);
             } else if (std.mem.eql(u8, arg, "remove")) {
-                given_args.action_config = try RemoveAction.processArgs(&args_it);
+                given_args.action_config = try RemoveAction.processArgs(&args_it, &given_args);
             }
         }
     }
