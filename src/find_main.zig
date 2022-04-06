@@ -124,7 +124,9 @@ pub fn main() anyerror!void {
         var file = (try ctx.fetchFile(file_hash)).?;
         defer file.deinit();
 
-        try stdout.writer().print("{s}\n", .{file.local_path});
+        try stdout.writer().print("{s}", .{file.local_path});
+        try file.printTagsTo(allocator, stdout.writer());
+        try stdout.writer().print("\n", .{});
         count += 1;
     }
 

@@ -113,17 +113,7 @@ pub fn main() anyerror!void {
                 var maybe_inner_file = try ctx.fetchFileByPath(full_path);
                 if (maybe_inner_file) |*file| {
                     defer file.deinit();
-
-                    var tag_cores = try file.fetchTags(allocator);
-                    defer allocator.free(tag_cores);
-
-                    for (tag_cores) |tag_core| {
-                        var tags = try ctx.fetchTagsFromCore(allocator, tag_core);
-                        defer tags.deinit();
-                        for (tags.items) |tag| {
-                            try stdout.print(" '{s}'", .{tag});
-                        }
-                    }
+                    try file.printTagsTo(allocator, stdout);
                 }
             }
             try stdout.print("\n", .{});

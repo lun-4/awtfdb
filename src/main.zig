@@ -411,7 +411,7 @@ pub const Context = struct {
         }
 
         /// Returns all tag core hashes for the file.
-        pub fn fetchTags(self: *FileSelf, allocator: std.mem.Allocator) ![]Hash {
+        pub fn fetchTags(self: FileSelf, allocator: std.mem.Allocator) ![]Hash {
             var stmt = try self.ctx.db.?.prepare(
                 \\ select hashes.id, hashes.hash_data
                 \\ from tag_files
@@ -440,6 +440,23 @@ pub const Context = struct {
             }
 
             return list.toOwnedSlice();
+        }
+
+        pub fn printTagsTo(
+            self: FileSelf,
+            allocator: std.mem.Allocator,
+            writer: anytype,
+        ) !void {
+            var tag_cores = try self.fetchTags(allocator);
+            defer allocator.free(tag_cores);
+
+            for (tag_cores) |tag_core| {
+                var tags = try self.ctx.fetchTagsFromCore(allocator, tag_core);
+                defer tags.deinit();
+                for (tags.items) |tag| {
+                    try writer.print(" '{s}'", .{tag});
+                }
+            }
         }
     };
 
