@@ -1,0 +1,4 @@
+#!/bin/sh
+
+exec 2>&1
+exec chpst -u root:root /home/luna/.local/bin/awtfdb-watcher /home/luna
