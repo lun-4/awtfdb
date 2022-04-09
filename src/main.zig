@@ -462,51 +462,60 @@ pub const Context = struct {
 
     /// Caller owns returned memory.
     pub fn createFileFromPath(self: *Self, local_path: []const u8) !File {
-        // TODO decrease repetition between this and createFileFromDir
         const absolute_local_path = try std.fs.realpathAlloc(self.allocator, local_path);
 
-        var file_hash: Hash = undefined;
-        {
-            var file = try std.fs.openFileAbsolute(absolute_local_path, .{ .mode = .read_only });
-            defer file.close();
+        var file = try std.fs.openFileAbsolute(absolute_local_path, .{ .mode = .read_only });
+        defer file.close();
 
-            // hash file in 1kb chunks (maybe it'd be more efficient to hash
-            // it in bigger chunks?? how does this magic number work?)
-            var data_chunk_buffer: [1024]u8 = undefined;
-            var hasher = std.crypto.hash.Blake3.initKdf(AWTFDB_BLAKE3_CONTEXT, .{});
-            while (true) {
-                const bytes_read = try file.read(&data_chunk_buffer);
-                if (bytes_read == 0) break;
-                const data_chunk = data_chunk_buffer[0..bytes_read];
-                hasher.update(data_chunk);
-            }
+        var file_hash: Hash = try self.calculateHash(file);
+        return try self.insertFile(file_hash, absolute_local_path);
+    }
 
-            hasher.final(&file_hash.hash_data);
-
-            const hash_blob = sqlite.Blob{ .data = &file_hash.hash_data };
-            const maybe_hash_id = try self.db.?.one(
-                i64,
-                "select id from hashes where hash_data = ?",
-                .{},
-                .{hash_blob},
-            );
-            if (maybe_hash_id) |hash_id| {
-                file_hash.id = hash_id;
-            } else {
-                file_hash.id = (try self.db.?.one(
-                    i64,
-                    "insert into hashes (hash_data) values (?) returning id",
-                    .{},
-                    .{hash_blob},
-                )).?;
-            }
+    fn calculateHash(self: *Self, file: std.fs.File) !Hash {
+        var data_chunk_buffer: [8192]u8 = undefined;
+        var hasher = std.crypto.hash.Blake3.initKdf(AWTFDB_BLAKE3_CONTEXT, .{});
+        while (true) {
+            const bytes_read = try file.read(&data_chunk_buffer);
+            if (bytes_read == 0) break;
+            const data_chunk = data_chunk_buffer[0..bytes_read];
+            hasher.update(data_chunk);
         }
 
+        var file_hash: Hash = undefined;
+        hasher.final(&file_hash.hash_data);
+
+        const hash_blob = sqlite.Blob{ .data = &file_hash.hash_data };
+        const maybe_hash_id = try self.db.?.one(
+            i64,
+            "select id from hashes where hash_data = ?",
+            .{},
+            .{hash_blob},
+        );
+        if (maybe_hash_id) |hash_id| {
+            file_hash.id = hash_id;
+        } else {
+            file_hash.id = (try self.db.?.one(
+                i64,
+                "insert into hashes (hash_data) values (?) returning id",
+                .{},
+                .{hash_blob},
+            )).?;
+        }
+
+        return file_hash;
+    }
+
+    fn insertFile(
+        self: *Self,
+        file_hash: Hash,
+        absolute_local_path: []const u8,
+    ) !File {
         try self.db.?.exec(
             "insert into files (file_hash, local_path) values (?, ?) on conflict do nothing",
             .{},
             .{ file_hash.id, absolute_local_path },
         );
+        // TODO move to local log
         std.log.debug("created file entry hash={s} path={s}", .{
             absolute_local_path,
             file_hash,
@@ -520,60 +529,12 @@ pub const Context = struct {
     }
 
     pub fn createFileFromDir(self: *Self, dir: std.fs.Dir, dir_path: []const u8) !File {
+        var file = try dir.openFile(dir_path, .{ .mode = .read_only });
+        defer file.close();
         const absolute_local_path = try dir.realpathAlloc(self.allocator, dir_path);
 
-        var file_hash: Hash = undefined;
-        {
-            var file = try dir.openFile(dir_path, .{ .mode = .read_only });
-            defer file.close();
-
-            // hash file in 1kb chunks (maybe it'd be more efficient to hash
-            // it in bigger chunks?? how does this magic number work?)
-            var data_chunk_buffer: [1024]u8 = undefined;
-            var hasher = std.crypto.hash.Blake3.initKdf(AWTFDB_BLAKE3_CONTEXT, .{});
-            while (true) {
-                const bytes_read = try file.read(&data_chunk_buffer);
-                if (bytes_read == 0) break;
-                const data_chunk = data_chunk_buffer[0..bytes_read];
-                hasher.update(data_chunk);
-            }
-
-            hasher.final(&file_hash.hash_data);
-
-            const hash_blob = sqlite.Blob{ .data = &file_hash.hash_data };
-            const maybe_hash_id = try self.db.?.one(
-                i64,
-                "select id from hashes where hash_data = ?",
-                .{},
-                .{hash_blob},
-            );
-            if (maybe_hash_id) |hash_id| {
-                file_hash.id = hash_id;
-            } else {
-                file_hash.id = (try self.db.?.one(
-                    i64,
-                    "insert into hashes (hash_data) values (?) returning id",
-                    .{},
-                    .{hash_blob},
-                )).?;
-            }
-        }
-
-        try self.db.?.exec(
-            "insert into files (file_hash, local_path) values (?, ?) on conflict do nothing",
-            .{},
-            .{ file_hash.id, absolute_local_path },
-        );
-        std.log.debug("created file entry hash={s} path={s}", .{
-            absolute_local_path,
-            file_hash,
-        });
-
-        return File{
-            .ctx = self,
-            .local_path = absolute_local_path,
-            .hash = file_hash,
-        };
+        var file_hash: Hash = try self.calculateHash(file);
+        return try self.insertFile(file_hash, absolute_local_path);
     }
 
     // TODO create fetchFileFromHash that receives full hash object and automatically
