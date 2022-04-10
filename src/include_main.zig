@@ -18,7 +18,7 @@ const HELPTEXT =
     \\ 	-h				prints this help and exits
     \\ 	-V				prints version and exits
     \\ 	-v				turns on verbosity (debug logging)
-    \\ 	--tag <tag>			add the following tag to the given path
+    \\ 	-t <tag>, --tag <tag>			add the following tag to the given path
     \\ 					 (if its a folder, add the tag to all files in the folder)
     \\ 	--infer-tags <inferrer>		infer tags using a processor.
     \\					all tags after that argument shall be
@@ -268,7 +268,7 @@ pub fn main() anyerror!void {
             given_args.verbose = true;
         } else if (std.mem.eql(u8, arg, "-V")) {
             given_args.version = true;
-        } else if (std.mem.eql(u8, arg, "--tag")) {
+        } else if (std.mem.eql(u8, arg, "--tag") or std.mem.eql(u8, arg, "-t")) {
             state = .FetchTag;
             // tag inferrers require more than one arg, so we need to load
             // those args beforehand and then pass the arg state forward
