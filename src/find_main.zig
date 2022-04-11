@@ -11,11 +11,16 @@ const HELPTEXT =
     \\ afind: execute queries on the awtfdb index
     \\
     \\ usage:
-    \\  afind query
+    \\  afind [options...] query
     \\
     \\ options:
     \\ 	-h				prints this help and exits
     \\ 	-V				prints version and exits
+    \\ 	-L, --link			creates a temporary folder with
+    \\ 					symlinks to the resulting files from
+    \\ 					the query. deletes the folder on
+    \\ 					CTRL-C.
+    \\ 					(linux only)
     \\
     \\ query examples:
     \\ 	afind 'mytag1'
@@ -52,6 +57,7 @@ pub fn main() anyerror!void {
     const Args = struct {
         help: bool = false,
         version: bool = false,
+        link: bool = false,
         query: StringList,
         pub fn deinit(self: *@This()) void {
             self.query.deinit();
@@ -76,6 +82,8 @@ pub fn main() anyerror!void {
             given_args.help = true;
         } else if (std.mem.eql(u8, arg, "-V")) {
             given_args.version = true;
+        } else if (std.mem.eql(u8, arg, "-L") or std.mem.eql(u8, arg, "--link")) {
+            given_args.link = true;
         } else {
             arg_state = .MoreTags;
             try given_args.query.append(arg);
@@ -138,19 +146,65 @@ pub fn main() anyerror!void {
     log.debug("found tag cores: {any}", .{resolved_tag_cores.items});
 
     var it = try stmt.iterator(i64, resolved_tag_cores.items);
-    var count: usize = 0;
     var stdout = std.io.getStdOut();
+
+    var returned_files = std.ArrayList(Context.File).init(allocator);
+    defer {
+        for (returned_files.items) |file| file.deinit();
+        returned_files.deinit();
+    }
+
     while (try it.next(.{})) |file_hash| {
         var file = (try ctx.fetchFile(file_hash)).?;
-        defer file.deinit();
+        // if we use --link, we need the full list of files to make
+        // symlinks out of, so this block doesn't own the lifetime of the
+        // file entity anymore.
+        try returned_files.append(file);
 
         try stdout.writer().print("{s}", .{file.local_path});
         try file.printTagsTo(allocator, stdout.writer());
         try stdout.writer().print("\n", .{});
-        count += 1;
     }
 
-    log.info("found {d} files", .{count});
+    log.info("found {d} files", .{returned_files.items.len});
+
+    if (given_args.link) {
+        var PREFIX = "/tmp/awtf/afind-";
+        var template = "/tmp/awtf/afind-XXXXXXXXXX";
+        var tmp_path: [template.len]u8 = undefined;
+        std.mem.copy(u8, &tmp_path, PREFIX);
+        var fill_here = tmp_path[PREFIX.len..];
+
+        const seed = @truncate(u64, @bitCast(u128, std.time.nanoTimestamp()));
+        var r = std.rand.DefaultPrng.init(seed);
+        for (fill_here) |*el| {
+            const ascii_idx = @intCast(u8, r.random().uintLessThan(u5, 24));
+            const letter: u8 = @as(u8, 65) + ascii_idx;
+            el.* = letter;
+        }
+
+        log.debug("attempting to create folder '{s}'", .{tmp_path});
+        std.fs.makeDirAbsolute("/tmp/awtf") catch |err| if (err != error.PathAlreadyExists) return err else {};
+        try std.fs.makeDirAbsolute(&tmp_path);
+        var tmp = try std.fs.openDirAbsolute(&tmp_path, .{});
+        defer tmp.close();
+
+        for (returned_files.items) |file| {
+            const joined_symlink_path = try std.fs.path.join(allocator, &[_][]const u8{
+                &tmp_path,
+                std.fs.path.basename(file.local_path),
+            });
+            defer allocator.free(joined_symlink_path);
+            log.info("symlink '{s}' to '{s}'", .{ file.local_path, joined_symlink_path });
+            try tmp.symLink(file.local_path, joined_symlink_path, .{});
+        }
+
+        log.info("successfully created symlinked folder at", .{});
+        try stdout.writer().print("{s}\n", .{tmp_path});
+
+        // TODO signal setup for the loop here
+        // TODO while true sleep 1
+    }
 }
 
 const SqlGiver = struct {
