@@ -48,21 +48,37 @@ pub fn main() anyerror!void {
     var args_it = std.process.args();
     _ = args_it.skip();
 
+    const StringList = std.ArrayList([]const u8);
     const Args = struct {
         help: bool = false,
         version: bool = false,
-        query: ?[]const u8 = null,
+        query: StringList,
+        pub fn deinit(self: *@This()) void {
+            self.query.deinit();
+        }
     };
 
-    var given_args = Args{};
+    var given_args = Args{ .query = StringList.init(allocator) };
+    defer given_args.deinit();
+    var arg_state: enum { None, MoreTags } = .None;
 
     while (args_it.next()) |arg| {
+        switch (arg_state) {
+            .None => {},
+            .MoreTags => {
+                try given_args.query.append(arg);
+                // once in MoreTags state, all next arguments are part
+                // of the query.
+                continue;
+            },
+        }
         if (std.mem.eql(u8, arg, "-h")) {
             given_args.help = true;
         } else if (std.mem.eql(u8, arg, "-V")) {
             given_args.version = true;
         } else {
-            given_args.query = arg;
+            arg_state = .MoreTags;
+            try given_args.query.append(arg);
         }
     }
 
@@ -74,11 +90,12 @@ pub fn main() anyerror!void {
         return;
     }
 
-    if (given_args.query == null) {
+    if (given_args.query.items.len == 0) {
         std.log.err("query is a required argument", .{});
         return error.MissingQuery;
     }
-    const query = given_args.query.?;
+    const query = try std.mem.join(allocator, " ", given_args.query.items);
+    defer allocator.free(query);
 
     var ctx = Context{
         .home_path = null,
