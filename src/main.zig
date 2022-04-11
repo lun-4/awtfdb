@@ -463,6 +463,12 @@ pub const Context = struct {
     /// Caller owns returned memory.
     pub fn createFileFromPath(self: *Self, local_path: []const u8) !File {
         const absolute_local_path = try std.fs.realpathAlloc(self.allocator, local_path);
+        var possible_file_entry = try self.fetchFileByPath(absolute_local_path);
+        if (possible_file_entry) |file_entry| {
+            // fetchFileByPath dupes the string so we need to free it here
+            defer self.allocator.free(absolute_local_path);
+            return file_entry;
+        }
 
         var file = try std.fs.openFileAbsolute(absolute_local_path, .{ .mode = .read_only });
         defer file.close();
@@ -532,6 +538,13 @@ pub const Context = struct {
         var file = try dir.openFile(dir_path, .{ .mode = .read_only });
         defer file.close();
         const absolute_local_path = try dir.realpathAlloc(self.allocator, dir_path);
+
+        var possible_file_entry = try self.fetchFileByPath(absolute_local_path);
+        if (possible_file_entry) |file_entry| {
+            // fetchFileByPath dupes the string so we need to free it here
+            defer self.allocator.free(absolute_local_path);
+            return file_entry;
+        }
 
         var file_hash: Hash = try self.calculateHash(file);
         return try self.insertFile(file_hash, absolute_local_path);
