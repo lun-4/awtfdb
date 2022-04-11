@@ -396,6 +396,9 @@ pub fn main() anyerror!void {
                 given_args.action_config = try CreateAction.processArgs(&args_it, &given_args);
             } else if (std.mem.eql(u8, arg, "remove")) {
                 given_args.action_config = try RemoveAction.processArgs(&args_it, &given_args);
+            } else {
+                log.err("{s} is an invalid action", .{arg});
+                return error.InvalidAction;
             }
         }
     }
