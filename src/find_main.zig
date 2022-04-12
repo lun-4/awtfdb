@@ -123,8 +123,7 @@ pub fn main() anyerror!void {
     // afind '"tag3 2"' ("tag3 2" is a tag, actually)
 
     const result = try SqlGiver.giveMeSql(allocator, query);
-    defer allocator.free(result.query);
-    defer allocator.free(result.tags);
+    defer result.deinit();
 
     var resolved_tag_cores = std.ArrayList(i64).init(allocator);
     defer resolved_tag_cores.deinit();
@@ -207,10 +206,16 @@ pub fn main() anyerror!void {
     }
 }
 
-const SqlGiver = struct {
+pub const SqlGiver = struct {
     const Result = struct {
+        allocator: std.mem.Allocator,
         query: []const u8,
         tags: [][]const u8,
+
+        pub fn deinit(self: @This()) void {
+            self.allocator.free(self.query);
+            self.allocator.free(self.tags);
+        }
     };
 
     pub fn giveMeSql(allocator: std.mem.Allocator, query: []const u8) !Result {
@@ -307,7 +312,11 @@ const SqlGiver = struct {
             }
         }
 
-        return Result{ .query = list.toOwnedSlice(), .tags = tags.toOwnedSlice() };
+        return Result{
+            .allocator = allocator,
+            .query = list.toOwnedSlice(),
+            .tags = tags.toOwnedSlice(),
+        };
     }
 };
 

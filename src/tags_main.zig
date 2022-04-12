@@ -36,6 +36,7 @@ const ActionConfig = union(enum) {
 const CreateAction = struct {
     pub const Config = struct {
         tag_core: ?[]const u8 = null,
+        tag_alias: ?[]const u8 = null,
         tag: ?[]const u8 = null,
     };
 
@@ -43,16 +44,26 @@ const CreateAction = struct {
         _ = given_args;
         var config = Config{};
 
-        const ArgState = enum { None, NeedTagCore };
+        const ArgState = enum { None, NeedTagCore, NeedTagAlias };
         var state: ArgState = .None;
         while (args_it.next()) |arg| {
             if (state == .NeedTagCore) {
                 config.tag_core = arg;
                 state = .None;
+            } else if (state == .NeedTagAlias) {
+                config.tag_alias = arg;
+                state = .None;
             } else if (std.mem.eql(u8, arg, "--core")) {
                 state = .NeedTagCore;
+            } else if (std.mem.eql(u8, arg, "--alias")) {
+                state = .NeedTagAlias;
             } else {
                 config.tag = arg;
+            }
+
+            if (config.tag_core != null and config.tag_alias != null) {
+                log.err("only one of --core or --alias may be provided", .{});
+                return error.OnlyOneAliasOrCore;
             }
         }
         return ActionConfig{ .Create = config };
@@ -76,11 +87,77 @@ const CreateAction = struct {
 
         var stdout = std.io.getStdOut().writer();
 
-        var maybe_core: ?Context.Hash = null;
         var raw_core_hash_buffer: [32]u8 = undefined;
+        var maybe_core: ?Context.Hash = null;
 
         if (self.config.tag_core) |tag_core_hex_string| {
             maybe_core = try consumeCoreHash(self.ctx, &raw_core_hash_buffer, tag_core_hex_string);
+        } else if (self.config.tag_alias) |tag_core_hex_string| {
+            // tag aliasing is a process where you have two separate tags
+            // and you want them both to refer to the same core, in a non
+            // destructive manner, by relinking files from the tag that's going
+            // to become the alias.
+            //
+            // for purposes of explanation, we'll consider that we have
+            // tag A and tag B, and we want B to be an alias of A
+            //
+            // to do so, we need to
+            //  - find all files that are linked to B
+            //  - link them to A
+            //  - delete tag B
+            //  - create tag B, with core set to A
+
+            // TODO transaction over this (savepoints real)
+
+            var tag_to_be_aliased_to = try consumeCoreHash(self.ctx, &raw_core_hash_buffer, tag_core_hex_string);
+            var tag_to_be_aliased_from = if (try self.ctx.fetchNamedTag(self.config.tag.?, "en")) |tag_text|
+                tag_text
+            else
+                return error.UnknownTag;
+
+            if (tag_to_be_aliased_from.core.id == tag_to_be_aliased_to.id) {
+                log.err(
+                    "tag {s} already is pointing to core {s}, making a new alias of an existing alias is a destructive operation",
+                    .{ self.config.tag.?, tag_to_be_aliased_to },
+                );
+                return error.TagAlreadyAliased;
+            }
+
+            // find all tags with that single tag (tag_to_be_aliased_from)
+            const SqlGiver = @import("./find_main.zig").SqlGiver;
+
+            var sql_result = try SqlGiver.giveMeSql(self.ctx.allocator, self.config.tag.?);
+            defer sql_result.deinit();
+
+            std.debug.assert(sql_result.tags.len == 1);
+            std.debug.assert(std.mem.eql(u8, sql_result.tags[0], self.config.tag.?));
+
+            // execute query and bind to tag_to_be_aliased_from
+            var stmt = try self.ctx.db.?.prepareDynamic(sql_result.query);
+            defer stmt.deinit();
+            var args = [1]i64{tag_to_be_aliased_from.core.id};
+            var it = try stmt.iterator(i64, args);
+
+            // add tag_to_be_aliased_to to all returned files
+            while (try it.next(.{})) |file_hash_id| {
+                var file = (try self.ctx.fetchFile(file_hash_id)).?;
+                defer file.deinit();
+                try file.addTag(tag_to_be_aliased_to);
+
+                try stdout.print("relinked {s}", .{file.local_path});
+                try file.printTagsTo(self.ctx.allocator, stdout);
+                try stdout.print("\n", .{});
+            }
+
+            // delete tag_to_be_aliased_from
+            const deleted_tag_names = try tag_to_be_aliased_from.delete(&self.ctx.db.?);
+            log.info("deleted {d} tag names", .{deleted_tag_names});
+
+            // and create the proper alias (can only be done after deletion)
+            const aliased_tag = try self.ctx.createNamedTag(self.config.tag.?, "en", tag_to_be_aliased_to);
+            log.info("full tag info: {}", .{aliased_tag});
+
+            return;
         }
 
         const tag = try self.ctx.createNamedTag(self.config.tag.?, "en", maybe_core);

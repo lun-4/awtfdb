@@ -191,6 +191,28 @@ pub const Context = struct {
             // TODO better format logic (add switch case)
             return std.fmt.format(writer, "{s}", .{self.kind.Named.text});
         }
+
+        pub fn delete(self: @This(), db: *sqlite.Db) !i64 {
+            // TODO fix deleted_count here
+            const deleted_tag_count = (try db.one(
+                i64,
+                \\ delete from tag_names
+                \\ where core_hash = ?
+                \\ returning (
+                \\ 	select count(*)
+                \\ 	from tag_names
+                \\ 	where core_hash = ?
+                \\ ) as deleted_count
+            ,
+                .{},
+                .{ self.core.id, self.core.id },
+            )).?;
+            // TODO add deleted_link_count as returning clause here
+            try db.exec("delete from tag_cores where core_hash = ?", .{}, .{self.core.id});
+            try db.exec("delete from hashes where id = ?", .{}, .{self.core.id});
+
+            return deleted_tag_count;
+        }
     };
 
     const OwnedTagList = struct {
