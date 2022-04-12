@@ -384,7 +384,7 @@ const SearchAction = struct {
         var stdout = std.io.getStdOut().writer();
 
         var stmt = try self.ctx.db.?.prepare(
-            \\ select tag_text, tag_language, core_hash, hashes.hash_data
+            \\ select distinct core_hash core_hash, hashes.hash_data
             \\ from tag_names
             \\ join hashes
             \\  on hashes.id = tag_names.core_hash
@@ -394,8 +394,6 @@ const SearchAction = struct {
 
         var tag_names = try stmt.all(
             struct {
-                tag_text: []const u8,
-                tag_language: []const u8,
                 core_hash: i64,
                 hash_data: sqlite.Blob,
             },
@@ -406,8 +404,6 @@ const SearchAction = struct {
 
         defer {
             for (tag_names) |tag| {
-                self.ctx.allocator.free(tag.tag_text);
-                self.ctx.allocator.free(tag.tag_language);
                 self.ctx.allocator.free(tag.hash_data.data);
             }
             self.ctx.allocator.free(tag_names);
