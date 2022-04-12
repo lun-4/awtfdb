@@ -186,7 +186,16 @@ pub fn main() anyerror!void {
         std.fs.makeDirAbsolute("/tmp/awtf") catch |err| if (err != error.PathAlreadyExists) return err else {};
         try std.fs.makeDirAbsolute(&tmp_path);
         var tmp = try std.fs.openDirAbsolute(&tmp_path, .{});
-        defer tmp.close();
+
+        defer {
+            tmp.deleteTree(&tmp_path) catch |err| {
+                log.err(
+                    "error happened while deleting '{s}': {s}, ignoring.",
+                    .{ &tmp_path, @errorName(err) },
+                );
+            };
+            tmp.close();
+        }
 
         for (returned_files.items) |file| {
             const joined_symlink_path = try std.fs.path.join(allocator, &[_][]const u8{
@@ -201,8 +210,97 @@ pub fn main() anyerror!void {
         log.info("successfully created symlinked folder at", .{});
         try stdout.writer().print("{s}\n", .{tmp_path});
 
-        // TODO signal setup for the loop here
-        // TODO while true sleep 1
+        const self_pipe_fds = try std.os.pipe();
+        maybe_self_pipe = .{
+            .reader = .{ .handle = self_pipe_fds[0] },
+            .writer = .{ .handle = self_pipe_fds[1] },
+        };
+        defer {
+            maybe_self_pipe.?.reader.close();
+            maybe_self_pipe.?.writer.close();
+        }
+
+        // configure signal handler that's going to push data to the selfpipe
+        var mask = std.os.empty_sigset;
+        std.os.linux.sigaddset(&mask, std.os.SIG.TERM);
+        std.os.linux.sigaddset(&mask, std.os.SIG.INT);
+        var sa = std.os.Sigaction{
+            .handler = .{ .sigaction = signal_handler },
+            .mask = mask,
+            .flags = 0,
+        };
+
+        try std.os.sigaction(std.os.SIG.TERM, &sa, null);
+        try std.os.sigaction(std.os.SIG.INT, &sa, null);
+
+        const PollFdList = std.ArrayList(std.os.pollfd);
+        var sockets = PollFdList.init(allocator);
+        defer sockets.deinit();
+
+        try sockets.append(std.os.pollfd{
+            .fd = maybe_self_pipe.?.reader.handle,
+            .events = std.os.POLL.IN,
+            .revents = 0,
+        });
+
+        // we don't need to do 'while (true) { sleep(1000); }' because
+        // we can poll on the selfpipe trick!
+
+        log.info("press ctrl-c to delete the temporary folder...", .{});
+        var run: bool = true;
+        while (run) {
+            log.debug("polling for signals...", .{});
+            const available = try std.os.poll(sockets.items, -1);
+            try std.testing.expect(available > 0);
+            for (sockets.items) |pollfd| {
+                log.debug("fd {d} has revents {d}", .{ pollfd.fd, pollfd.revents });
+                if (pollfd.revents == 0) continue;
+
+                if (pollfd.fd == maybe_self_pipe.?.reader.handle) {
+                    while (run) {
+                        const signal_data = maybe_self_pipe.?.reader.reader().readStruct(SignalData) catch |err| switch (err) {
+                            error.EndOfStream => break,
+                            else => return err,
+                        };
+
+                        log.info("exiting! with signal {d}", .{signal_data.signal});
+                        run = false;
+                    }
+                }
+            }
+        }
+    }
+}
+
+const Pipe = struct {
+    reader: std.fs.File,
+    writer: std.fs.File,
+};
+
+const NOTCURSES_U32_ERROR = 4294967295;
+
+var zig_segfault_handler: fn (i32, *const std.os.siginfo_t, ?*const anyopaque) callconv(.C) void = undefined;
+var maybe_self_pipe: ?Pipe = null;
+
+const SignalData = extern struct {
+    signal: c_int,
+    info: std.os.siginfo_t,
+    uctx: ?*const anyopaque,
+};
+const SignalList = std.ArrayList(SignalData);
+
+fn signal_handler(
+    signal: c_int,
+    info: *const std.os.siginfo_t,
+    uctx: ?*const anyopaque,
+) callconv(.C) void {
+    if (maybe_self_pipe) |self_pipe| {
+        const signal_data = SignalData{
+            .signal = signal,
+            .info = info.*,
+            .uctx = uctx,
+        };
+        self_pipe.writer.writer().writeStruct(signal_data) catch return;
     }
 }
 
