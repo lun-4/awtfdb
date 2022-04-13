@@ -126,8 +126,16 @@ const CreateAction = struct {
             // find all tags with that single tag (tag_to_be_aliased_from)
             const SqlGiver = @import("./find_main.zig").SqlGiver;
 
-            var sql_result = try SqlGiver.giveMeSql(self.ctx.allocator, self.config.tag.?);
-            defer sql_result.deinit();
+            var wrapped_sql_result = try SqlGiver.giveMeSql(self.ctx.allocator, self.config.tag.?);
+            defer wrapped_sql_result.deinit();
+
+            const sql_result = switch (wrapped_sql_result) {
+                .Ok => |ok_body| ok_body,
+                .Error => |error_body| {
+                    log.err("parse error at character {d}: {s}", .{ error_body.character, error_body.error_type });
+                    return error.ParseErrorHappened;
+                },
+            };
 
             std.debug.assert(sql_result.tags.len == 1);
             std.debug.assert(std.mem.eql(u8, sql_result.tags[0], self.config.tag.?));

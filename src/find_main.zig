@@ -122,8 +122,16 @@ pub fn main() anyerror!void {
     // afind '(tag1 | tag2) tag3' (tag1 OR tag2, AND tag3)
     // afind '"tag3 2"' ("tag3 2" is a tag, actually)
 
-    const result = try SqlGiver.giveMeSql(allocator, query);
-    defer result.deinit();
+    const wrapped_result = try SqlGiver.giveMeSql(allocator, query);
+    defer wrapped_result.deinit();
+
+    const result = switch (wrapped_result) {
+        .Ok => |ok_body| ok_body,
+        .Error => |error_body| {
+            log.err("error at character {d}: {s}", .{ error_body.character, error_body.error_type });
+            return error.ParseErrorHappened;
+        },
+    };
 
     var resolved_tag_cores = std.ArrayList(i64).init(allocator);
     defer resolved_tag_cores.deinit();
@@ -277,8 +285,6 @@ const Pipe = struct {
     writer: std.fs.File,
 };
 
-const NOTCURSES_U32_ERROR = 4294967295;
-
 var zig_segfault_handler: fn (i32, *const std.os.siginfo_t, ?*const anyopaque) callconv(.C) void = undefined;
 var maybe_self_pipe: ?Pipe = null;
 
@@ -305,14 +311,29 @@ fn signal_handler(
 }
 
 pub const SqlGiver = struct {
-    const Result = struct {
-        allocator: std.mem.Allocator,
-        query: []const u8,
-        tags: [][]const u8,
+    pub const ErrorType = enum {
+        UnexpectedCharacter,
+    };
+
+    const Result = union(enum) {
+        Error: struct {
+            character: usize,
+            error_type: ErrorType,
+        },
+        Ok: struct {
+            allocator: std.mem.Allocator,
+            query: []const u8,
+            tags: [][]const u8,
+        },
 
         pub fn deinit(self: @This()) void {
-            self.allocator.free(self.query);
-            self.allocator.free(self.tags);
+            switch (self) {
+                .Ok => |ok_body| {
+                    ok_body.allocator.free(ok_body.query);
+                    ok_body.allocator.free(ok_body.tags);
+                },
+                .Error => {},
+            }
         }
     };
 
@@ -350,7 +371,6 @@ pub const SqlGiver = struct {
             // type of tag.
 
             // TODO paren support "(" and ")"
-            // TODO NOT operator support (-tag means NOT tag)
 
             const query_slice = query[index..];
             if (query_slice.len == 0) break;
@@ -404,25 +424,24 @@ pub const SqlGiver = struct {
                     },
                 }
             } else {
-                // TODO add better parse errors (maybe return an union on
-                // Result? and add relevant crash info for the ParseError part)
-                return error.UnexpectedCharacters;
+                return Result{ .Error = .{ .character = index, .error_type = .UnexpectedCharacter } };
             }
         }
 
-        return Result{
+        return Result{ .Ok = .{
             .allocator = allocator,
             .query = list.toOwnedSlice(),
             .tags = tags.toOwnedSlice(),
-        };
+        } };
     }
 };
 
 test "sql parser" {
     const allocator = std.testing.allocator;
-    const result = try SqlGiver.giveMeSql(allocator, "a b | \"cd\"|e");
-    defer allocator.free(result.query);
-    defer allocator.free(result.tags);
+    const wrapped_result = try SqlGiver.giveMeSql(allocator, "a b | \"cd\"|e");
+    defer wrapped_result.deinit();
+
+    const result = wrapped_result.Ok;
 
     try std.testing.expectEqualStrings(
         "select file_hash from tag_files where core_hash = ? intersect select file_hash from tag_files where core_hash = ? or core_hash = ? or core_hash = ?",
@@ -436,4 +455,15 @@ test "sql parser" {
     inline for (expected_tags) |expected_tag, index| {
         try std.testing.expectEqualStrings(expected_tag, result.tags[index]);
     }
+}
+
+test "sql parser errors" {
+    const allocator = std.testing.allocator;
+    const wrapped_result = try SqlGiver.giveMeSql(allocator, "a \"cd");
+    defer wrapped_result.deinit();
+
+    const error_data = wrapped_result.Error;
+
+    try std.testing.expectEqual(@as(usize, 2), error_data.character);
+    try std.testing.expectEqual(SqlGiver.ErrorType.UnexpectedCharacter, error_data.error_type);
 }
