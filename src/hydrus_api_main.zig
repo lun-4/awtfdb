@@ -73,6 +73,7 @@ pub fn main() anyerror!void {
         if (state == .FetchAccessKey) {
             try given_args.access_keys.append(arg);
             state = .None;
+            continue;
         }
 
         if (std.mem.eql(u8, arg, "-h")) {
