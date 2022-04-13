@@ -5,3 +5,4 @@ description: The Anime Woman Tagged Files Database
 root_dependencies:
   - src: git https://github.com/lun-4/zig-sqlite branch-luna-development
   - src: git https://github.com/kivikakk/libpcre.zig
+  - src: git https://github.com/Luukdegram/apple_pie

@@ -61,4 +61,10 @@ pub fn build(b: *std.build.Builder) void {
     rm_exe.setBuildMode(mode);
     rm_exe.install();
     deps.addAllTo(rm_exe);
+
+    const hydrus_api_exe = b.addExecutable("ahydrus-api", "src/hydrus_api_main.zig");
+    hydrus_api_exe.setTarget(target);
+    hydrus_api_exe.setBuildMode(mode);
+    hydrus_api_exe.install();
+    deps.addAllTo(hydrus_api_exe);
 }
