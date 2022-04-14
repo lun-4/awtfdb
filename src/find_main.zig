@@ -337,7 +337,10 @@ pub const SqlGiver = struct {
         }
     };
 
-    pub fn giveMeSql(allocator: std.mem.Allocator, query: []const u8) !Result {
+    pub fn giveMeSql(
+        allocator: std.mem.Allocator,
+        query: []const u8,
+    ) (libpcre.Regex.CompileError || libpcre.Regex.ExecError)!Result {
         var or_operator = try libpcre.Regex.compile("( +)?\\|( +)?", .{});
         var not_operator = try libpcre.Regex.compile("( +)?-( +)?", .{});
         var and_operator = try libpcre.Regex.compile(" +", .{});
