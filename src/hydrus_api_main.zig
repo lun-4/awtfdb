@@ -133,6 +133,8 @@ fn mainHandler(
     request: http.Request,
 ) !void {
     const builder = http.router.Builder(*Context);
+    @setEvalBranchQuota(1000000);
+
     const router = comptime http.router.Router(*Context, &.{
         builder.get("/", null, index),
         builder.get("/api_version", null, apiVersion),
@@ -140,10 +142,20 @@ fn mainHandler(
         builder.get("/verify_access_key", null, verifyAccessKey),
         builder.options("/get_files/search_files", null, corsHandler),
         builder.get("/get_files/search_files", null, searchFiles),
+        builder.options("/get_files/file_metadata", null, corsHandler),
+        builder.get("/get_files/file_metadata", null, fileMetadata),
     });
 
     try writeCors(response);
-    try router(ctx, response, request);
+    router(ctx, response, request) catch |err| {
+        log.info("{s} {s} got error: {s}", .{
+            methodString(request),
+            request.path(),
+            @errorName(err),
+        });
+
+        return err;
+    };
     log.info("{s} {s} {d}", .{
         methodString(request),
         request.path(),
@@ -237,37 +249,6 @@ test "index test" {
     try std.testing.expectEqual(@as(u16, 200), received_status_line.status.code);
 }
 
-//test "index works (the universe also works)" {
-//    var ctx = try manage_main.makeTestContext();
-//    defer ctx.deinit();
-//
-//    var request = http.Request{ .arena = std.testing.allocator, .context = http.Request.Context{
-//        .method = .get,
-//        .uri = http.Uri.empty,
-//        .raw_header_data = undefined,
-//        .protocol = .http_1_1,
-//        .host = null,
-//        .raw_body = "",
-//        .connection_type = .close,
-//    } };
-//
-//    var list = std.ArrayList(u8).init(std.testing.allocator);
-//    defer list.deinit();
-//
-//    var response = http.Response{
-//        .headers = std.StringArrayHashMap([]const u8).init(std.testing.allocator),
-//        .buffered_writer = std.io.bufferedWriter(list.writer()),
-//        .is_flushed = false,
-//        .body = list.writer(),
-//        .close = false,
-//    };
-//    defer response.headers.deinit();
-//
-//    try index(ctx, &response, request, null);
-//
-//    try std.testing.expectEqual(http.Response.StatusCode.ok, response.status_code);
-//}
-
 fn apiVersion(
     ctx: *Context,
     response: *http.Response,
@@ -321,35 +302,66 @@ const HydrusAPIInput = struct {
     }
 };
 
+const HydrusAPIInputResult = union(enum) {
+    Error: struct {},
+    Ok: struct {},
+};
+
+const ACCESS_KEY_NAME = "Hydrus-Client-API-Access-Key";
 fn fetchInput(
-    ctx: *Context,
-    response: *http.Response,
-    request: http.Request,
-) !HydrusAPIInput {
-    //TODO
+    ctx: *ManageContext,
+    headers: http.Headers,
+    raw_query: []const u8,
+) !HydrusAPIInputResult {
+    const param_map = try http.Uri.decodeQueryString(ctx.allocator, raw_query);
+    errdefer param_map.deinit();
+    log.info("uri: {s}", .{param_map});
+
     _ = ctx;
-    _ = request;
-    _ = response;
-    return undefined;
+    _ = headers;
+
+    return .{
+        .Ok = .{},
+    };
 }
 
-//test "hydrus api input parsing" {
-//    var ctx = try manage_main.makeTestContext();
-//    defer ctx.deinit();
-//
-//    var request = http.Request{};
-//    var response = http.Response{};
-//    var input = try fetchInput(ctx, &response, request);
-//    _ = input;
-//
-//    try std.testing.expectEqual(http.Response.StatusCode.ok, response.status_code);
-//}
+test "hydrus api input parsing" {
+    var ctx = try manage_main.makeTestContext();
+    defer ctx.deinit();
 
-fn wantAuth(ctx: *Context, response: *http.Response, input: HydrusAPIInput) bool {
-    const access_key = input.getAccessKey();
+    var headers = http.Headers.init(std.testing.allocator);
+    defer headers.deinit();
+
+    // var wrapped_input = try fetchInput(
+    //     &ctx,
+    //     headers,
+    //     "file_sort_type=6&file_sort_asc=false&tags=%5B%22character%3Asamus%20aran%22%2C%20%22creator%3A%5Cu9752%5Cu3044%5Cu685c%22%2C%20%22system%3Aheight%20%3E%202000%22%5D",
+    // );
+
+    // const input = wrapped_input.Ok;
+    // _ = input;
+
+    // return error.Thing;
+
+    //try std.testing.expectEqual(http.Response.StatusCode.ok, response.status_code);
+}
+
+fn wantAuth(ctx: *Context, response: *http.Response, request: http.Request) bool {
+    var headers_it = request.iterator();
+    var access_key: ?[]const u8 = null;
+    while (headers_it.next()) |header| {
+        if (std.mem.eql(u8, header.key, "Hydrus-Client-API-Access-Key")) {
+            access_key = header.value;
+        }
+    }
+
+    if (access_key == null) {
+        response.status_code = .unauthorized;
+        return false;
+    }
 
     for (ctx.given_args.access_keys.items) |correct_access_key| {
-        if (std.mem.eql(u8, access_key, correct_access_key)) return true;
+        if (std.mem.eql(u8, access_key.?, correct_access_key)) return true;
     }
 
     response.status_code = .unauthorized;
@@ -367,9 +379,7 @@ fn verifyAccessKey(
     _ = request;
     _ = ctx;
 
-    const input = fetchInput(ctx, response, request) catch return;
-    defer input.deinit();
-    if (!wantAuth(ctx, response, input)) return;
+    if (!wantAuth(ctx, response, request)) return;
 
     try std.json.stringify(
         .{
@@ -385,7 +395,7 @@ fn convertTagsToFindQuery(tags_string: []const u8) []const u8 {
     //parse json out of tags_string
     //construct afind query out of it
     _ = tags_string;
-    return "";
+    return "type:paper";
 }
 
 fn writeError(
@@ -408,11 +418,9 @@ fn searchFiles(
     std.debug.assert(captures == null);
     _ = ctx;
 
-    const input = fetchInput(ctx, response, request) catch return;
-    defer input.deinit();
-    if (!wantAuth(ctx, response, input)) return;
+    if (!wantAuth(ctx, response, request)) return;
 
-    const tags_string = input.getTags();
+    const tags_string: []const u8 = undefined;
     const find_query = convertTagsToFindQuery(tags_string);
 
     const wrapped_result = try SqlGiver.giveMeSql(ctx.manage.allocator, find_query);
@@ -463,6 +471,86 @@ fn searchFiles(
 
     try std.json.stringify(
         .{ .file_ids = returned_file_ids.items },
+        .{},
+        response.writer(),
+    );
+}
+
+fn fileMetadata(
+    ctx: *Context,
+    response: *http.Response,
+    request: http.Request,
+    captures: ?*const anyopaque,
+) !void {
+    _ = captures;
+    if (!wantMethod(request, response, .{.get})) return;
+    if (!wantAuth(ctx, response, request)) return;
+
+    var param_map = try request.context.uri.queryParameters(ctx.manage.allocator);
+    defer param_map.deinit(ctx.manage.allocator);
+    const file_ids_serialized = param_map.get("file_ids") orelse {
+        writeError(response, .bad_request, "need file_ids", .{}) catch return;
+        return;
+    };
+
+    log.info("file ids: {s}", .{file_ids_serialized});
+
+    var tokens = std.json.TokenStream.init(file_ids_serialized);
+
+    const opts = std.json.ParseOptions{ .allocator = ctx.manage.allocator };
+    const file_ids = try std.json.parse([]i64, &tokens, opts);
+    defer std.json.parseFree([]i64, file_ids, opts);
+
+    const HydrusFile = struct {
+        file_id: i64,
+        hash: []const u8,
+        size: i64 = 0,
+        mime: []const u8,
+        ext: []const u8,
+        width: usize = 100,
+        height: usize = 100,
+        duration: ?usize = null,
+        time_modified: ?usize = null,
+        file_services: ?usize = null, // TODO add current+deleted
+        has_audio: bool = false,
+        num_frames: ?usize = null,
+        num_words: ?usize = null,
+        is_inbox: bool = false,
+        is_local: bool = true, // should this be true?
+        is_trashed: bool = false,
+        known_urls: ?[]usize = null, // TODO this is array
+        service_names_to_statuses_to_tags: ?[]usize = null,
+        service_keys_to_statuses_to_tags: ?[]usize = null,
+        service_names_to_statuses_to_display_tags: ?[]usize = null,
+        service_keys_to_statuses_to_display_tags: ?[]usize = null,
+    };
+
+    var hydrus_files = std.ArrayList(HydrusFile).init(ctx.manage.allocator);
+    defer {
+        for (hydrus_files.items) |file| {
+            ctx.manage.allocator.free(file.hash);
+            ctx.manage.allocator.free(file.mime);
+            ctx.manage.allocator.free(file.ext);
+        }
+        hydrus_files.deinit();
+    }
+
+    for (file_ids) |file_id| {
+        var maybe_file = try ctx.manage.fetchFile(file_id);
+        if (maybe_file) |file| {
+            var hex_hash = file.hash.toHex();
+
+            try hydrus_files.append(.{
+                .file_id = file_id,
+                .hash = try ctx.manage.allocator.dupe(u8, &hex_hash),
+                .mime = try ctx.manage.allocator.dupe(u8, "image/png"),
+                .ext = try ctx.manage.allocator.dupe(u8, ".png"),
+            });
+        }
+    }
+
+    try std.json.stringify(
+        .{ .metadata = hydrus_files.items },
         .{},
         response.writer(),
     );
