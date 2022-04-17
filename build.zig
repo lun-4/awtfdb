@@ -66,5 +66,7 @@ pub fn build(b: *std.build.Builder) void {
     hydrus_api_exe.setTarget(target);
     hydrus_api_exe.setBuildMode(mode);
     hydrus_api_exe.install();
+    hydrus_api_exe.addIncludeDir("/usr/include");
+    hydrus_api_exe.addLibPath("/usr/lib");
     deps.addAllTo(hydrus_api_exe);
 }

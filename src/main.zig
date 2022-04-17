@@ -609,6 +609,39 @@ pub const Context = struct {
         }
     }
 
+    pub fn fetchFileByHash(self: *Self, hash_data: [32]u8) !?File {
+        const hash_blob = sqlite.Blob{ .data = &hash_data };
+
+        var maybe_local_path = try self.db.?.oneAlloc(
+            struct {
+                local_path: []const u8,
+                hash_id: i64,
+            },
+            self.allocator,
+            \\ select local_path, hashes.id
+            \\ from files
+            \\ join hashes
+            \\ 	on files.file_hash = hashes.id
+            \\ where hashes.hash_data = ?
+        ,
+            .{},
+            .{hash_blob},
+        );
+
+        if (maybe_local_path) |*local_path| {
+            return File{
+                .ctx = self,
+                .local_path = local_path.local_path,
+                .hash = Hash{
+                    .id = local_path.hash_id,
+                    .hash_data = hash_data,
+                },
+            };
+        } else {
+            return null;
+        }
+    }
+
     pub fn fetchFileByPath(self: *Self, absolute_local_path: []const u8) !?File {
         var maybe_hash = try self.db.?.oneAlloc(
             HashWithBlob,

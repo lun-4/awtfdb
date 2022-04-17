@@ -104,7 +104,7 @@ pub fn main() anyerror!void {
 
     var manage_ctx = ManageContext{
         .home_path = null,
-        .args_it = undefined,
+        .args_it = &args_it,
         .stdout = undefined,
         .db = null,
         .allocator = allocator,
@@ -144,6 +144,8 @@ fn mainHandler(
         builder.get("/get_files/search_files", null, searchFiles),
         builder.options("/get_files/file_metadata", null, corsHandler),
         builder.get("/get_files/file_metadata", null, fileMetadata),
+        builder.options("/get_files/thumbnail", null, corsHandler),
+        builder.get("/get_files/thumbnail", null, fileThumbnail),
     });
 
     try writeCors(response);
@@ -355,6 +357,18 @@ fn wantAuth(ctx: *Context, response: *http.Response, request: http.Request) bool
         }
     }
 
+    var param_map = request.context.uri.queryParameters(ctx.manage.allocator) catch |err| {
+        writeError(
+            response,
+            .bad_request,
+            "invalid query parameters: {s}",
+            .{@errorName(err)},
+        ) catch return false;
+        return false;
+    };
+    defer param_map.deinit(ctx.manage.allocator);
+    access_key = access_key orelse param_map.get("Hydrus-Client-API-Access-Key");
+
     if (access_key == null) {
         response.status_code = .unauthorized;
         return false;
@@ -554,4 +568,102 @@ fn fileMetadata(
         .{},
         response.writer(),
     );
+}
+
+const c = @cImport({
+    @cInclude("magic.h");
+});
+
+fn fileThumbnail(
+    ctx: *Context,
+    response: *http.Response,
+    request: http.Request,
+    captures: ?*const anyopaque,
+) !void {
+    _ = captures;
+    if (!wantMethod(request, response, .{.get})) return;
+    if (!wantAuth(ctx, response, request)) return;
+
+    var param_map = try request.context.uri.queryParameters(ctx.manage.allocator);
+    defer param_map.deinit(ctx.manage.allocator);
+    const maybe_file_id = param_map.get("file_id");
+    const maybe_file_hash = param_map.get("hash");
+
+    if (maybe_file_id != null and maybe_file_hash != null) {
+        writeError(response, .bad_request, "cant have both hash and id", .{}) catch return;
+        return;
+    }
+
+    var hash_id_parsed: ?i64 = null;
+    var hash_parsed: [32]u8 = undefined;
+
+    if (maybe_file_hash) |file_hash| {
+        var out = try std.fmt.hexToBytes(&hash_parsed, file_hash);
+        if (out.len != 32) {
+            writeError(response, .bad_request, "invalid file hash size", .{}) catch return;
+            return;
+        }
+    }
+
+    if (maybe_file_id) |file_id| {
+        hash_id_parsed = std.fmt.parseInt(i64, file_id, 10) catch |err| {
+            writeError(
+                response,
+                .bad_request,
+                "invalid file id (must be number): {s}",
+                .{@errorName(err)},
+            ) catch return;
+            return;
+        };
+    }
+
+    log.debug("id? {s} hash? {s}", .{ maybe_file_id, maybe_file_hash });
+
+    var maybe_file: ?ManageContext.File = if (maybe_file_id != null)
+        try ctx.manage.fetchFile(hash_id_parsed.?)
+    else if (maybe_file_hash != null)
+        try ctx.manage.fetchFileByHash(hash_parsed)
+    else
+        unreachable;
+
+    if (maybe_file) |file| {
+        defer file.deinit();
+
+        var cookie = c.magic_open(
+            c.MAGIC_SYMLINK | c.MAGIC_MIME,
+        ) orelse return error.UnableToMakeMagicCookie;
+        defer c.magic_close(cookie);
+
+        // TODO use MAGIC variable if set here????
+        if (c.magic_load(cookie, "/usr/share/misc/magic.mgc") == -1) {
+            const magic_error_value = c.magic_error(cookie);
+            log.err("failed to load magic file: {s}", .{magic_error_value});
+            try writeError(
+                response,
+                .internal_server_error,
+                "an error occoured while calculating magic: {s}",
+                .{magic_error_value},
+            );
+        }
+
+        const local_path_cstr = try std.cstr.addNullByte(ctx.manage.allocator, file.local_path);
+        defer ctx.manage.allocator.free(local_path_cstr);
+
+        const mimetype = c.magic_file(cookie, local_path_cstr);
+        if (mimetype == null) {
+            const magic_error_value = c.magic_error(cookie);
+            log.err("failed to get mimetype: {s}", .{magic_error_value});
+            try writeError(
+                response,
+                .internal_server_error,
+                "an error occoured while calculating magic: {s}",
+                .{magic_error_value},
+            );
+            return;
+        } else {
+            log.debug("mimetype found: {s}", .{mimetype});
+        }
+    } else {
+        response.status_code = .not_found;
+    }
 }

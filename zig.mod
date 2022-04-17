@@ -7,3 +7,5 @@ root_dependencies:
   - src: git https://github.com/kivikakk/libpcre.zig
   - src: git https://github.com/Luukdegram/apple_pie
   - src: git https://github.com/truemedian/hzzp
+  - src: system_lib magic
+  - src: system_lib z
