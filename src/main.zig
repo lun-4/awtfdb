@@ -892,6 +892,9 @@ test "file creation" {
     try std.testing.expectStringEndsWith(fetched_by_path_file.local_path, "/test_file");
     try std.testing.expectEqual(indexed_file.hash.id, fetched_by_path_file.hash.id);
     try std.testing.expectEqualStrings(indexed_file.hash.hash_data[0..], fetched_by_path_file.hash.hash_data[0..]);
+
+    try indexed_file.delete();
+    try std.testing.expectEqual(@as(?Context.File, null), try ctx.fetchFile(indexed_file.hash.id));
 }
 
 test "file and tags" {
