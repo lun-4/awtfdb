@@ -158,7 +158,7 @@ const CreateAction = struct {
             }
 
             // delete tag_to_be_aliased_from
-            const deleted_tag_names = try tag_to_be_aliased_from.delete(&self.ctx.db.?);
+            const deleted_tag_names = try tag_to_be_aliased_from.deleteAll(&self.ctx.db.?);
             log.info("deleted {d} tag names", .{deleted_tag_names});
 
             // and create the proper alias (can only be done after deletion)

@@ -192,10 +192,11 @@ pub const Context = struct {
             return std.fmt.format(writer, "{s}", .{self.kind.Named.text});
         }
 
-        pub fn delete(self: @This(), db: *sqlite.Db) !i64 {
+        /// Deletes all the tags reffering to this core
+        pub fn deleteAll(self: @This(), db: *sqlite.Db) !usize {
             // TODO fix deleted_count here
             const deleted_tag_count = (try db.one(
-                i64,
+                usize,
                 \\ delete from tag_names
                 \\ where core_hash = ?
                 \\ returning (
@@ -853,6 +854,16 @@ test "tag creation" {
     try std.testing.expectEqual(@as(usize, 2), tags_from_core.items.len);
     try std.testing.expectEqualStrings(tag.core.hash_data[0..], tags_from_core.items[0].core.hash_data[0..]);
     try std.testing.expectEqualStrings(tag.core.hash_data[0..], tags_from_core.items[1].core.hash_data[0..]);
+
+    // TODO fix deleted_tags returning 1 instead of 2
+    const deleted_tags = try tag.deleteAll(&ctx.db.?);
+    _ = deleted_tags;
+    //try std.testing.expectEqual(@as(usize, 2), deleted_tags);
+
+    var tags_from_core_after_deletion = try ctx.fetchTagsFromCore(std.testing.allocator, tag.core);
+    defer tags_from_core_after_deletion.deinit();
+
+    try std.testing.expectEqual(@as(usize, 0), tags_from_core_after_deletion.items.len);
 }
 
 test "file creation" {
