@@ -154,6 +154,7 @@ pub fn main() anyerror!void {
 
     var it = try stmt.iterator(i64, resolved_tag_cores.items);
     var stdout = std.io.getStdOut();
+    var stderr = std.io.getStdErr();
 
     var returned_files = std.ArrayList(Context.File).init(allocator);
     defer {
@@ -169,7 +170,7 @@ pub fn main() anyerror!void {
         try returned_files.append(file);
 
         try stdout.writer().print("{s}", .{file.local_path});
-        try file.printTagsTo(allocator, stdout.writer());
+        try file.printTagsTo(allocator, stderr.writer());
         try stdout.writer().print("\n", .{});
     }
 
