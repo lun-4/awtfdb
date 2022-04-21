@@ -247,6 +247,21 @@ const RenameContext = struct {
             self.allocator.free(raw_files);
         }
 
+        // find out if the target newpath is a folder or not by searching
+        // if there are multiple entries with it already
+        var newpath_count = (try self.ctx.db.?.one(
+            i64,
+            \\ select count(*)
+            \\ from files
+            \\ where local_path LIKE ? || '%'
+        ,
+            .{},
+            .{newpath},
+        )).?;
+
+        var is_newpath_dir: ?bool = null;
+        if (newpath_count > 1) is_newpath_dir = true;
+
         if (raw_files.len >= 1) {
             // consider the following folder structure:
             //
@@ -281,9 +296,36 @@ const RenameContext = struct {
                     // since setLocalPath copies ownership, deinit afterwards
                     defer file.deinit();
 
+                    // if we coulnd't find out from db, try to find from fs
+                    if (is_newpath_dir == null) {
+                        var maybe_newpath_dir: ?std.fs.Dir = std.fs.openDirAbsolute(newpath, .{}) catch |err| switch (err) {
+                            error.NotDir => blk: {
+                                is_newpath_dir = false;
+                                break :blk null;
+                            },
+                            else => return err,
+                        };
+                        if (maybe_newpath_dir) |*newpath_dir| {
+                            newpath_dir.close();
+                            is_newpath_dir = true;
+                        }
+                    }
+
+                    if (is_newpath_dir == true) {
+                        // free the old one, create a new one that's freed
+                        // later on the defer block.
+                        self.allocator.free(newpath);
+
+                        newpath = try std.fs.path.resolve(self.allocator, &[_][]const u8{
+                            cwd_path.?,
+                            relative_new_name,
+                            std.fs.path.basename(raw_file.local_path),
+                        });
+                    }
+
                     // confirmed single file
                     log.info(
-                        "File {s} was renamed from {s} to {s}",
+                        "single File {s} was renamed from {s} to {s}",
                         .{ real_hash, oldpath, newpath },
                     );
 
@@ -340,7 +382,7 @@ const RenameContext = struct {
                         );
 
                         log.info(
-                            "File {s} was renamed from {s} to {s}",
+                            "(direcotry move) File {s} was renamed from {s} to {s}",
                             .{ &raw_file.file_hash, raw_file.local_path, replaced_path },
                         );
 
