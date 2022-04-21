@@ -496,11 +496,17 @@ pub const Context = struct {
         var file = try std.fs.openFileAbsolute(absolute_local_path, .{ .mode = .read_only });
         defer file.close();
 
-        var file_hash: Hash = try self.calculateHash(file);
+        var file_hash: Hash = try self.calculateHash(file, .{});
         return try self.insertFile(file_hash, absolute_local_path);
     }
 
-    fn calculateHash(self: *Self, file: std.fs.File) !Hash {
+    pub const CalculateHashOptions = struct {
+        insert_new_hash: bool = true,
+    };
+
+    /// if the file is not indexed and options.insert_new_hash is false,
+    /// do not rely on the returned hash's id object making any sense.
+    pub fn calculateHash(self: *Self, file: std.fs.File, options: CalculateHashOptions) !Hash {
         var data_chunk_buffer: [8192]u8 = undefined;
         var hasher = std.crypto.hash.Blake3.initKdf(AWTFDB_BLAKE3_CONTEXT, .{});
         while (true) {
@@ -523,12 +529,16 @@ pub const Context = struct {
         if (maybe_hash_id) |hash_id| {
             file_hash.id = hash_id;
         } else {
-            file_hash.id = (try self.db.?.one(
-                i64,
-                "insert into hashes (hash_data) values (?) returning id",
-                .{},
-                .{hash_blob},
-            )).?;
+            if (options.insert_new_hash) {
+                file_hash.id = (try self.db.?.one(
+                    i64,
+                    "insert into hashes (hash_data) values (?) returning id",
+                    .{},
+                    .{hash_blob},
+                )).?;
+            } else {
+                file_hash.id = -1;
+            }
         }
 
         return file_hash;
@@ -569,7 +579,7 @@ pub const Context = struct {
             return file_entry;
         }
 
-        var file_hash: Hash = try self.calculateHash(file);
+        var file_hash: Hash = try self.calculateHash(file, .{});
         return try self.insertFile(file_hash, absolute_local_path);
     }
 

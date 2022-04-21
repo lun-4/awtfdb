@@ -26,6 +26,11 @@ const HELPTEXT =
     \\					if any of them don't match, then argument
     \\					processing comes back to normal options
     \\ 					 (available processors: regex)
+    \\ --filter-indexed-files-only	only include files already indexed
+    \\ 					(useful if you're moving files around
+    \\ 					and they're not catched by the
+    \\ 					rename watcher)
+    \\
     \\ example, adding a single file:
     \\  ainclude --tag format:mp4 --tag "meme:what the dog doing" /downloads/funny_meme.mp4
     \\
@@ -217,6 +222,7 @@ pub fn main() anyerror!void {
         default_tags: StringList,
         wanted_inferrers: ConfigList,
         include_paths: StringList,
+        filter_indexed_files_only: bool = false,
 
         pub fn deinit(self: *@This()) void {
             self.default_tags.deinit();
@@ -268,6 +274,8 @@ pub fn main() anyerror!void {
             given_args.verbose = true;
         } else if (std.mem.eql(u8, arg, "-V")) {
             given_args.version = true;
+        } else if (std.mem.eql(u8, arg, "--filter-indexed-files-only")) {
+            given_args.filter_indexed_files_only = true;
         } else if (std.mem.eql(u8, arg, "--tag") or std.mem.eql(u8, arg, "-t")) {
             state = .FetchTag;
             // tag inferrers require more than one arg, so we need to load
@@ -354,6 +362,8 @@ pub fn main() anyerror!void {
         defer if (dir) |*unpacked_dir| unpacked_dir.close();
 
         if (dir == null) {
+            if (given_args.filter_indexed_files_only)
+                std.debug.todo("TODO support filter_indexed_files_only on file paths");
             var file = try ctx.createFileFromPath(path_to_include);
             defer file.deinit();
             log.debug("adding file '{s}'", .{file.local_path});
@@ -382,6 +392,28 @@ pub fn main() anyerror!void {
                     .File, .SymLink => {
                         // TODO use std.fs.path.join here
                         log.debug("adding child path '{s}/{s}'", .{ path_to_include, entry.path });
+
+                        // if we only want to reindex files already in
+                        // the system, hash them first and try to fetch the file
+                        // if it exists, move forward, if not, skip that file
+                        if (given_args.filter_indexed_files_only) {
+                            var fs_file = try entry.dir.openFile(
+                                entry.basename,
+                                .{ .mode = .read_only },
+                            );
+                            defer fs_file.close();
+
+                            const hash = try ctx.calculateHash(fs_file, .{ .insert_new_hash = false });
+                            log.debug("hash is {s}", .{hash});
+                            const maybe_file = try ctx.fetchFileByHash(hash.hash_data);
+
+                            if (maybe_file) |file| {
+                                file.deinit();
+                            } else {
+                                log.debug("skipping due to selected filter", .{});
+                                continue;
+                            }
+                        }
 
                         var file = try ctx.createFileFromDir(entry.dir, entry.basename);
                         defer file.deinit();
