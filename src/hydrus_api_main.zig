@@ -4,6 +4,7 @@ const manage_main = @import("main.zig");
 const http = @import("apple_pie");
 const ManageContext = manage_main.Context;
 const SqlGiver = @import("./find_main.zig").SqlGiver;
+const magick = @import("./magick.zig");
 
 const Context = struct {
     manage: *ManageContext,
@@ -670,6 +671,61 @@ fn fileThumbnail(
                 const file_fd = try std.fs.openFileAbsolute(file.local_path, .{ .mode = .read_only });
                 defer file_fd.close();
 
+                try response.headers.put("Content-type", mimetype);
+
+                var buf: [4096]u8 = undefined;
+                while (true) {
+                    const read_bytes = try file_fd.read(&buf);
+                    if (read_bytes == 0) break;
+                    try response.writer().writeAll(&buf);
+                }
+            } else if (std.mem.startsWith(u8, mimetype, "application/pdf")) {
+                var PREFIX = "/tmp/awtf/ahydrus-thumbnails";
+
+                const dirpath = std.fs.path.dirname(file.local_path).?;
+                const basename = std.fs.path.basename(file.local_path);
+
+                const basename_png = try std.fmt.allocPrint(ctx.manage.allocator, "{s}.png", .{basename});
+                defer ctx.manage.allocator.free(basename_png);
+
+                const thumbnail_path = try std.fs.path.resolve(ctx.manage.allocator, &[_][]const u8{
+                    PREFIX,
+                    dirpath,
+                    basename_png,
+                });
+                defer ctx.manage.allocator.free(thumbnail_path);
+
+                try std.fs.cwd().makePath(std.fs.path.dirname(thumbnail_path).?);
+
+                var maybe_file_fd: ?std.fs.File = std.fs.openFileAbsolute(
+                    thumbnail_path,
+                    .{ .mode = .read_only },
+                ) catch |err| switch (err) {
+                    error.FileNotFound => blk: {
+                        break :blk null;
+                    },
+                    else => return err,
+                };
+                defer if (maybe_file_fd) |file_fd| file_fd.close();
+
+                if (maybe_file_fd == null) {
+                    var mctx = try magick.loadImage(local_path_cstr);
+                    defer mctx.deinit();
+
+                    const thumbnail_path_cstr = try std.cstr.addNullByte(ctx.manage.allocator, thumbnail_path);
+                    defer ctx.manage.allocator.free(thumbnail_path_cstr);
+
+                    if (magick.c.MagickWriteImage(mctx.wand, thumbnail_path_cstr) == 0)
+                        return error.MagickWriteFail;
+
+                    //should work now
+                    maybe_file_fd = try std.fs.openFileAbsolute(
+                        thumbnail_path,
+                        .{ .mode = .read_only },
+                    );
+                }
+
+                var file_fd = maybe_file_fd.?;
                 var buf: [4096]u8 = undefined;
                 while (true) {
                     const read_bytes = try file_fd.read(&buf);
@@ -678,6 +734,10 @@ fn fileThumbnail(
                 }
 
                 return;
+            } else {
+
+                // todo return default thumbnail
+                try writeError(response, .internal_server_error, "unsupported mimetype: {s}", .{mimetype});
             }
         }
     } else {

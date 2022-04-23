@@ -9,3 +9,5 @@ root_dependencies:
   - src: git https://github.com/truemedian/hzzp
   - src: system_lib magic
   - src: system_lib z
+  - src: system_lib GraphicsMagick
+  - src: system_lib GraphicsMagickWand
