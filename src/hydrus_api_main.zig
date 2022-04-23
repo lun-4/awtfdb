@@ -147,6 +147,8 @@ fn mainHandler(
         builder.get("/get_files/file_metadata", null, fileMetadata),
         builder.options("/get_files/thumbnail", null, corsHandler),
         builder.get("/get_files/thumbnail", null, fileThumbnail),
+        builder.options("/get_files/file", null, corsHandler),
+        builder.get("/get_files/file", null, fileContents),
     });
 
     try writeCors(response);
@@ -575,6 +577,36 @@ const c = @cImport({
     @cInclude("magic.h");
 });
 
+const MagicResult = struct {
+    cookie: c.magic_t,
+    result: ?[]const u8,
+};
+
+fn inferMimetype(response: *http.Response, allocator: std.mem.Allocator, local_path: []const u8) !?MagicResult {
+    var cookie = c.magic_open(
+        c.MAGIC_SYMLINK | c.MAGIC_MIME,
+    ) orelse return error.UnableToMakeMagicCookie;
+
+    // TODO use MAGIC variable if set here????
+    if (c.magic_load(cookie, "/usr/share/misc/magic.mgc") == -1) {
+        const magic_error_value = c.magic_error(cookie);
+        log.err("failed to load magic file: {s}", .{magic_error_value});
+
+        try writeError(
+            response,
+            .internal_server_error,
+            "an error occoured while calculating magic: {s}",
+            .{magic_error_value},
+        );
+        return null;
+    }
+
+    const local_path_cstr = try std.cstr.addNullByte(allocator, local_path);
+    defer allocator.free(local_path_cstr);
+
+    return MagicResult{ .cookie = cookie, .result = std.mem.span(c.magic_file(cookie, local_path_cstr)) };
+}
+
 fn fileThumbnail(
     ctx: *Context,
     response: *http.Response,
@@ -630,29 +662,11 @@ fn fileThumbnail(
     if (maybe_file) |file| {
         defer file.deinit();
 
-        var cookie = c.magic_open(
-            c.MAGIC_SYMLINK | c.MAGIC_MIME,
-        ) orelse return error.UnableToMakeMagicCookie;
-        defer c.magic_close(cookie);
-
-        // TODO use MAGIC variable if set here????
-        if (c.magic_load(cookie, "/usr/share/misc/magic.mgc") == -1) {
-            const magic_error_value = c.magic_error(cookie);
-            log.err("failed to load magic file: {s}", .{magic_error_value});
-            try writeError(
-                response,
-                .internal_server_error,
-                "an error occoured while calculating magic: {s}",
-                .{magic_error_value},
-            );
-        }
-
-        const local_path_cstr = try std.cstr.addNullByte(ctx.manage.allocator, file.local_path);
-        defer ctx.manage.allocator.free(local_path_cstr);
-
-        const mimetype_cstr = c.magic_file(cookie, local_path_cstr);
+        const mimetype_result = (try inferMimetype(response, ctx.manage.allocator, file.local_path)) orelse return;
+        defer c.magic_close(mimetype_result.cookie);
+        const mimetype_cstr = mimetype_result.result;
         if (mimetype_cstr == null) {
-            const magic_error_value = c.magic_error(cookie);
+            const magic_error_value = c.magic_error(mimetype_result.cookie);
             log.err("failed to get mimetype: {s}", .{magic_error_value});
             try writeError(
                 response,
@@ -662,7 +676,7 @@ fn fileThumbnail(
             );
             return;
         } else {
-            const mimetype = std.mem.span(mimetype_cstr);
+            const mimetype = mimetype_cstr.?;
             log.debug("mimetype found: {s}", .{mimetype});
             if (std.mem.startsWith(u8, mimetype, "image/")) {
                 //var mctx = try magick.loadImage(local_path_cstr);
@@ -671,7 +685,17 @@ fn fileThumbnail(
                 const file_fd = try std.fs.openFileAbsolute(file.local_path, .{ .mode = .read_only });
                 defer file_fd.close();
 
-                try response.headers.put("Content-type", mimetype);
+                // we need a better API to pass header values whose lifetime are
+                // beyond the request handler's, or else we're passing undefined
+                // memory to the response.
+                //
+                // this hack is required so that the values live in constant
+                // memory inside the executable, rather than stack/heap.
+                if (std.mem.startsWith(u8, mimetype, "image/png")) {
+                    try response.headers.put("Content-Type", "image/png");
+                } else if (std.mem.startsWith(u8, mimetype, "application/pdf")) {
+                    try response.headers.put("Content-Type", "application/pdf");
+                }
 
                 var buf: [4096]u8 = undefined;
                 while (true) {
@@ -684,6 +708,9 @@ fn fileThumbnail(
 
                 const dirpath = std.fs.path.dirname(file.local_path).?;
                 const basename = std.fs.path.basename(file.local_path);
+
+                const local_path_cstr = try std.cstr.addNullByte(ctx.manage.allocator, file.local_path);
+                defer ctx.manage.allocator.free(local_path_cstr);
 
                 const basename_png = try std.fmt.allocPrint(ctx.manage.allocator, "{s}.png", .{basename});
                 defer ctx.manage.allocator.free(basename_png);
@@ -739,6 +766,106 @@ fn fileThumbnail(
                 // todo return default thumbnail
                 try writeError(response, .internal_server_error, "unsupported mimetype: {s}", .{mimetype});
             }
+        }
+    } else {
+        response.status_code = .not_found;
+    }
+}
+
+fn fileContents(
+    ctx: *Context,
+    response: *http.Response,
+    request: http.Request,
+    captures: ?*const anyopaque,
+) !void {
+    _ = captures;
+    if (!wantMethod(request, response, .{.get})) return;
+    if (!wantAuth(ctx, response, request)) return;
+
+    var param_map = try request.context.uri.queryParameters(ctx.manage.allocator);
+    defer param_map.deinit(ctx.manage.allocator);
+
+    // TODO decrease repetition
+    const maybe_file_id = param_map.get("file_id");
+    const maybe_file_hash = param_map.get("hash");
+
+    if (maybe_file_id != null and maybe_file_hash != null) {
+        writeError(response, .bad_request, "cant have both hash and id", .{}) catch return;
+        return;
+    }
+
+    var hash_id_parsed: ?i64 = null;
+    var hash_parsed: [32]u8 = undefined;
+
+    if (maybe_file_hash) |file_hash| {
+        var out = try std.fmt.hexToBytes(&hash_parsed, file_hash);
+        if (out.len != 32) {
+            writeError(response, .bad_request, "invalid file hash size", .{}) catch return;
+            return;
+        }
+    }
+
+    if (maybe_file_id) |file_id| {
+        hash_id_parsed = std.fmt.parseInt(i64, file_id, 10) catch |err| {
+            writeError(
+                response,
+                .bad_request,
+                "invalid file id (must be number): {s}",
+                .{@errorName(err)},
+            ) catch return;
+            return;
+        };
+    }
+
+    log.debug("id? {s} hash? {s}", .{ maybe_file_id, maybe_file_hash });
+
+    var maybe_file: ?ManageContext.File = if (maybe_file_id != null)
+        try ctx.manage.fetchFile(hash_id_parsed.?)
+    else if (maybe_file_hash != null)
+        try ctx.manage.fetchFileByHash(hash_parsed)
+    else
+        unreachable;
+
+    if (maybe_file) |file| {
+        defer file.deinit();
+
+        const mimetype_result = (try inferMimetype(response, ctx.manage.allocator, file.local_path)) orelse return;
+        defer c.magic_close(mimetype_result.cookie);
+        const maybe_mimetype = mimetype_result.result;
+        if (maybe_mimetype) |mimetype| {
+            log.debug("mimetype found: {s}", .{mimetype});
+
+            const file_fd = try std.fs.openFileAbsolute(file.local_path, .{ .mode = .read_only });
+            defer file_fd.close();
+
+            // we need a better API to pass header values whose lifetime are
+            // beyond the request handler's, or else we're passing undefined
+            // memory to the response.
+            //
+            // this hack is required so that the values live in constant
+            // memory inside the executable, rather than stack/heap.
+            if (std.mem.startsWith(u8, mimetype, "image/png")) {
+                try response.headers.put("Content-Type", "image/png");
+            } else if (std.mem.startsWith(u8, mimetype, "application/pdf")) {
+                try response.headers.put("Content-Type", "application/pdf");
+            }
+
+            var buf: [4096]u8 = undefined;
+            while (true) {
+                const read_bytes = try file_fd.read(&buf);
+                if (read_bytes == 0) break;
+                try response.writer().writeAll(&buf);
+            }
+        } else {
+            const magic_error_value = c.magic_error(mimetype_result.cookie);
+            log.err("failed to get mimetype: {s}", .{magic_error_value});
+            try writeError(
+                response,
+                .internal_server_error,
+                "an error occoured while calculating magic: {s}",
+                .{magic_error_value},
+            );
+            return;
         }
     } else {
         response.status_code = .not_found;
