@@ -298,9 +298,9 @@ const RenameContext = struct {
 
                     // if we coulnd't find out from db, try to find from fs
                     if (is_newpath_dir == null) {
-                        log.err("newpath:{s}", .{newpath});
+                        log.debug("newpath:{s}", .{newpath});
                         var maybe_newpath_dir: ?std.fs.Dir = std.fs.openDirAbsolute(newpath, .{}) catch |err| switch (err) {
-                            error.NotDir => blk: {
+                            error.FileNotFound, error.NotDir => blk: {
                                 is_newpath_dir = false;
                                 break :blk null;
                             },
