@@ -649,8 +649,8 @@ fn fileThumbnail(
         const local_path_cstr = try std.cstr.addNullByte(ctx.manage.allocator, file.local_path);
         defer ctx.manage.allocator.free(local_path_cstr);
 
-        const mimetype = c.magic_file(cookie, local_path_cstr);
-        if (mimetype == null) {
+        const mimetype_cstr = c.magic_file(cookie, local_path_cstr);
+        if (mimetype_cstr == null) {
             const magic_error_value = c.magic_error(cookie);
             log.err("failed to get mimetype: {s}", .{magic_error_value});
             try writeError(
@@ -661,7 +661,24 @@ fn fileThumbnail(
             );
             return;
         } else {
+            const mimetype = std.mem.span(mimetype_cstr);
             log.debug("mimetype found: {s}", .{mimetype});
+            if (std.mem.startsWith(u8, mimetype, "image/")) {
+                //var mctx = try magick.loadImage(local_path_cstr);
+                //defer mctx.deinit();
+
+                const file_fd = try std.fs.openFileAbsolute(file.local_path, .{ .mode = .read_only });
+                defer file_fd.close();
+
+                var buf: [4096]u8 = undefined;
+                while (true) {
+                    const read_bytes = try file_fd.read(&buf);
+                    if (read_bytes == 0) break;
+                    try response.writer().writeAll(&buf);
+                }
+
+                return;
+            }
         }
     } else {
         response.status_code = .not_found;
