@@ -298,6 +298,7 @@ const RenameContext = struct {
 
                     // if we coulnd't find out from db, try to find from fs
                     if (is_newpath_dir == null) {
+                        log.err("newpath:{s}", .{newpath});
                         var maybe_newpath_dir: ?std.fs.Dir = std.fs.openDirAbsolute(newpath, .{}) catch |err| switch (err) {
                             error.NotDir => blk: {
                                 is_newpath_dir = false;
@@ -312,15 +313,16 @@ const RenameContext = struct {
                     }
 
                     if (is_newpath_dir == true) {
+                        const old_newpath = newpath;
+                        const local_basename = std.fs.path.basename(raw_file.local_path);
+
                         // free the old one, create a new one that's freed
                         // later on the defer block.
-                        self.allocator.free(newpath);
-
                         newpath = try std.fs.path.resolve(self.allocator, &[_][]const u8{
-                            cwd_path.?,
-                            relative_new_name,
-                            std.fs.path.basename(raw_file.local_path),
+                            old_newpath,
+                            local_basename,
                         });
+                        self.allocator.free(old_newpath);
                     }
 
                     // confirmed single file
@@ -734,6 +736,97 @@ test "rename syscalls trigger db rename" {
         "select count(*) from files where local_path = ?",
         .{},
         .{newname},
+    )).?;
+    try std.testing.expectEqual(@as(usize, 1), newname_count);
+}
+
+test "rename syscalls trigger db rename (target being a folder)" {
+    const allocator = std.testing.allocator;
+
+    var ctx = try manage_main.makeTestContext();
+    defer ctx.deinit();
+
+    var oldnames = ChunkedNameMap.init(allocator);
+    var newnames = ChunkedNameMap.init(allocator);
+    var cwds = NameMap.init(allocator);
+
+    var rename_ctx = RenameContext{
+        .allocator = allocator,
+        .oldnames = &oldnames,
+        .newnames = &newnames,
+        .cwds = &cwds,
+        .ctx = &ctx,
+    };
+    defer rename_ctx.deinit();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    var target_tmp = std.testing.tmpDir(.{});
+    defer target_tmp.cleanup();
+
+    var file = try tmp.dir.createFile("test_file", .{});
+    defer file.close();
+    _ = try file.write("awooga");
+
+    var indexed_file = try ctx.createFileFromDir(tmp.dir, "test_file");
+    defer indexed_file.deinit();
+
+    // TODO system layer so we can attach a test procfs and test filesystem too
+    // also should help if we think about going beyond bpftrace
+    //  (dtrace for macos and bsds maybe?)
+
+    var full_tmp_dir_path = try tmp.dir.realpathAlloc(allocator, ".");
+    defer allocator.free(full_tmp_dir_path);
+
+    var full_target_tmp_dir_path = try target_tmp.dir.realpathAlloc(allocator, ".");
+    defer allocator.free(full_target_tmp_dir_path);
+
+    var oldname = try std.fs.path.resolve(allocator, &[_][]const u8{
+        full_tmp_dir_path,
+        "test_file",
+    });
+    defer allocator.free(oldname);
+    var newname = full_target_tmp_dir_path;
+
+    var actual_newname = try std.fs.path.resolve(allocator, &[_][]const u8{
+        full_target_tmp_dir_path,
+        "test_file",
+    });
+    defer allocator.free(actual_newname);
+
+    const lines_preprint =
+        \\v1:oldname:6969:6969:{s}
+        \\v1:newname:6969:6969:{s}
+        \\v1:exit_rename:6969:6969:0
+    ;
+
+    var buf: [8192]u8 = undefined;
+    const lines = try std.fmt.bufPrint(
+        &buf,
+        lines_preprint,
+        .{ oldname, newname },
+    );
+
+    // give those lines to context
+    var it = std.mem.split(u8, lines, "\n");
+    while (it.next()) |line|
+        try rename_ctx.processLine(line);
+
+    const oldname_count = (try ctx.db.?.one(
+        usize,
+        "select count(*) from files where local_path = ?",
+        .{},
+        .{oldname},
+    )).?;
+
+    try std.testing.expectEqual(@as(usize, 0), oldname_count);
+
+    const newname_count = (try ctx.db.?.one(
+        usize,
+        "select count(*) from files where local_path = ?",
+        .{},
+        .{actual_newname},
     )).?;
     try std.testing.expectEqual(@as(usize, 1), newname_count);
 }
