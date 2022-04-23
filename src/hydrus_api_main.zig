@@ -408,11 +408,17 @@ fn verifyAccessKey(
     );
 }
 
-fn convertTagsToFindQuery(tags_string: []const u8) []const u8 {
+fn convertTagsToFindQuery(allocator: std.mem.Allocator, tags_string: []const u8) ![]const u8 {
     //parse json out of tags_string
     //construct afind query out of it
-    _ = tags_string;
-    return "type:paper";
+
+    log.debug("tags string: '{s}'", .{tags_string});
+    var tokens = std.json.TokenStream.init(tags_string);
+    const opts = std.json.ParseOptions{ .allocator = allocator };
+    const tags = try std.json.parse([][]const u8, &tokens, opts);
+    defer std.json.parseFree([][]const u8, tags, opts);
+
+    return std.mem.join(allocator, " ", tags);
 }
 
 fn writeError(
@@ -437,8 +443,18 @@ fn searchFiles(
 
     if (!wantAuth(ctx, response, request)) return;
 
-    const tags_string: []const u8 = undefined;
-    const find_query = convertTagsToFindQuery(tags_string);
+    var param_map = try request.context.uri.queryParameters(ctx.manage.allocator);
+    defer param_map.deinit(ctx.manage.allocator);
+    const unsafe_tags_string = param_map.get("tags") orelse {
+        writeError(response, .bad_request, "need tags", .{}) catch return;
+        return;
+    };
+
+    const safe_tags_string = try http.Uri.decode(ctx.manage.allocator, unsafe_tags_string);
+    defer ctx.manage.allocator.free(safe_tags_string);
+
+    const find_query = try convertTagsToFindQuery(ctx.manage.allocator, safe_tags_string);
+    defer ctx.manage.allocator.free(find_query);
 
     const wrapped_result = try SqlGiver.giveMeSql(ctx.manage.allocator, find_query);
     defer wrapped_result.deinit();
