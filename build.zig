@@ -69,4 +69,10 @@ pub fn build(b: *std.build.Builder) void {
     hydrus_api_exe.addIncludeDir("/usr/include");
     hydrus_api_exe.addLibPath("/usr/lib");
     deps.addAllTo(hydrus_api_exe);
+
+    const janitor_exe = b.addExecutable("awtfdb-janitor", "src/janitor_main.zig");
+    janitor_exe.setTarget(target);
+    janitor_exe.setBuildMode(mode);
+    janitor_exe.install();
+    deps.addAllTo(janitor_exe);
 }

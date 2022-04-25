@@ -91,6 +91,8 @@ const MIGRATION_LOG_TABLE =
     \\ );
 ;
 
+const log = std.log.scoped(.awtfdb_main);
+
 pub const Context = struct {
     home_path: ?[]const u8 = null,
     args_it: *std.process.ArgIterator,
@@ -143,7 +145,7 @@ pub const Context = struct {
         // ensure our database functions work
         var result = try self.fetchValue(i32, "select 123;");
         if (result == null or result.? != 123) {
-            std.log.err("error on test statement: expected 123, got {d}", .{result});
+            log.err("error on test statement: expected 123, got {d}", .{result});
             return error.TestStatementFailed;
         }
     }
@@ -426,6 +428,7 @@ pub const Context = struct {
         }
 
         pub fn delete(self: FileSelf) !void {
+            log.info("deleted file {d} {s}", .{ self.hash.id, self.local_path });
             try self.ctx.db.?.exec(
                 "delete from files where file_hash = ? and local_path = ?",
                 .{},
