@@ -95,9 +95,13 @@ pub fn main() anyerror!void {
     var not_found_count: usize = 0;
     var repairable_not_found_count: usize = 0;
     var unrepairable_count: usize = 0;
+    var incorrect_hash_count: usize = 0;
 
     while (try iter.nextAlloc(allocator, .{})) |row| {
         defer allocator.free(row.local_path);
+
+        const indexed_file = (try ctx.fetchFile(row.file_hash)) orelse return error.InconsistentIndex;
+        defer indexed_file.deinit();
 
         var file = std.fs.openFileAbsolute(row.local_path, .{ .mode = .read_only }) catch |err| switch (err) {
             error.FileNotFound => {
@@ -126,8 +130,6 @@ pub fn main() anyerror!void {
                     repairable_not_found_count += 1;
 
                     if (given_args.repair) {
-                        const indexed_file = (try ctx.fetchFile(row.file_hash)) orelse return error.InconsistentIndex;
-                        defer indexed_file.deinit();
                         try indexed_file.delete();
                     }
                 } else if (repeated_count == 1) {
@@ -147,12 +149,35 @@ pub fn main() anyerror!void {
             },
             else => return err,
         };
-
         defer file.close();
+
+        var calculated_hash = try ctx.calculateHash(file, .{ .insert_new_hash = false });
+
+        if (!std.mem.eql(u8, &calculated_hash.hash_data, &indexed_file.hash.hash_data)) {
+            // repair option: fuck
+
+            incorrect_hash_count += 1;
+
+            log.err(
+                "hashes are incorrect for file {d}",
+                .{row.file_hash},
+            );
+
+            unrepairable_count += 1;
+
+            if (given_args.repair) {
+                return error.ManualInterventionRequired;
+            }
+            continue;
+        }
+
         log.info("path {s} ok", .{row.local_path});
     }
 
+    // TODO garbage collect unused entires in hashes table
+
     log.info("{d} files were not found", .{not_found_count});
     log.info("{d} files were not found and can be repaired", .{repairable_not_found_count});
+    log.info("{d} files have incorrect hashes with the index", .{incorrect_hash_count});
     log.info("{d} files can NOT be automatically repaired", .{unrepairable_count});
 }
