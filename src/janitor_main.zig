@@ -41,6 +41,7 @@ pub fn main() anyerror!void {
         help: bool = false,
         version: bool = false,
         repair: bool = false,
+        full: bool = false,
     };
 
     var given_args = Args{};
@@ -52,6 +53,8 @@ pub fn main() anyerror!void {
             given_args.version = true;
         } else if (std.mem.eql(u8, arg, "--repair")) {
             given_args.repair = true;
+        } else if (std.mem.eql(u8, arg, "--full")) {
+            given_args.full = true;
         } else {
             return error.InvalidArgument;
         }
@@ -151,26 +154,27 @@ pub fn main() anyerror!void {
         };
         defer file.close();
 
-        var calculated_hash = try ctx.calculateHash(file, .{ .insert_new_hash = false });
+        if (given_args.full) {
+            var calculated_hash = try ctx.calculateHash(file, .{ .insert_new_hash = false });
 
-        if (!std.mem.eql(u8, &calculated_hash.hash_data, &indexed_file.hash.hash_data)) {
-            // repair option: fuck
+            if (!std.mem.eql(u8, &calculated_hash.hash_data, &indexed_file.hash.hash_data)) {
+                // repair option: fuck
 
-            incorrect_hash_count += 1;
+                incorrect_hash_count += 1;
 
-            log.err(
-                "hashes are incorrect for file {d}",
-                .{row.file_hash},
-            );
+                log.err(
+                    "hashes are incorrect for file {d}",
+                    .{row.file_hash},
+                );
 
-            unrepairable_count += 1;
+                unrepairable_count += 1;
 
-            if (given_args.repair) {
-                return error.ManualInterventionRequired;
+                if (given_args.repair) {
+                    return error.ManualInterventionRequired;
+                }
+                continue;
             }
-            continue;
         }
-
         log.info("path {s} ok", .{row.local_path});
     }
 
