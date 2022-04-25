@@ -178,10 +178,57 @@ pub fn main() anyerror!void {
         log.info("path {s} ok", .{row.local_path});
     }
 
-    // TODO garbage collect unused entires in hashes table
+    // garbage collect unused entires in hashes table
+    var unused_hash_count: usize = 0;
+
+    var hashes_stmt = try ctx.db.?.prepare(
+        \\ select id
+        \\ from hashes
+        \\ order by id asc
+    );
+    defer hashes_stmt.deinit();
+    var hashes_iter = try hashes_stmt.iterator(i64, .{});
+    while (try hashes_iter.nextAlloc(allocator, .{})) |hash_id| {
+        const core_count = (try ctx.db.?.one(
+            i64,
+            \\ select count(*) from tag_cores
+            \\ where core_hash = ?
+        ,
+            .{},
+            .{hash_id},
+        )).?;
+
+        if (core_count > 0) continue;
+
+        const file_count = (try ctx.db.?.one(
+            i64,
+            \\ select count(*) from files
+            \\ where file_hash= ?
+        ,
+            .{},
+            .{hash_id},
+        )).?;
+
+        if (file_count > 0) continue;
+
+        log.warn("unused hash in table: {d}", .{hash_id});
+        unused_hash_count += 1;
+
+        if (given_args.repair) {
+            try ctx.db.?.exec(
+                \\ delete from hashes
+                \\ where id = ?
+            ,
+                .{},
+                .{hash_id},
+            );
+            log.info("deleted hash {d}", .{hash_id});
+        }
+    }
 
     log.info("{d} files were not found", .{not_found_count});
     log.info("{d} files were not found and can be repaired", .{repairable_not_found_count});
     log.info("{d} files have incorrect hashes with the index", .{incorrect_hash_count});
     log.info("{d} files can NOT be automatically repaired", .{unrepairable_count});
+    log.info("{d} hashes are not needed anymore and can be deleted", .{unused_hash_count});
 }
