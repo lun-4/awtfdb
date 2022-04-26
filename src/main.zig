@@ -149,6 +149,8 @@ pub const Context = struct {
             log.err("error on test statement: expected 123, got {d}", .{result});
             return error.TestStatementFailed;
         }
+
+        try self.db.?.exec("PRAGMA foreign_keys = ON", .{}, .{});
     }
 
     fn executeOnce(self: *Self, comptime statement: []const u8) !void {
