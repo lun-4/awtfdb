@@ -550,6 +550,38 @@ pub const Context = struct {
         return file_hash;
     }
 
+    pub fn calculateHashFromMemory(self: *Self, block: []const u8, options: CalculateHashOptions) !Hash {
+        var hasher = std.crypto.hash.Blake3.initKdf(AWTFDB_BLAKE3_CONTEXT, .{});
+        hasher.update(block);
+
+        var hash_entry: Hash = undefined;
+        hasher.final(&hash_entry.hash_data);
+
+        const hash_blob = sqlite.Blob{ .data = &hash_entry.hash_data };
+        const maybe_hash_id = try self.db.?.one(
+            i64,
+            "select id from hashes where hash_data = ?",
+            .{},
+            .{hash_blob},
+        );
+        if (maybe_hash_id) |hash_id| {
+            hash_entry.id = hash_id;
+        } else {
+            if (options.insert_new_hash) {
+                hash_entry.id = (try self.db.?.one(
+                    i64,
+                    "insert into hashes (hash_data) values (?) returning id",
+                    .{},
+                    .{hash_blob},
+                )).?;
+            } else {
+                hash_entry.id = -1;
+            }
+        }
+
+        return hash_entry;
+    }
+
     fn insertFile(
         self: *Self,
         file_hash: Hash,

@@ -178,6 +178,61 @@ pub fn main() anyerror!void {
         log.info("path {s} ok", .{row.local_path});
     }
 
+    // calculate hashes for tag_cores
+    var cores_stmt = try ctx.db.?.prepare(
+        \\ select core_hash, core_data
+        \\ from tag_cores
+        \\ order by core_hash asc
+    );
+    defer cores_stmt.deinit();
+    var cores_iter = try cores_stmt.iterator(struct {
+        core_hash: i64,
+        core_data: sqlite.Blob,
+    }, .{});
+    while (try cores_iter.nextAlloc(allocator, .{})) |core_with_blob| {
+        defer allocator.free(core_with_blob.core_data.data);
+
+        const calculated_hash = try ctx.calculateHashFromMemory(
+            core_with_blob.core_data.data,
+            .{ .insert_new_hash = false },
+        );
+
+        var hash_with_blob = (try ctx.db.?.oneAlloc(
+            Context.HashWithBlob,
+            allocator,
+            \\ select id, hash_data
+            \\ from hashes
+            \\ where id = ?
+        ,
+            .{},
+            .{core_with_blob.core_hash},
+        )).?;
+        defer allocator.free(hash_with_blob.hash_data.data);
+
+        const upstream_hash = hash_with_blob.toRealHash();
+
+        if (!std.mem.eql(u8, &calculated_hash.hash_data, &upstream_hash.hash_data)) {
+            // repair option: fuck
+
+            incorrect_hash_count += 1;
+
+            log.err(
+                "hashes are incorrect for tag core {d} ({s} != {s})",
+                .{ core_with_blob.core_hash, calculated_hash, upstream_hash },
+            );
+
+            unrepairable_count += 1;
+
+            if (given_args.repair) {
+                return error.ManualInterventionRequired;
+            }
+
+            continue;
+        }
+
+        // TODO validate if there's any tag names to the core
+    }
+
     // garbage collect unused entires in hashes table
     var unused_hash_count: usize = 0;
 
