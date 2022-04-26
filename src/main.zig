@@ -167,6 +167,12 @@ pub const Context = struct {
 
     pub fn deinit(self: *Self) void {
         if (self.db != null) {
+            log.info("possibly optimizing database...", .{});
+            // The results of analysis are not as good when only part of each index is examined,
+            // but the results are usually good enough. Setting N to 100 or 1000 allows
+            // the ANALYZE command to run very quickly, even on multi-gigabyte database files.
+            _ = self.db.?.one(i64, "PRAGMA analysis_limit=1000;", .{}, .{}) catch {};
+            _ = self.db.?.exec("PRAGMA optimize;", .{}, .{}) catch {};
             self.db.?.deinit();
         }
     }
