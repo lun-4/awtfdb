@@ -730,6 +730,10 @@ pub const Context = struct {
                 }
             }
         }
+
+        const val = try self.db.?.one(i64, "PRAGMA integrity_check", .{}, .{});
+        log.debug("integrity check returned {d}", .{val});
+        try self.db.?.exec("PRAGMA foreign_key_check", .{}, .{});
     }
 
     pub fn statsCommand(self: *Self) !void {
