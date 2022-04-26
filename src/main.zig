@@ -31,7 +31,7 @@ const MIGRATIONS = .{
         \\ -- and then only using the int id (which is more efficiency) for
         \\ -- references into other tables
         \\ create table hashes (
-        \\     id integer primary key autoincrement,
+        \\     id integer primary key,
         \\     hash_data blob
         \\     	constraint hashes_length check (length(hash_data) == 32)
         \\     	constraint hashes_unique unique
@@ -66,7 +66,8 @@ const MIGRATIONS = .{
         \\ -- execute your SELECT here.
         \\ create table tag_files (
         \\     file_hash int not null
-        \\     	constraint tag_files_file_fk references files (file_hash) on delete cascade,
+        \\      -- not referencing files (file_hash) so that it still works
+        \\     	constraint tag_files_file_fk references hashes (id) on delete cascade,
         \\     core_hash int not null
         \\     	constraint tag_files_core_fk references tag_cores (core_hash) on delete cascade,
         \\     constraint tag_files_pk primary key (file_hash, core_hash)
