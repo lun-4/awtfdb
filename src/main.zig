@@ -349,7 +349,7 @@ pub const Context = struct {
         if (maybe_core) |existing_core_hash| {
             core_hash = existing_core_hash;
         } else {
-            var core_data: [1024]u8 = undefined;
+            var core_data: [256]u8 = undefined;
             self.randomCoreData(&core_data);
 
             var core_hash_bytes: Blake3Hash = undefined;
