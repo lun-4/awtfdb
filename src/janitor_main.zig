@@ -95,10 +95,14 @@ pub fn main() anyerror!void {
         .{},
     );
 
-    var not_found_count: usize = 0;
-    var repairable_not_found_count: usize = 0;
-    var unrepairable_count: usize = 0;
-    var incorrect_hash_count: usize = 0;
+    const Counter = struct { total: usize = 0, unrepairable: usize = 0 };
+
+    var counters: struct {
+        file_not_found: Counter = .{},
+        incorrect_hash_files: Counter = .{},
+        incorrect_hash_cores: Counter = .{},
+        unused_hash: Counter = .{},
+    } = .{};
 
     while (try iter.nextAlloc(allocator, .{})) |row| {
         defer allocator.free(row.local_path);
@@ -109,7 +113,7 @@ pub fn main() anyerror!void {
         var file = std.fs.openFileAbsolute(row.local_path, .{ .mode = .read_only }) catch |err| switch (err) {
             error.FileNotFound => {
                 log.err("file {s} not found", .{row.local_path});
-                not_found_count += 1;
+                counters.file_not_found.total += 1;
 
                 const repeated_count = (try ctx.db.?.one(
                     i64,
@@ -130,8 +134,6 @@ pub fn main() anyerror!void {
                         .{ repeated_count, row.file_hash },
                     );
 
-                    repairable_not_found_count += 1;
-
                     if (given_args.repair) {
                         try indexed_file.delete();
                     }
@@ -141,7 +143,7 @@ pub fn main() anyerror!void {
                         .{row.local_path},
                     );
 
-                    unrepairable_count += 1;
+                    counters.file_not_found.unrepairable += 1;
 
                     if (given_args.repair) {
                         return error.ManualInterventionRequired;
@@ -160,14 +162,13 @@ pub fn main() anyerror!void {
             if (!std.mem.eql(u8, &calculated_hash.hash_data, &indexed_file.hash.hash_data)) {
                 // repair option: fuck
 
-                incorrect_hash_count += 1;
+                counters.incorrect_hash_files.total += 1;
+                counters.incorrect_hash_files.unrepairable += 1;
 
                 log.err(
                     "hashes are incorrect for file {d}",
                     .{row.file_hash},
                 );
-
-                unrepairable_count += 1;
 
                 if (given_args.repair) {
                     return error.ManualInterventionRequired;
@@ -212,16 +213,13 @@ pub fn main() anyerror!void {
         const upstream_hash = hash_with_blob.toRealHash();
 
         if (!std.mem.eql(u8, &calculated_hash.hash_data, &upstream_hash.hash_data)) {
-            // repair option: fuck
-
-            incorrect_hash_count += 1;
+            counters.incorrect_hash_cores.total += 1;
+            counters.incorrect_hash_cores.unrepairable += 1;
 
             log.err(
                 "hashes are incorrect for tag core {d} ({s} != {s})",
                 .{ core_with_blob.core_hash, calculated_hash, upstream_hash },
             );
-
-            unrepairable_count += 1;
 
             if (given_args.repair) {
                 return error.ManualInterventionRequired;
@@ -234,7 +232,6 @@ pub fn main() anyerror!void {
     }
 
     // garbage collect unused entires in hashes table
-    var unused_hash_count: usize = 0;
 
     var hashes_stmt = try ctx.db.?.prepare(
         \\ select id
@@ -258,7 +255,7 @@ pub fn main() anyerror!void {
         const file_count = (try ctx.db.?.one(
             i64,
             \\ select count(*) from files
-            \\ where file_hash= ?
+            \\ where file_hash = ?
         ,
             .{},
             .{hash_id},
@@ -267,7 +264,8 @@ pub fn main() anyerror!void {
         if (file_count > 0) continue;
 
         log.warn("unused hash in table: {d}", .{hash_id});
-        unused_hash_count += 1;
+
+        counters.unused_hash.total += 1;
 
         if (given_args.repair) {
             try ctx.db.?.exec(
@@ -281,9 +279,13 @@ pub fn main() anyerror!void {
         }
     }
 
-    log.info("{d} files were not found", .{not_found_count});
-    log.info("{d} files were not found and can be repaired", .{repairable_not_found_count});
-    log.info("{d} files have incorrect hashes with the index", .{incorrect_hash_count});
-    log.info("{d} files can NOT be automatically repaired", .{unrepairable_count});
-    log.info("{d} hashes are not needed anymore and can be deleted", .{unused_hash_count});
+    const CountersTypeInfo = @typeInfo(@TypeOf(counters));
+
+    inline for (CountersTypeInfo.Struct.fields) |field| {
+        log.info("problem {s}, {d} found, {d} unrepairable", .{
+            field.name,
+            @field(counters, field.name).total,
+            @field(counters, field.name).unrepairable,
+        });
+    }
 }
