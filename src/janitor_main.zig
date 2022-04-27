@@ -21,7 +21,7 @@ const HELPTEXT =
     \\ 					the index file, only run this manually)
 ;
 
-pub fn main() anyerror!void {
+pub fn main() anyerror!u8 {
     const rc = sqlite.c.sqlite3_config(sqlite.c.SQLITE_CONFIG_LOG, manage_main.sqliteLog, @as(?*anyopaque, null));
     if (rc != sqlite.c.SQLITE_OK) {
         std.log.err("failed to configure: {d} '{s}'", .{
@@ -62,10 +62,10 @@ pub fn main() anyerror!void {
 
     if (given_args.help) {
         std.debug.print(HELPTEXT, .{});
-        return;
+        return 1;
     } else if (given_args.version) {
         std.debug.print("awtfdb-janitor {s}\n", .{VERSION});
-        return;
+        return 1;
     }
 
     var ctx = Context{
@@ -281,11 +281,22 @@ pub fn main() anyerror!void {
 
     const CountersTypeInfo = @typeInfo(@TypeOf(counters));
 
+    var total_problems: usize = 0;
     inline for (CountersTypeInfo.Struct.fields) |field| {
+        const total = @field(counters, field.name).total;
+
         log.info("problem {s}, {d} found, {d} unrepairable", .{
             field.name,
-            @field(counters, field.name).total,
+            total,
             @field(counters, field.name).unrepairable,
         });
+
+        total_problems += total;
     }
+
+    if (total_problems > 0) {
+        log.info("this database has identified problems, please run --repair", .{});
+        return 2;
+    }
+    return 0;
 }
