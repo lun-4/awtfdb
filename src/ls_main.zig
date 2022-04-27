@@ -81,19 +81,18 @@ pub fn main() anyerror!void {
 
     var stdout = std.io.getStdOut().writer();
 
-    const maybe_file = try ctx.fetchFileByPath(query);
-    if (maybe_file) |file| {
-        defer file.deinit();
-        std.debug.todo("impl files");
-    } else {
-        var dir = std.fs.cwd().openDir(query, .{ .iterate = true }) catch |err| switch (err) {
-            std.fs.Dir.OpenError.FileNotFound => {
-                log.err("path not found: {s}", .{query});
-                return err;
-            },
-            else => return err,
-        };
+    var maybe_dir = std.fs.cwd().openDir(query, .{ .iterate = true }) catch |err| switch (err) {
+        error.FileNotFound => {
+            log.err("path not found: {s}", .{query});
+            return err;
+        },
+        error.NotDir => blk: {
+            break :blk null;
+        },
+        else => return err,
+    };
 
+    if (maybe_dir) |dir| {
         var it = dir.iterate();
         while (try it.next()) |entry| {
             // TODO get stat?
@@ -114,5 +113,16 @@ pub fn main() anyerror!void {
             }
             try stdout.print("\n", .{});
         }
+    } else {
+        var realpath_buf: [std.os.PATH_MAX]u8 = undefined;
+        const full_path = try std.fs.cwd().realpath(query, &realpath_buf);
+
+        const maybe_file = try ctx.fetchFileByPath(full_path);
+        try stdout.print("- {s}", .{query});
+        if (maybe_file) |file| {
+            defer file.deinit();
+            try file.printTagsTo(allocator, stdout);
+        }
+        try stdout.print("\n", .{});
     }
 }
