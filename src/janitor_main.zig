@@ -104,6 +104,10 @@ pub fn main() anyerror!u8 {
         unused_hash: Counter = .{},
     } = .{};
 
+    var savepoint = try ctx.db.?.savepoint("janitor");
+    errdefer savepoint.rollback();
+    defer savepoint.commit();
+
     while (try iter.nextAlloc(allocator, .{})) |row| {
         defer allocator.free(row.local_path);
 
