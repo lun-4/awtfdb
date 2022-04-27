@@ -386,7 +386,7 @@ pub const Context = struct {
                 .{ core_hash.id, core_data_blob },
             );
 
-            std.log.debug("created tag core with hash {s}", .{core_hash});
+            log.debug("created tag core with hash {s}", .{core_hash});
         }
 
         try self.db.?.exec(
@@ -394,7 +394,7 @@ pub const Context = struct {
             .{},
             .{ core_hash.id, text, language },
         );
-        std.log.debug("created name tag with value {s} language {s} core {s}", .{ text, language, core_hash });
+        log.debug("created name tag with value {s} language {s} core {s}", .{ text, language, core_hash });
 
         return Tag{
             .core = core_hash,
@@ -421,7 +421,7 @@ pub const Context = struct {
                 .{},
                 .{ core_hash.id, self.hash.id },
             );
-            std.log.debug("link file {s} (hash {s}) with tag core hash {s}", .{ self.local_path, self.hash, core_hash });
+            log.debug("link file {s} (hash {s}) with tag core hash {s}", .{ self.local_path, self.hash, core_hash });
         }
 
         // Copies ownership of given new_local_path
@@ -598,8 +598,7 @@ pub const Context = struct {
             .{},
             .{ file_hash.id, absolute_local_path },
         );
-        // TODO move to local log
-        std.log.debug("created file entry hash={s} path={s}", .{
+        log.debug("created file entry hash={s} path={s}", .{
             absolute_local_path,
             file_hash,
         });
@@ -736,7 +735,7 @@ pub const Context = struct {
         try self.executeOnce(MIGRATION_LOG_TABLE);
 
         const current_version: i32 = (try self.fetchValue(i32, "select max(version) from migration_logs")) orelse 0;
-        std.log.info("db version: {d}", .{current_version});
+        log.info("db version: {d}", .{current_version});
 
         {
             var savepoint = try self.db.?.savepoint("migrations");
@@ -749,10 +748,10 @@ pub const Context = struct {
                 const decl_sql = migration_decl.@"2";
 
                 if (current_version < decl_version) {
-                    std.log.info("running migration {d}", .{decl_version});
+                    log.info("running migration {d}", .{decl_version});
                     var diags = sqlite.Diagnostics{};
                     self.db.?.runMulti(decl_sql, .{ .diags = &diags }) catch |err| {
-                        std.log.err("unable to prepare statement, got error {s}. diagnostics: {s}", .{ err, diags });
+                        log.err("unable to prepare statement, got error {s}. diagnostics: {s}", .{ err, diags });
                         return err;
                     };
 
@@ -784,7 +783,7 @@ pub const Context = struct {
 };
 
 pub export fn sqliteLog(_: ?*anyopaque, level: c_int, message: ?[*:0]const u8) callconv(.C) void {
-    std.log.info("sqlite logged level={d} msg={s}", .{ level, message });
+    log.info("sqlite logged level={d} msg={s}", .{ level, message });
 }
 
 pub fn main() anyerror!void {
@@ -793,7 +792,7 @@ pub fn main() anyerror!void {
     var allocator = gpa.allocator();
     const rc = sqlite.c.sqlite3_config(sqlite.c.SQLITE_CONFIG_LOG, sqliteLog, @as(?*anyopaque, null));
     if (rc != sqlite.c.SQLITE_OK) {
-        std.log.err("failed to configure: {d} '{s}'", .{
+        log.err("failed to configure: {d} '{s}'", .{
             rc, sqlite.c.sqlite3_errstr(rc),
         });
         return error.ConfigFail;
@@ -836,7 +835,7 @@ pub fn main() anyerror!void {
     }
 
     if (given_args.maybe_action == null) {
-        std.log.err("action argument is required", .{});
+        log.err("action argument is required", .{});
         return error.MissingActionArgument;
     }
 
@@ -853,7 +852,7 @@ pub fn main() anyerror!void {
     if (std.mem.eql(u8, action, "create")) {
         try ctx.createCommand();
     } else {
-        std.log.err("unknown action {s}", .{action});
+        log.err("unknown action {s}", .{action});
         return error.UnknownAction;
     }
 }
