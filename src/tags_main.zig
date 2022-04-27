@@ -107,7 +107,9 @@ const CreateAction = struct {
             //  - delete tag B
             //  - create tag B, with core set to A
 
-            // TODO transaction over this (savepoints real)
+            var savepoint = try self.ctx.db.?.savepoint("tag_aliasing");
+            errdefer savepoint.rollback();
+            defer savepoint.commit();
 
             var tag_to_be_aliased_to = try consumeCoreHash(self.ctx, &raw_core_hash_buffer, tag_core_hex_string);
             var tag_to_be_aliased_from = if (try self.ctx.fetchNamedTag(self.config.tag.?, "en")) |tag_text|
