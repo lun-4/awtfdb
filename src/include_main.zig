@@ -390,8 +390,10 @@ pub fn main() anyerror!void {
             while (try walker.next()) |entry| {
                 switch (entry.kind) {
                     .File, .SymLink => {
-                        // TODO use std.fs.path.join here
-                        log.debug("adding child path '{s}/{s}'", .{ path_to_include, entry.path });
+                        log.debug(
+                            "adding child path '{s}{s}{s}'",
+                            .{ path_to_include, std.fs.path.sep_str, entry.path },
+                        );
 
                         // if we only want to reindex files already in
                         // the system, hash them first and try to fetch the file
