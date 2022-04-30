@@ -164,25 +164,13 @@ pub const Context = struct {
         });
 
         // ensure our database functions work
-        var result = try self.fetchValue(i32, "select 123;");
+        var result = try self.db.?.one(i32, "select 123;", .{}, .{});
         if (result == null or result.? != 123) {
             log.err("error on test statement: expected 123, got {d}", .{result});
             return error.TestStatementFailed;
         }
 
         try self.db.?.exec("PRAGMA foreign_keys = ON", .{}, .{});
-    }
-
-    fn executeOnce(self: *Self, comptime statement: []const u8) !void {
-        var stmt = try self.db.?.prepare(statement);
-        defer stmt.deinit();
-        try stmt.exec(.{}, .{});
-    }
-
-    fn fetchValue(self: *Self, comptime T: type, comptime statement: []const u8) !?T {
-        var stmt = try self.db.?.prepare(statement);
-        defer stmt.deinit();
-        return try stmt.one(T, .{}, .{});
     }
 
     pub fn deinit(self: *Self) void {
@@ -377,7 +365,7 @@ pub const Context = struct {
         if (maybe_core) |existing_core_hash| {
             core_hash = existing_core_hash;
         } else {
-            var core_data: [256]u8 = undefined;
+            var core_data: [128]u8 = undefined;
             self.randomCoreData(&core_data);
 
             var core_hash_bytes: Blake3Hash = undefined;
@@ -789,9 +777,9 @@ pub const Context = struct {
         try self.loadDatabase(.{});
 
         // migration log table is forever
-        try self.executeOnce(MIGRATION_LOG_TABLE);
+        try self.db.?.exec(MIGRATION_LOG_TABLE, .{}, .{});
 
-        const current_version: i32 = (try self.fetchValue(i32, "select max(version) from migration_logs")) orelse 0;
+        const current_version: i32 = (try self.db.?.one(i32, "select max(version) from migration_logs", .{}, .{})) orelse 0;
         log.info("db version: {d}", .{current_version});
 
         // before running migrations, copy the database over
