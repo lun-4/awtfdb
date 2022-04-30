@@ -14,4 +14,6 @@ jobs:
       - uses: goto-bus-stop/setup-zig@v1.3.0
         with:
           version: 0.10.0-dev.1902+42ed34d1f
+      - run: curl -L -w "%{http_code}" -o /usr/local/bin/zigmod https://github.com/nektro/zigmod/releases/download/r77/zigmod-x86_64-linux
+      - run: zigmod ci
       - run: zig build test
