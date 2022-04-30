@@ -419,20 +419,21 @@ pub fn main() anyerror!void {
 
                         var file = try ctx.createFileFromDir(entry.dir, entry.basename);
                         defer file.deinit();
+                        {
+                            var savepoint = try ctx.db.?.savepoint("tags");
+                            errdefer savepoint.rollback();
+                            defer savepoint.commit();
 
-                        var savepoint = try ctx.db.?.savepoint("tags");
-                        errdefer savepoint.rollback();
-                        defer savepoint.commit();
+                            for (default_tag_cores.items) |tag_core| {
+                                try file.addTag(tag_core);
+                            }
 
-                        for (default_tag_cores.items) |tag_core| {
-                            try file.addTag(tag_core);
-                        }
-
-                        for (given_args.wanted_inferrers.items) |inferrer_config, index| {
-                            log.info("found config for  {}", .{inferrer_config});
-                            var inferrer_ctx = &contexts.items[index];
-                            switch (inferrer_ctx.*) {
-                                .regex => |*regex_ctx| try RegexTagInferrer.run(regex_ctx, &ctx, &file),
+                            for (given_args.wanted_inferrers.items) |inferrer_config, index| {
+                                log.info("found config for  {}", .{inferrer_config});
+                                var inferrer_ctx = &contexts.items[index];
+                                switch (inferrer_ctx.*) {
+                                    .regex => |*regex_ctx| try RegexTagInferrer.run(regex_ctx, &ctx, &file),
+                                }
                             }
                         }
                     },

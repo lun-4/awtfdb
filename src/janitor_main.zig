@@ -298,7 +298,7 @@ pub fn main() anyerror!u8 {
         total_problems += total;
     }
 
-    if (total_problems > 0) {
+    if ((!given_args.repair) and total_problems > 0) {
         log.info("this database has identified problems, please run --repair", .{});
         return 2;
     }
