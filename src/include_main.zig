@@ -196,6 +196,71 @@ const RegexTagInferrer = struct {
     }
 };
 
+test "regex tag inferrer" {
+    var ctx = try manage_main.makeTestContext();
+    defer ctx.deinit();
+
+    // setup regex inferrer
+
+    const regex_config = RegexTagInferrer.Config{
+        .text = "\\[(.*?)\\]",
+    };
+
+    const allocator = std.testing.allocator;
+
+    var context = try RegexTagInferrer.init(
+        .{ .last_argument = undefined, .config = .{ .regex = regex_config } },
+        allocator,
+    );
+    defer RegexTagInferrer.deinit(&context);
+
+    // setup test file
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const name = "test_[tag3] file [tag1] [tag2][tag4]";
+    var file = try tmp.dir.createFile(name, .{});
+    defer file.close();
+
+    _ = try file.write("awooga");
+    var indexed_file = try ctx.createFileFromDir(tmp.dir, name);
+    defer indexed_file.deinit();
+
+    const hashlist = try indexed_file.fetchTags(allocator);
+    defer allocator.free(hashlist);
+    try std.testing.expectEqual(@as(usize, 0), hashlist.len);
+
+    try RegexTagInferrer.run(&context, &ctx, &indexed_file);
+
+    const hashlist_after = try indexed_file.fetchTags(allocator);
+    defer allocator.free(hashlist_after);
+    try std.testing.expectEqual(@as(usize, 4), hashlist_after.len);
+
+    const WANTED_TAGS = .{ "tag1", "tag2", "tag3", "tag4" };
+    var found_tags: [WANTED_TAGS.len]bool = undefined;
+    // initialize
+    for (found_tags) |_, idx| found_tags[idx] = false;
+
+    for (hashlist_after) |tag_core| {
+        const tag_list = try ctx.fetchTagsFromCore(allocator, tag_core);
+        defer tag_list.deinit();
+
+        try std.testing.expectEqual(@as(usize, 1), tag_list.items.len);
+        const tag = tag_list.items[0];
+        try std.testing.expectEqual(tag_core.id, tag.core.id);
+        inline for (WANTED_TAGS) |wanted_tag, index| {
+            if (std.mem.eql(u8, wanted_tag, tag.kind.Named.text)) {
+                found_tags[index] = true;
+            }
+        }
+    }
+
+    // assert its all true
+
+    for (found_tags) |value| try std.testing.expect(value);
+}
+
 pub fn main() anyerror!void {
     const rc = sqlite.c.sqlite3_config(sqlite.c.SQLITE_CONFIG_LOG, manage_main.sqliteLog, @as(?*anyopaque, null));
     if (rc != sqlite.c.SQLITE_OK) {
