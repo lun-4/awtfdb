@@ -796,13 +796,13 @@ pub const Context = struct {
 
         // before running migrations, copy the database over
 
-        {
+        if (self.db_path) |db_path| {
             const backup_db_path = try std.fs.path.resolve(
                 self.allocator,
                 &[_][]const u8{ self.home_path.?, ".awtf.before-migration.db" },
             );
             defer self.allocator.free(backup_db_path);
-            log.info("starting transaction for backup to {s}", .{backup_db_path});
+            log.info("starting transaction for backup from {s} to {s}", .{ db_path, backup_db_path });
 
             try self.db.?.exec("begin exclusive transaction", .{}, .{});
             errdefer {
@@ -825,7 +825,7 @@ pub const Context = struct {
             }
 
             log.info("copying database to {s}", .{backup_db_path});
-            try std.fs.copyFileAbsolute(self.db_path.?, backup_db_path, .{});
+            try std.fs.copyFileAbsolute(db_path, backup_db_path, .{});
         }
 
         {
@@ -957,6 +957,7 @@ pub fn makeTestContext() !Context {
         .db = null,
         .allocator = std.testing.allocator,
         .home_path = std.os.getenv("HOME"),
+        .db_path = null,
     };
 
     ctx.db = try sqlite.Db.init(.{
