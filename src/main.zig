@@ -14,8 +14,11 @@ const HELPTEXT =
     \\ 	-V		prints version and exits
     \\ 	-v		turns on verbosity (debug logging)
     \\
-    \\ creating an awtfdb file:
+    \\ creating an awtfdb index file:
     \\  awtfdb-manage create
+    \\
+    \\ migrating to new versions:
+    \\  awtfdb-manage migrate
     \\
     \\ getting statistics:
     \\  awtfdb-manage stats
