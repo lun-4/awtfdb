@@ -85,6 +85,22 @@ const MIGRATIONS = .{
         \\     constraint tag_names_pk primary key (tag_text, tag_language, core_hash)
         \\ ) strict;
     },
+
+    // to do the new constraint, we need to reconstruct the table.
+    .{
+        2, "fix missing unqiue constraint for local paths",
+        \\ create table files_local_path_constraint_fix (
+        \\     file_hash int not null
+        \\     	constraint files_hash_fk references hashes (id) on delete restrict,
+        \\     local_path text not null
+        \\     	constraint files_local_path_uniq unique on conflict abort,
+        \\     constraint files_pk primary key (file_hash, local_path)
+        \\ ) strict;
+        \\
+        \\ insert into files_local_path_constraint_fix select * from files;
+        \\ drop table files;
+        \\ alter table files_local_path_constraint_fix rename to files;
+    },
 };
 
 const MIGRATION_LOG_TABLE =
