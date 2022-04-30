@@ -832,7 +832,7 @@ pub const Context = struct {
                         .{},
                         .{
                             .version = decl_version,
-                            .applied_at = 0,
+                            .applied_at = std.time.timestamp(),
                             .description = decl_name,
                         },
                     );
