@@ -663,6 +663,41 @@ pub const Context = struct {
         }
     }
 
+    pub fn fetchFileExact(self: *Self, hash_id: i64, given_local_path: []const u8) !?File {
+        var maybe_local_path = try self.db.?.oneAlloc(
+            struct {
+                local_path: []const u8,
+                hash_data: sqlite.Blob,
+            },
+            self.allocator,
+            \\ select files.local_path, hashes.hash_data
+            \\ from files
+            \\ join hashes
+            \\ 	on files.file_hash = hashes.id
+            \\ where files.file_hash = ? and files.local_path = ?
+        ,
+            .{},
+            .{ hash_id, given_local_path },
+        );
+
+        if (maybe_local_path) |*local_path| {
+            // string memory is passed to client
+            defer self.allocator.free(local_path.hash_data.data);
+
+            const almost_good_hash = HashWithBlob{
+                .id = hash_id,
+                .hash_data = local_path.hash_data,
+            };
+            return File{
+                .ctx = self,
+                .local_path = local_path.local_path,
+                .hash = almost_good_hash.toRealHash(),
+            };
+        } else {
+            return null;
+        }
+    }
+
     pub fn fetchFileByHash(self: *Self, hash_data: [32]u8) !?File {
         const hash_blob = sqlite.Blob{ .data = &hash_data };
 
@@ -960,6 +995,11 @@ test "file creation" {
     try std.testing.expectStringEndsWith(fetched_by_path_file.local_path, "/test_file");
     try std.testing.expectEqual(indexed_file.hash.id, fetched_by_path_file.hash.id);
     try std.testing.expectEqualStrings(indexed_file.hash.hash_data[0..], fetched_by_path_file.hash.hash_data[0..]);
+
+    var fetched_by_exact_combo = (try ctx.fetchFileExact(indexed_file.hash.id, indexed_file.local_path)).?;
+    defer fetched_by_path_file.deinit();
+    try std.testing.expectEqual(indexed_file.hash.id, fetched_by_exact_combo.hash.id);
+    try std.testing.expectEqualStrings(indexed_file.hash.hash_data[0..], fetched_by_exact_combo.hash.hash_data[0..]);
 
     try indexed_file.delete();
     try std.testing.expectEqual(@as(?Context.File, null), try ctx.fetchFile(indexed_file.hash.id));

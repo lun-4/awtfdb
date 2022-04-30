@@ -111,7 +111,7 @@ pub fn main() anyerror!u8 {
     while (try iter.nextAlloc(allocator, .{})) |row| {
         defer allocator.free(row.local_path);
 
-        const indexed_file = (try ctx.fetchFile(row.file_hash)) orelse return error.InconsistentIndex;
+        const indexed_file = (try ctx.fetchFileExact(row.file_hash, row.local_path)) orelse return error.InconsistentIndex;
         defer indexed_file.deinit();
 
         var file = std.fs.openFileAbsolute(row.local_path, .{ .mode = .read_only }) catch |err| switch (err) {
