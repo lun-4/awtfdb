@@ -923,6 +923,8 @@ pub fn main() anyerror!void {
     const action = given_args.maybe_action.?;
     if (std.mem.eql(u8, action, "create")) {
         try ctx.createCommand();
+    } else if (std.mem.eql(u8, action, "migrate")) {
+        try ctx.migrateCommand();
     } else {
         log.err("unknown action {s}", .{action});
         return error.UnknownAction;
