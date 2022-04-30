@@ -96,6 +96,7 @@ const log = std.log.scoped(.awtfdb_main);
 
 pub const Context = struct {
     home_path: ?[]const u8 = null,
+    db_path: ?[]const u8 = null,
     args_it: *std.process.ArgIterator,
     stdout: std.fs.File,
     allocator: std.mem.Allocator,
@@ -121,7 +122,7 @@ pub const Context = struct {
             self.allocator,
             &[_][]const u8{ self.home_path.?, "awtf.db" },
         );
-        defer self.allocator.free(db_path);
+        self.db_path = db_path;
 
         if (options.create) {
             var file = try std.fs.cwd().createFile(db_path, .{ .truncate = false });
@@ -166,6 +167,8 @@ pub const Context = struct {
     }
 
     pub fn deinit(self: *Self) void {
+        if (self.db_path) |db_path| self.allocator.free(db_path);
+
         if (self.db != null) {
             log.info("possibly optimizing database...", .{});
             // The results of analysis are not as good when only part of each index is examined,
@@ -771,6 +774,40 @@ pub const Context = struct {
 
         const current_version: i32 = (try self.fetchValue(i32, "select max(version) from migration_logs")) orelse 0;
         log.info("db version: {d}", .{current_version});
+
+        // before running migrations, copy the database over
+
+        {
+            const backup_db_path = try std.fs.path.resolve(
+                self.allocator,
+                &[_][]const u8{ self.home_path.?, ".awtf.before-migration.db" },
+            );
+            defer self.allocator.free(backup_db_path);
+            log.info("starting transaction for backup to {s}", .{backup_db_path});
+
+            try self.db.?.exec("begin exclusive transaction", .{}, .{});
+            errdefer {
+                self.db.?.exec("rollback transaction", .{}, .{}) catch |err| {
+                    const detailed_error = self.db.?.getDetailedError();
+                    std.debug.panic(
+                        "unable to rollback transaction, error: {}, message: {s}\n",
+                        .{ err, detailed_error },
+                    );
+                };
+            }
+            defer {
+                self.db.?.exec("commit transaction", .{}, .{}) catch |err| {
+                    const detailed_error = self.db.?.getDetailedError();
+                    std.debug.panic(
+                        "unable to commit transaction, error: {}, message: {s}\n",
+                        .{ err, detailed_error },
+                    );
+                };
+            }
+
+            log.info("copying database to {s}", .{backup_db_path});
+            try std.fs.copyFileAbsolute(self.db_path.?, backup_db_path, .{});
+        }
 
         {
             var savepoint = try self.db.?.savepoint("migrations");
