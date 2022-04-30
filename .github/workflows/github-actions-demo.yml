@@ -17,4 +17,5 @@ jobs:
       - run: curl -L -w "%{http_code}" -o /usr/local/bin/zigmod https://github.com/nektro/zigmod/releases/download/r77/zigmod-x86_64-linux
       - run: chmod +x /usr/local/bin/zigmod
       - run: zigmod ci
+      - run: apt install graphicsmagick zlib1g zlib1g-dev libmagic1
       - run: zig build test
