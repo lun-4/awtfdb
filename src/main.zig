@@ -997,7 +997,7 @@ test "file creation" {
     try std.testing.expectEqualStrings(indexed_file.hash.hash_data[0..], fetched_by_path_file.hash.hash_data[0..]);
 
     var fetched_by_exact_combo = (try ctx.fetchFileExact(indexed_file.hash.id, indexed_file.local_path)).?;
-    defer fetched_by_path_file.deinit();
+    defer fetched_by_exact_combo.deinit();
     try std.testing.expectEqual(indexed_file.hash.id, fetched_by_exact_combo.hash.id);
     try std.testing.expectEqualStrings(indexed_file.hash.hash_data[0..], fetched_by_exact_combo.hash.hash_data[0..]);
 
