@@ -2,6 +2,7 @@ const std = @import("std");
 const sqlite = @import("sqlite");
 const manage_main = @import("main.zig");
 const Context = manage_main.Context;
+const tunez = @import("tunez");
 
 const libpcre = @import("libpcre");
 
@@ -58,19 +59,46 @@ const HELPTEXT =
     \\  ainclude --infer-tags regex --regex '\[(.*?)\]' /my/movies/collection
 ;
 
+fn utilAddScope(maybe_tag_scope: ?[]const u8, out: std.ArrayList(u8).Writer) !usize {
+    if (maybe_tag_scope) |tag_scope| {
+        return try out.write(tag_scope);
+    } else {
+        return 0;
+    }
+}
+
+fn utilAddRawTag(config: anytype, raw_tag_text: []const u8, out: std.ArrayList(u8).Writer) !usize {
+    if (config.cast_lowercase) {
+        for (raw_tag_text) |raw_tag_character| {
+            const written = try out.write(
+                &[_]u8{std.ascii.toLower(raw_tag_character)},
+            );
+            std.debug.assert(written == 1);
+        }
+    } else {
+        const written = try out.write(raw_tag_text);
+        std.debug.assert(written == raw_tag_text.len);
+    }
+
+    return raw_tag_text.len;
+}
+
 const TagInferrer = enum {
     regex,
+    audio,
 };
 
 const TagInferrerConfig = struct {
     last_argument: []const u8,
     config: union(TagInferrer) {
         regex: RegexTagInferrer.Config,
+        audio: AudioMetadataTagInferrer.Config,
     },
 };
 
 const TagInferrerContext = union(TagInferrer) {
     regex: RegexTagInferrer.RunContext,
+    audio: AudioMetadataTagInferrer.RunContext,
 };
 
 const RegexTagInferrer = struct {
@@ -261,6 +289,213 @@ test "regex tag inferrer" {
     for (found_tags) |value| try std.testing.expect(value);
 }
 
+const AudioMetadataTagInferrer = struct {
+    pub const Config = struct {
+        tag_scope_album: ?[]const u8 = null,
+        tag_scope_artist: ?[]const u8 = null,
+        tag_scope_title: ?[]const u8 = null,
+        cast_lowercase: bool = false,
+    };
+
+    pub const RunContext = struct {
+        allocator: std.mem.Allocator,
+        config: Config,
+    };
+
+    pub fn consumeArguments(args_it: *std.process.ArgIterator) !TagInferrerConfig {
+        var arg_state: enum { None, AlbumTagScope, ArtistTagScope, TitleTagScope } = .None;
+        var config: TagInferrerConfig = .{
+            .last_argument = undefined,
+            .config = .{ .audio = .{} },
+        };
+        var arg: []const u8 = undefined;
+        while (args_it.next()) |arg_from_loop| {
+            arg = arg_from_loop;
+            log.debug("(audio tag inferrer) state: {} arg: {s}", .{ arg_state, arg });
+
+            switch (arg_state) {
+                .None => {},
+                .AlbumTagScope => config.config.audio.tag_scope_album = arg,
+                .ArtistTagScope => config.config.audio.tag_scope_artist = arg,
+                .TitleTagScope => config.config.audio.tag_scope_title = arg,
+            }
+
+            // if we hit non-None states, we need to know if we're going
+            // to have another configuration parameter or not
+            //
+            // and we do this by next()'ing into the next argument
+            if (arg_state != .None) {
+                arg = args_it.next() orelse break;
+                arg_state = .None;
+            }
+            log.debug("(audio tag inferrer, main loop) state: {s} arg: {s}", .{ arg_state, arg });
+
+            if (std.mem.eql(u8, arg, "--artist-tag-scope")) {
+                arg_state = .ArtistTagScope;
+            } else if (std.mem.eql(u8, arg, "--album-tag-scope")) {
+                arg_state = .AlbumTagScope;
+            } else if (std.mem.eql(u8, arg, "--title-tag-scope")) {
+                arg_state = .TitleTagScope;
+            } else if (std.mem.eql(u8, arg, "--cast-lowercase")) {
+                config.config.regex.cast_lowercase = true;
+            } else {
+                config.last_argument = arg;
+                break;
+            }
+        }
+
+        return config;
+    }
+
+    pub fn init(config: TagInferrerConfig, allocator: std.mem.Allocator) !RunContext {
+        return RunContext{
+            .allocator = allocator,
+            .config = config.config.audio,
+        };
+    }
+
+    pub fn deinit(self: *RunContext) void {
+        _ = self;
+    }
+
+    pub fn run(self: *RunContext, ctx: *Context, file: *Context.File) !void {
+        var file_fd = try std.fs.cwd().openFile(file.local_path, .{ .mode = .read_only });
+        defer file_fd.close();
+
+        var buffered_reader = std.io.bufferedReader(file_fd.reader());
+
+        var audio_meta = try tunez.resolveId3(buffered_reader.reader(), self.allocator);
+        defer audio_meta.deinit();
+
+        var tags_to_add = std.ArrayList([]const u8).init(self.allocator);
+        defer tags_to_add.deinit();
+
+        var string_arena = std.heap.ArenaAllocator.init(self.allocator);
+        defer string_arena.deinit();
+
+        var string_pool_arena = string_arena.allocator();
+
+        var string_pool = std.ArrayList(u8).init(self.allocator);
+        defer string_pool.deinit();
+
+        if (audio_meta.maybe_track_album) |album_name| {
+            const start_index: usize = string_pool.items.len;
+            var end_index: usize = start_index;
+            end_index += try utilAddScope(self.config.tag_scope_album, string_pool.writer());
+            end_index += try utilAddRawTag(self.config, album_name, string_pool.writer());
+            try tags_to_add.append(try string_pool_arena.dupe(u8, string_pool.items[start_index..end_index]));
+        }
+
+        if (audio_meta.maybe_track_title) |title_name| {
+            const start_index: usize = string_pool.items.len;
+            var end_index: usize = start_index;
+            end_index += try utilAddScope(self.config.tag_scope_title, string_pool.writer());
+            end_index += try utilAddRawTag(self.config, title_name, string_pool.writer());
+            try tags_to_add.append(try string_pool_arena.dupe(u8, string_pool.items[start_index..end_index]));
+        }
+
+        if (audio_meta.maybe_track_artists) |artists| {
+            for (artists) |artist_name| {
+                const start_index: usize = string_pool.items.len;
+                var end_index: usize = start_index;
+                end_index += try utilAddScope(self.config.tag_scope_artist, string_pool.writer());
+                end_index += try utilAddRawTag(self.config, artist_name, string_pool.writer());
+                try tags_to_add.append(try string_pool_arena.dupe(u8, string_pool.items[start_index..end_index]));
+            }
+        }
+
+        for (tags_to_add.items) |named_tag_text| {
+            log.info("audio: inferred tag {s}", .{named_tag_text});
+            var maybe_tag = try ctx.fetchNamedTag(named_tag_text, "en");
+            if (maybe_tag) |tag| {
+                try file.addTag(tag.core);
+            } else {
+                var tag = try ctx.createNamedTag(named_tag_text, "en", null);
+                try file.addTag(tag.core);
+            }
+        }
+    }
+};
+
+const AUDIO_TEST_VECTORS = .{
+    "test_vectors/audio_test_vector.mp3",
+};
+
+test "audio tag inferrer" {
+    var ctx = try manage_main.makeTestContext();
+    defer ctx.deinit();
+
+    inline for (AUDIO_TEST_VECTORS) |test_vector_path| {
+        std.log.warn("testing {s}", .{test_vector_path});
+        const test_vector_bytes = @embedFile(test_vector_path);
+
+        // TODO clean impl between RegexTagInferrer and AudioMetadataTagInferrer
+
+        // setup audio inferrer
+
+        const config = AudioMetadataTagInferrer.Config{
+            .tag_scope_album = "album:",
+            .tag_scope_artist = "artist:",
+            .tag_scope_title = "title:",
+        };
+        const allocator = std.testing.allocator;
+
+        var context = try AudioMetadataTagInferrer.init(
+            .{ .last_argument = undefined, .config = .{ .audio = config } },
+            allocator,
+        );
+        defer AudioMetadataTagInferrer.deinit(&context);
+
+        // setup test file
+
+        var tmp = std.testing.tmpDir(.{});
+        defer tmp.cleanup();
+
+        const name = "test.mp3";
+        var file = try tmp.dir.createFile(name, .{});
+        defer file.close();
+        _ = try file.write(test_vector_bytes);
+
+        var indexed_file = try ctx.createFileFromDir(tmp.dir, name);
+        defer indexed_file.deinit();
+
+        const hashlist = try indexed_file.fetchTags(allocator);
+        defer allocator.free(hashlist);
+        try std.testing.expectEqual(@as(usize, 0), hashlist.len);
+
+        // actually run inferrer
+
+        try AudioMetadataTagInferrer.run(&context, &ctx, &indexed_file);
+
+        const hashlist_after = try indexed_file.fetchTags(allocator);
+        defer allocator.free(hashlist_after);
+        try std.testing.expectEqual(@as(usize, 3), hashlist_after.len);
+
+        const WANTED_TAGS = .{ "artist:Test Artist", "album:Test Album", "title:Test Track" };
+        var found_tags: [WANTED_TAGS.len]bool = undefined;
+        // initialize
+        for (found_tags) |_, idx| found_tags[idx] = false;
+
+        for (hashlist_after) |tag_core| {
+            const tag_list = try ctx.fetchTagsFromCore(allocator, tag_core);
+            defer tag_list.deinit();
+
+            try std.testing.expectEqual(@as(usize, 1), tag_list.items.len);
+            const tag = tag_list.items[0];
+            try std.testing.expectEqual(tag_core.id, tag.core.id);
+            inline for (WANTED_TAGS) |wanted_tag, index| {
+                if (std.mem.eql(u8, wanted_tag, tag.kind.Named.text)) {
+                    found_tags[index] = true;
+                }
+            }
+        }
+
+        // assert its all true
+
+        for (found_tags) |value| try std.testing.expect(value);
+    }
+}
+
 pub fn main() anyerror!void {
     const rc = sqlite.c.sqlite3_config(sqlite.c.SQLITE_CONFIG_LOG, manage_main.sqliteLog, @as(?*anyopaque, null));
     if (rc != sqlite.c.SQLITE_OK) {
@@ -319,11 +554,11 @@ pub fn main() anyerror!void {
             },
             .InferMoreTags => {
                 const tag_inferrer = std.meta.stringToEnum(TagInferrer, arg) orelse return error.InvalidTagInferrer;
-                const InferrerType = switch (tag_inferrer) {
-                    .regex => RegexTagInferrer,
+                var inferrer_config = switch (tag_inferrer) {
+                    .regex => try RegexTagInferrer.consumeArguments(&args_it),
+                    .audio => try AudioMetadataTagInferrer.consumeArguments(&args_it),
                 };
 
-                var inferrer_config = try InferrerType.consumeArguments(&args_it);
                 try given_args.wanted_inferrers.append(inferrer_config);
 
                 arg = inferrer_config.last_argument;
@@ -412,10 +647,14 @@ pub fn main() anyerror!void {
     var contexts = std.ArrayList(TagInferrerContext).init(allocator);
     defer contexts.deinit();
     for (given_args.wanted_inferrers.items) |inferrer_config| {
-        try contexts.append(.{ .regex = try RegexTagInferrer.init(inferrer_config, allocator) });
+        switch (inferrer_config.config) {
+            .regex => try contexts.append(.{ .regex = try RegexTagInferrer.init(inferrer_config, allocator) }),
+            .audio => try contexts.append(.{ .audio = try AudioMetadataTagInferrer.init(inferrer_config, allocator) }),
+        }
     }
     defer for (contexts.items) |*context| switch (context.*) {
         .regex => |*regex_ctx| RegexTagInferrer.deinit(regex_ctx),
+        .audio => |*audio_ctx| AudioMetadataTagInferrer.deinit(audio_ctx),
     };
 
     for (given_args.include_paths.items) |path_to_include| {
@@ -446,6 +685,7 @@ pub fn main() anyerror!void {
                 var inferrer_ctx = &contexts.items[index];
                 switch (inferrer_ctx.*) {
                     .regex => |*regex_ctx| try RegexTagInferrer.run(regex_ctx, &ctx, &file),
+                    .audio => |*audio_ctx| try AudioMetadataTagInferrer.run(audio_ctx, &ctx, &file),
                 }
             }
         } else {
@@ -498,6 +738,7 @@ pub fn main() anyerror!void {
                                 var inferrer_ctx = &contexts.items[index];
                                 switch (inferrer_ctx.*) {
                                     .regex => |*regex_ctx| try RegexTagInferrer.run(regex_ctx, &ctx, &file),
+                                    .audio => |*audio_ctx| try AudioMetadataTagInferrer.run(audio_ctx, &ctx, &file),
                                 }
                             }
                         }
