@@ -247,19 +247,8 @@ const RegexTagInferrer = struct {
                     var tag_text_list = std.ArrayList(u8).init(self.allocator);
                     defer tag_text_list.deinit();
 
-                    if (self.config.tag_scope) |tag_scope| {
-                        const written = try tag_text_list.writer().write(tag_scope);
-                        std.debug.assert(written == tag_scope.len);
-                    }
-                    if (self.config.cast_lowercase) {
-                        for (raw_tag_text) |raw_tag_character| {
-                            const written = try tag_text_list.writer().write(&[_]u8{std.ascii.toLower(raw_tag_character)});
-                            std.debug.assert(written == 1);
-                        }
-                    } else {
-                        const written = try tag_text_list.writer().write(raw_tag_text);
-                        std.debug.assert(written == raw_tag_text.len);
-                    }
+                    _ = try utilAddScope(self.config.tag_scope, &tag_text_list.writer());
+                    _ = try utilAddRawTag(self.config, raw_tag_text, &tag_text_list.writer());
 
                     const tag_text = tag_text_list.items;
                     log.info("found tag: {s}", .{tag_text});
