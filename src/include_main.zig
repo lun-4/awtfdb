@@ -59,7 +59,7 @@ const HELPTEXT =
     \\  ainclude --infer-tags regex --regex '\[(.*?)\]' /my/movies/collection
 ;
 
-fn utilAddScope(maybe_tag_scope: ?[]const u8, out: std.ArrayList(u8).Writer) !usize {
+fn utilAddScope(maybe_tag_scope: ?[]const u8, out: *std.ArrayList(u8).Writer) !usize {
     if (maybe_tag_scope) |tag_scope| {
         return try out.write(tag_scope);
     } else {
@@ -67,7 +67,7 @@ fn utilAddScope(maybe_tag_scope: ?[]const u8, out: std.ArrayList(u8).Writer) !us
     }
 }
 
-fn utilAddRawTag(config: anytype, raw_tag_text: []const u8, out: std.ArrayList(u8).Writer) !usize {
+fn utilAddRawTag(config: anytype, raw_tag_text: []const u8, out: *std.ArrayList(u8).Writer) !usize {
     if (config.cast_lowercase) {
         for (raw_tag_text) |raw_tag_character| {
             const written = try out.write(
@@ -308,6 +308,25 @@ test "regex tag inferrer" {
     );
 }
 
+fn audioUtilAddTag(
+    allocator: std.mem.Allocator,
+    config: anytype,
+    maybe_raw_tag: ?[]const u8,
+    maybe_tag_scope: ?[]const u8,
+    output_tags_list: *std.ArrayList([]const u8),
+) !void {
+    var list = std.ArrayList(u8).init(allocator);
+    defer list.deinit();
+
+    if (maybe_raw_tag) |raw_tag| {
+        _ = try utilAddScope(maybe_tag_scope, &list.writer());
+        _ = try utilAddRawTag(config, raw_tag, &list.writer());
+        try output_tags_list.append(
+            list.toOwnedSlice(),
+        );
+    }
+}
+
 const AudioMetadataTagInferrer = struct {
     pub const Config = struct {
         tag_scope_album: ?[]const u8 = null,
@@ -387,39 +406,36 @@ const AudioMetadataTagInferrer = struct {
         defer audio_meta.deinit();
 
         var tags_to_add = std.ArrayList([]const u8).init(self.allocator);
-        defer tags_to_add.deinit();
-
-        var string_arena = std.heap.ArenaAllocator.init(self.allocator);
-        defer string_arena.deinit();
-
-        var string_pool_arena = string_arena.allocator();
-
-        var string_pool = std.ArrayList(u8).init(self.allocator);
-        defer string_pool.deinit();
-
-        if (audio_meta.maybe_track_album) |album_name| {
-            const start_index: usize = string_pool.items.len;
-            var end_index: usize = start_index;
-            end_index += try utilAddScope(self.config.tag_scope_album, string_pool.writer());
-            end_index += try utilAddRawTag(self.config, album_name, string_pool.writer());
-            try tags_to_add.append(try string_pool_arena.dupe(u8, string_pool.items[start_index..end_index]));
+        defer {
+            for (tags_to_add.items) |tag| self.allocator.free(tag);
+            tags_to_add.deinit();
         }
 
-        if (audio_meta.maybe_track_title) |title_name| {
-            const start_index: usize = string_pool.items.len;
-            var end_index: usize = start_index;
-            end_index += try utilAddScope(self.config.tag_scope_title, string_pool.writer());
-            end_index += try utilAddRawTag(self.config, title_name, string_pool.writer());
-            try tags_to_add.append(try string_pool_arena.dupe(u8, string_pool.items[start_index..end_index]));
-        }
+        try audioUtilAddTag(
+            self.allocator,
+            self.config,
+            audio_meta.maybe_track_album,
+            self.config.tag_scope_album,
+            &tags_to_add,
+        );
+
+        try audioUtilAddTag(
+            self.allocator,
+            self.config,
+            audio_meta.maybe_track_title,
+            self.config.tag_scope_title,
+            &tags_to_add,
+        );
 
         if (audio_meta.maybe_track_artists) |artists| {
             for (artists) |artist_name| {
-                const start_index: usize = string_pool.items.len;
-                var end_index: usize = start_index;
-                end_index += try utilAddScope(self.config.tag_scope_artist, string_pool.writer());
-                end_index += try utilAddRawTag(self.config, artist_name, string_pool.writer());
-                try tags_to_add.append(try string_pool_arena.dupe(u8, string_pool.items[start_index..end_index]));
+                try audioUtilAddTag(
+                    self.allocator,
+                    self.config,
+                    artist_name,
+                    self.config.tag_scope_artist,
+                    &tags_to_add,
+                );
             }
         }
 
