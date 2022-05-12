@@ -128,7 +128,10 @@ const CreateAction = struct {
             // find all tags with that single tag (tag_to_be_aliased_from)
             const SqlGiver = @import("./find_main.zig").SqlGiver;
 
-            var wrapped_sql_result = try SqlGiver.giveMeSql(self.ctx.allocator, self.config.tag.?);
+            var giver = try SqlGiver.init();
+            defer giver.deinit();
+
+            var wrapped_sql_result = try giver.giveMeSql(self.ctx.allocator, self.config.tag.?);
             defer wrapped_sql_result.deinit();
 
             const sql_result = switch (wrapped_sql_result) {
