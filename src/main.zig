@@ -1081,4 +1081,5 @@ test "everyone else" {
     std.testing.refAllDecls(@import("./ls_main.zig"));
     std.testing.refAllDecls(@import("./rm_main.zig"));
     std.testing.refAllDecls(@import("./hydrus_api_main.zig"));
+    std.testing.refAllDecls(@import("./tags_main.zig"));
 }

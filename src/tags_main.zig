@@ -182,6 +182,55 @@ const CreateAction = struct {
     }
 };
 
+test "create action" {
+    const config = CreateAction.Config{
+        .tag_core = null,
+        .tag = "test tag",
+    };
+
+    var ctx = try manage_main.makeTestContext();
+    defer ctx.deinit();
+
+    var action = try CreateAction.init(&ctx, config);
+    defer action.deinit();
+
+    try action.run();
+
+    _ = (try ctx.fetchNamedTag("test tag", "en")) orelse return error.ExpectedTag;
+}
+
+test "create action (aliasing)" {
+    var ctx = try manage_main.makeTestContext();
+    defer ctx.deinit();
+
+    var tag1 = try ctx.createNamedTag("test tag1", "en", null);
+    var tag2_before_alias = try ctx.createNamedTag("test tag2", "en", null);
+
+    try std.testing.expect(tag2_before_alias.core.id != tag1.core.id);
+
+    const tag1_core = tag1.core.toHex();
+
+    // turn tag2 into an alias of tag1
+    const config = CreateAction.Config{
+        .tag_core = null,
+        .tag_alias = &tag1_core,
+        .tag = "test tag2",
+    };
+
+    var action = try CreateAction.init(&ctx, config);
+    defer action.deinit();
+
+    try action.run();
+
+    // tag1 must still exist
+    // tag2 must still exist, but with same core now
+
+    var tag1_after_alias = (try ctx.fetchNamedTag("test tag1", "en")).?;
+    var tag2_after_alias = (try ctx.fetchNamedTag("test tag2", "en")).?;
+    try std.testing.expectEqual(tag1.core.id, tag1_after_alias.core.id);
+    try std.testing.expectEqual(tag1.core.id, tag2_after_alias.core.id);
+}
+
 fn consumeCoreHash(ctx: *Context, raw_core_hash_buffer: *[32]u8, tag_core_hex_string: []const u8) !Context.Hash {
     if (tag_core_hex_string.len != 64) {
         log.err("hashes myst be 64 bytes long, got {d}", .{tag_core_hex_string.len});
