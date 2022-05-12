@@ -456,7 +456,10 @@ fn searchFiles(
     const find_query = try convertTagsToFindQuery(ctx.manage.allocator, safe_tags_string);
     defer ctx.manage.allocator.free(find_query);
 
-    const wrapped_result = try SqlGiver.giveMeSql(ctx.manage.allocator, find_query);
+    var giver = try SqlGiver.init();
+    defer giver.deinit();
+
+    const wrapped_result = try giver.giveMeSql(ctx.manage.allocator, find_query);
     defer wrapped_result.deinit();
 
     const result = switch (wrapped_result) {

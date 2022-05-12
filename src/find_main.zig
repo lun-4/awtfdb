@@ -122,7 +122,9 @@ pub fn main() anyerror!void {
     // afind '(tag1 | tag2) tag3' (tag1 OR tag2, AND tag3)
     // afind '"tag3 2"' ("tag3 2" is a tag, actually)
 
-    const wrapped_result = try SqlGiver.giveMeSql(allocator, query);
+    var giver = try SqlGiver.init();
+    defer giver.deinit();
+    const wrapped_result = try giver.giveMeSql(allocator, query);
     defer wrapped_result.deinit();
 
     const result = switch (wrapped_result) {
@@ -338,26 +340,36 @@ pub const SqlGiver = struct {
         }
     };
 
-    pub fn giveMeSql(
-        allocator: std.mem.Allocator,
-        query: []const u8,
-    ) (libpcre.Regex.CompileError || libpcre.Regex.ExecError)!Result {
+    operators: [5]libpcre.Regex,
+    const Self = @This();
+
+    pub const CaptureType = enum(usize) { Or = 0, Not, And, Tag, RawTag };
+
+    pub fn init() !Self {
         var or_operator = try libpcre.Regex.compile("( +)?\\|( +)?", .{});
         var not_operator = try libpcre.Regex.compile("( +)?-( +)?", .{});
         var and_operator = try libpcre.Regex.compile(" +", .{});
         var tag_regex = try libpcre.Regex.compile("[a-zA-Z-_0-9:;&\\*]+", .{});
         var raw_tag_regex = try libpcre.Regex.compile("\".*?\"", .{});
 
-        const CaptureType = enum(usize) { Or = 0, Not, And, Tag, RawTag };
+        return Self{ .operators = [_]libpcre.Regex{
+            or_operator,
+            not_operator,
+            and_operator,
+            tag_regex,
+            raw_tag_regex,
+        } };
+    }
 
-        const capture_order = [_]*libpcre.Regex{
-            &or_operator,
-            &not_operator,
-            &and_operator,
-            &tag_regex,
-            &raw_tag_regex,
-        };
+    pub fn deinit(self: Self) void {
+        for (self.operators) |regex| regex.deinit();
+    }
 
+    pub fn giveMeSql(
+        self: Self,
+        allocator: std.mem.Allocator,
+        query: []const u8,
+    ) (libpcre.Regex.CompileError || libpcre.Regex.ExecError)!Result {
         var index: usize = 0;
 
         var list = std.ArrayList(u8).init(allocator);
@@ -381,7 +393,7 @@ pub const SqlGiver = struct {
 
             var maybe_captures: ?[]?libpcre.Capture = null;
             var captured_regex_index: ?CaptureType = null;
-            for (capture_order) |regex, current_regex_index| {
+            for (self.operators) |regex, current_regex_index| {
                 log.debug("try regex {d} on query '{s}'", .{ current_regex_index, query_slice });
                 maybe_captures = try regex.captures(allocator, query_slice, .{});
                 captured_regex_index = @intToEnum(CaptureType, current_regex_index);
@@ -442,7 +454,9 @@ pub const SqlGiver = struct {
 
 test "sql parser" {
     const allocator = std.testing.allocator;
-    const wrapped_result = try SqlGiver.giveMeSql(allocator, "a b | \"cd\"|e");
+    var giver = try SqlGiver.init();
+    defer giver.deinit();
+    const wrapped_result = try giver.giveMeSql(allocator, "a b | \"cd\"|e");
     defer wrapped_result.deinit();
 
     const result = wrapped_result.Ok;
@@ -463,7 +477,9 @@ test "sql parser" {
 
 test "sql parser errors" {
     const allocator = std.testing.allocator;
-    const wrapped_result = try SqlGiver.giveMeSql(allocator, "a \"cd");
+    var giver = try SqlGiver.init();
+    defer giver.deinit();
+    const wrapped_result = try giver.giveMeSql(allocator, "a \"cd");
     defer wrapped_result.deinit();
 
     const error_data = wrapped_result.Error;

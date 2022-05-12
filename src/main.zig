@@ -135,7 +135,6 @@ pub const Context = struct {
         // i give up. tried a lot of things to make sqlite create the db file
         // itself but it just hates me (SQLITE_CANTOPEN my beloathed).
 
-        // TODO use different way to get env
         self.home_path = self.home_path orelse std.os.getenv("HOME");
         const db_path = try std.fs.path.resolve(
             self.allocator,
