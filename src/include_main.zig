@@ -83,6 +83,62 @@ fn utilAddRawTag(config: anytype, raw_tag_text: []const u8, out: std.ArrayList(u
     return raw_tag_text.len;
 }
 
+const TestUtil = struct {
+    pub fn runTestInferrerFile(
+        allocator: std.mem.Allocator,
+        filename: []const u8,
+        test_vector_bytes: []const u8,
+        comptime InferrerType: type,
+        first_args: anytype,
+        wanted_tags: anytype,
+    ) !void {
+        const ctx = first_args.@"1";
+        var tmp = std.testing.tmpDir(.{});
+        defer tmp.cleanup();
+
+        var file = try tmp.dir.createFile(filename, .{});
+        defer file.close();
+        _ = try file.write(test_vector_bytes);
+
+        var indexed_file = try ctx.createFileFromDir(tmp.dir, filename);
+        defer indexed_file.deinit();
+
+        const hashlist = try indexed_file.fetchTags(allocator);
+        defer allocator.free(hashlist);
+        try std.testing.expectEqual(@as(usize, 0), hashlist.len);
+
+        // actually run inferrer
+
+        try @call(.{}, InferrerType.run, first_args ++ .{&indexed_file});
+
+        const hashlist_after = try indexed_file.fetchTags(allocator);
+        defer allocator.free(hashlist_after);
+        try std.testing.expectEqual(@as(usize, wanted_tags.len), hashlist_after.len);
+
+        var found_tags: [wanted_tags.len]bool = undefined;
+        // initialize
+        for (found_tags) |_, idx| found_tags[idx] = false;
+
+        for (hashlist_after) |tag_core| {
+            const tag_list = try ctx.fetchTagsFromCore(allocator, tag_core);
+            defer tag_list.deinit();
+
+            try std.testing.expectEqual(@as(usize, 1), tag_list.items.len);
+            const tag = tag_list.items[0];
+            try std.testing.expectEqual(tag_core.id, tag.core.id);
+            inline for (wanted_tags) |wanted_tag, index| {
+                if (std.mem.eql(u8, wanted_tag, tag.kind.Named.text)) {
+                    found_tags[index] = true;
+                }
+            }
+        }
+
+        // assert its all true
+
+        for (found_tags) |value| try std.testing.expect(value);
+    }
+};
+
 const TagInferrer = enum {
     regex,
     audio,
@@ -242,51 +298,14 @@ test "regex tag inferrer" {
     );
     defer RegexTagInferrer.deinit(&context);
 
-    // setup test file
-
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-
-    const name = "test_[tag3] file [tag1] [tag2][tag4]";
-    var file = try tmp.dir.createFile(name, .{});
-    defer file.close();
-
-    _ = try file.write("awooga");
-    var indexed_file = try ctx.createFileFromDir(tmp.dir, name);
-    defer indexed_file.deinit();
-
-    const hashlist = try indexed_file.fetchTags(allocator);
-    defer allocator.free(hashlist);
-    try std.testing.expectEqual(@as(usize, 0), hashlist.len);
-
-    try RegexTagInferrer.run(&context, &ctx, &indexed_file);
-
-    const hashlist_after = try indexed_file.fetchTags(allocator);
-    defer allocator.free(hashlist_after);
-    try std.testing.expectEqual(@as(usize, 4), hashlist_after.len);
-
-    const WANTED_TAGS = .{ "tag1", "tag2", "tag3", "tag4" };
-    var found_tags: [WANTED_TAGS.len]bool = undefined;
-    // initialize
-    for (found_tags) |_, idx| found_tags[idx] = false;
-
-    for (hashlist_after) |tag_core| {
-        const tag_list = try ctx.fetchTagsFromCore(allocator, tag_core);
-        defer tag_list.deinit();
-
-        try std.testing.expectEqual(@as(usize, 1), tag_list.items.len);
-        const tag = tag_list.items[0];
-        try std.testing.expectEqual(tag_core.id, tag.core.id);
-        inline for (WANTED_TAGS) |wanted_tag, index| {
-            if (std.mem.eql(u8, wanted_tag, tag.kind.Named.text)) {
-                found_tags[index] = true;
-            }
-        }
-    }
-
-    // assert its all true
-
-    for (found_tags) |value| try std.testing.expect(value);
+    try TestUtil.runTestInferrerFile(
+        allocator,
+        "test_[tag3] file [tag1] [tag2][tag4]",
+        "awooga",
+        RegexTagInferrer,
+        .{ &context, &ctx },
+        .{ "tag1", "tag2", "tag3", "tag4" },
+    );
 }
 
 const AudioMetadataTagInferrer = struct {
@@ -448,51 +467,14 @@ test "audio tag inferrer" {
 
         // setup test file
 
-        var tmp = std.testing.tmpDir(.{});
-        defer tmp.cleanup();
-
-        const name = "test.mp3";
-        var file = try tmp.dir.createFile(name, .{});
-        defer file.close();
-        _ = try file.write(test_vector_bytes);
-
-        var indexed_file = try ctx.createFileFromDir(tmp.dir, name);
-        defer indexed_file.deinit();
-
-        const hashlist = try indexed_file.fetchTags(allocator);
-        defer allocator.free(hashlist);
-        try std.testing.expectEqual(@as(usize, 0), hashlist.len);
-
-        // actually run inferrer
-
-        try AudioMetadataTagInferrer.run(&context, &ctx, &indexed_file);
-
-        const hashlist_after = try indexed_file.fetchTags(allocator);
-        defer allocator.free(hashlist_after);
-        try std.testing.expectEqual(@as(usize, 3), hashlist_after.len);
-
-        const WANTED_TAGS = .{ "artist:Test Artist", "album:Test Album", "title:Test Track" };
-        var found_tags: [WANTED_TAGS.len]bool = undefined;
-        // initialize
-        for (found_tags) |_, idx| found_tags[idx] = false;
-
-        for (hashlist_after) |tag_core| {
-            const tag_list = try ctx.fetchTagsFromCore(allocator, tag_core);
-            defer tag_list.deinit();
-
-            try std.testing.expectEqual(@as(usize, 1), tag_list.items.len);
-            const tag = tag_list.items[0];
-            try std.testing.expectEqual(tag_core.id, tag.core.id);
-            inline for (WANTED_TAGS) |wanted_tag, index| {
-                if (std.mem.eql(u8, wanted_tag, tag.kind.Named.text)) {
-                    found_tags[index] = true;
-                }
-            }
-        }
-
-        // assert its all true
-
-        for (found_tags) |value| try std.testing.expect(value);
+        try TestUtil.runTestInferrerFile(
+            allocator,
+            "test.mp3",
+            test_vector_bytes,
+            AudioMetadataTagInferrer,
+            .{ &context, &ctx },
+            .{ "artist:Test Artist", "album:Test Album", "title:Test Track" },
+        );
     }
 }
 
