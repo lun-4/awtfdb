@@ -131,7 +131,12 @@ const CreateAction = struct {
             var giver = try SqlGiver.init();
             defer giver.deinit();
 
-            var wrapped_sql_result = try giver.giveMeSql(self.ctx.allocator, self.config.tag.?);
+            // always wrap given tag text in quotemarks so that its
+            // properly parsed by SqlGiver
+            var find_query_text = try std.fmt.allocPrint(self.ctx.allocator, "\"{s}\"", .{self.config.tag.?});
+            defer self.ctx.allocator.free(find_query_text);
+
+            var wrapped_sql_result = try giver.giveMeSql(self.ctx.allocator, find_query_text);
             defer wrapped_sql_result.deinit();
 
             const sql_result = switch (wrapped_sql_result) {
@@ -142,7 +147,11 @@ const CreateAction = struct {
                 },
             };
 
-            std.debug.assert(sql_result.tags.len == 1);
+            if (sql_result.tags.len != 1) {
+                log.err("expected 1 tag to bind from find query: '{s}', got {d}", .{ self.config.tag.?, sql_result.tags.len });
+                return error.ExpectedSingleTag;
+            }
+
             std.debug.assert(std.mem.eql(u8, sql_result.tags[0], self.config.tag.?));
 
             // execute query and bind to tag_to_be_aliased_from
