@@ -83,6 +83,25 @@ fn utilAddRawTag(config: anytype, raw_tag_text: []const u8, out: *std.ArrayList(
     return raw_tag_text.len;
 }
 
+fn utilAddTag(
+    allocator: std.mem.Allocator,
+    config: anytype,
+    maybe_raw_tag: ?[]const u8,
+    maybe_tag_scope: ?[]const u8,
+    output_tags_list: *std.ArrayList([]const u8),
+) !void {
+    var list = std.ArrayList(u8).init(allocator);
+    defer list.deinit();
+
+    if (maybe_raw_tag) |raw_tag| {
+        _ = try utilAddScope(maybe_tag_scope, &list.writer());
+        _ = try utilAddRawTag(config, raw_tag, &list.writer());
+        try output_tags_list.append(
+            list.toOwnedSlice(),
+        );
+    }
+}
+
 const TestUtil = struct {
     pub fn runTestInferrerFile(
         allocator: std.mem.Allocator,
@@ -251,6 +270,7 @@ const RegexTagInferrer = struct {
                     _ = try utilAddRawTag(self.config, raw_tag_text, &tag_text_list.writer());
 
                     const tag_text = tag_text_list.items;
+
                     log.info("found tag: {s}", .{tag_text});
                     var maybe_tag = try ctx.fetchNamedTag(tag_text, "en");
                     if (maybe_tag) |tag| {
@@ -295,25 +315,6 @@ test "regex tag inferrer" {
         .{ &context, &ctx },
         .{ "tag1", "tag2", "tag3", "tag4" },
     );
-}
-
-fn audioUtilAddTag(
-    allocator: std.mem.Allocator,
-    config: anytype,
-    maybe_raw_tag: ?[]const u8,
-    maybe_tag_scope: ?[]const u8,
-    output_tags_list: *std.ArrayList([]const u8),
-) !void {
-    var list = std.ArrayList(u8).init(allocator);
-    defer list.deinit();
-
-    if (maybe_raw_tag) |raw_tag| {
-        _ = try utilAddScope(maybe_tag_scope, &list.writer());
-        _ = try utilAddRawTag(config, raw_tag, &list.writer());
-        try output_tags_list.append(
-            list.toOwnedSlice(),
-        );
-    }
 }
 
 const AudioMetadataTagInferrer = struct {
@@ -400,7 +401,7 @@ const AudioMetadataTagInferrer = struct {
             tags_to_add.deinit();
         }
 
-        try audioUtilAddTag(
+        try utilAddTag(
             self.allocator,
             self.config,
             audio_meta.maybe_track_album,
@@ -408,7 +409,7 @@ const AudioMetadataTagInferrer = struct {
             &tags_to_add,
         );
 
-        try audioUtilAddTag(
+        try utilAddTag(
             self.allocator,
             self.config,
             audio_meta.maybe_track_title,
@@ -418,7 +419,7 @@ const AudioMetadataTagInferrer = struct {
 
         if (audio_meta.maybe_track_artists) |artists| {
             for (artists) |artist_name| {
-                try audioUtilAddTag(
+                try utilAddTag(
                     self.allocator,
                     self.config,
                     artist_name,
@@ -452,8 +453,6 @@ test "audio tag inferrer" {
     inline for (AUDIO_TEST_VECTORS) |test_vector_path| {
         std.log.warn("testing {s}", .{test_vector_path});
         const test_vector_bytes = @embedFile(test_vector_path);
-
-        // TODO clean impl between RegexTagInferrer and AudioMetadataTagInferrer
 
         // setup audio inferrer
 

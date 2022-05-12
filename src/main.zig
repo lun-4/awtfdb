@@ -215,23 +215,19 @@ pub const Context = struct {
 
         /// Deletes all the tags reffering to this core
         pub fn deleteAll(self: @This(), db: *sqlite.Db) !usize {
-            // TODO fix deleted_count here
-            const deleted_tag_count = (try db.one(
-                usize,
+            try db.exec(
                 \\ delete from tag_names
                 \\ where core_hash = ?
-                \\ returning (
-                \\ 	select count(*)
-                \\ 	from tag_names
-                \\ 	where core_hash = ?
-                \\ ) as deleted_count
             ,
                 .{},
-                .{ self.core.id, self.core.id },
-            )).?;
-            // TODO add deleted_link_count as returning clause here
+                .{self.core.id},
+            );
+            const deleted_tag_count = db.rowsAffected();
+
             try db.exec("delete from tag_cores where core_hash = ?", .{}, .{self.core.id});
+            std.debug.assert(db.rowsAffected() == 1);
             try db.exec("delete from hashes where id = ?", .{}, .{self.core.id});
+            std.debug.assert(db.rowsAffected() == 1);
 
             return deleted_tag_count;
         }
@@ -994,10 +990,8 @@ test "tag creation" {
     try std.testing.expectEqualStrings(tag.core.hash_data[0..], tags_from_core.items[0].core.hash_data[0..]);
     try std.testing.expectEqualStrings(tag.core.hash_data[0..], tags_from_core.items[1].core.hash_data[0..]);
 
-    // TODO fix deleted_tags returning 1 instead of 2
     const deleted_tags = try tag.deleteAll(&ctx.db.?);
-    _ = deleted_tags;
-    //try std.testing.expectEqual(@as(usize, 2), deleted_tags);
+    try std.testing.expectEqual(@as(usize, 2), deleted_tags);
 
     var tags_from_core_after_deletion = try ctx.fetchTagsFromCore(std.testing.allocator, tag.core);
     defer tags_from_core_after_deletion.deinit();
