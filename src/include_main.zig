@@ -31,6 +31,7 @@ const HELPTEXT =
     \\ 					(useful if you're moving files around
     \\ 					and they're not catched by the
     \\ 					rename watcher)
+    \\ --dry-run			do not do any index file modifications
     \\
     \\ example, adding a single file:
     \\  ainclude --tag format:mp4 --tag "meme:what the dog doing" /downloads/funny_meme.mp4
@@ -136,11 +137,7 @@ const TestUtil = struct {
         try @call(.{}, InferrerType.run, first_args ++ .{ &indexed_file, &tags_to_add });
 
         try std.testing.expectEqual(@as(usize, wanted_tags.len), tags_to_add.items.len);
-        try (Args{
-            .default_tags = undefined,
-            .wanted_inferrers = undefined,
-            .include_paths = undefined,
-        }).addTagList(ctx, &indexed_file, tags_to_add);
+        try addTagList(ctx, &indexed_file, tags_to_add);
 
         const hashlist_after = try indexed_file.fetchTags(allocator);
         defer allocator.free(hashlist_after);
@@ -496,27 +493,24 @@ pub const Args = struct {
         self.wanted_inferrers.deinit();
         self.include_paths.deinit();
     }
+};
 
-    pub fn addTagList(
-        self: @This(),
-        ctx: *Context,
-        file: *Context.File,
-        tags_to_add: std.ArrayList([]const u8),
-    ) !void {
-        for (tags_to_add.items) |named_tag_text| {
-            log.info("adding tag {s}", .{named_tag_text});
-            if (!self.dry_run) {
-                var maybe_tag = try ctx.fetchNamedTag(named_tag_text, "en");
-                if (maybe_tag) |tag| {
-                    try file.addTag(tag.core);
-                } else {
-                    var tag = try ctx.createNamedTag(named_tag_text, "en", null);
-                    try file.addTag(tag.core);
-                }
-            }
+fn addTagList(
+    ctx: *Context,
+    file: *Context.File,
+    tags_to_add: std.ArrayList([]const u8),
+) !void {
+    for (tags_to_add.items) |named_tag_text| {
+        log.info("adding tag {s}", .{named_tag_text});
+        var maybe_tag = try ctx.fetchNamedTag(named_tag_text, "en");
+        if (maybe_tag) |tag| {
+            try file.addTag(tag.core);
+        } else {
+            var tag = try ctx.createNamedTag(named_tag_text, "en", null);
+            try file.addTag(tag.core);
         }
     }
-};
+}
 
 pub fn main() anyerror!void {
     const rc = sqlite.c.sqlite3_config(sqlite.c.SQLITE_CONFIG_LOG, manage_main.sqliteLog, @as(?*anyopaque, null));
@@ -579,6 +573,8 @@ pub fn main() anyerror!void {
             given_args.version = true;
         } else if (std.mem.eql(u8, arg, "--filter-indexed-files-only")) {
             given_args.filter_indexed_files_only = true;
+        } else if (std.mem.eql(u8, arg, "--dry-run")) {
+            given_args.dry_run = true;
         } else if (std.mem.eql(u8, arg, "--tag") or std.mem.eql(u8, arg, "-t")) {
             state = .FetchTag;
             // tag inferrers require more than one arg, so we need to load
@@ -622,6 +618,7 @@ pub fn main() anyerror!void {
     defer ctx.deinit();
 
     try ctx.loadDatabase(.{});
+    if (given_args.dry_run) try ctx.turnIntoMemoryDb();
 
     std.log.info("args: {}", .{given_args});
 
@@ -698,7 +695,7 @@ pub fn main() anyerror!void {
                 }
             }
 
-            try given_args.addTagList(&ctx, &file, tags_to_add);
+            try addTagList(&ctx, &file, tags_to_add);
         } else {
             var walker = try dir.?.walk(allocator);
             defer walker.deinit();
@@ -759,7 +756,7 @@ pub fn main() anyerror!void {
                                 }
                             }
 
-                            try given_args.addTagList(&ctx, &file, tags_to_add);
+                            try addTagList(&ctx, &file, tags_to_add);
                         }
                     },
                     else => {},
