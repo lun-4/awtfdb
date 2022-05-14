@@ -175,14 +175,14 @@ pub const Context = struct {
     pub fn deinit(self: *Self) void {
         if (self.db_path) |db_path| self.allocator.free(db_path);
 
-        if (self.db != null) {
+        if (self.db) |*db| {
             log.info("possibly optimizing database...", .{});
             // The results of analysis are not as good when only part of each index is examined,
             // but the results are usually good enough. Setting N to 100 or 1000 allows
             // the ANALYZE command to run very quickly, even on multi-gigabyte database files.
-            _ = self.db.?.one(i64, "PRAGMA analysis_limit=1000;", .{}, .{}) catch {};
-            _ = self.db.?.exec("PRAGMA optimize;", .{}, .{}) catch {};
-            self.db.?.deinit();
+            _ = db.one(i64, "PRAGMA analysis_limit=1000;", .{}, .{}) catch {};
+            _ = db.exec("PRAGMA optimize;", .{}, .{}) catch {};
+            db.deinit();
         }
     }
 
@@ -194,7 +194,7 @@ pub const Context = struct {
         language: []const u8,
     };
 
-    const Tag = struct {
+    pub const Tag = struct {
         core: Hash,
         kind: union(enum) {
             Named: NamedTagValue,

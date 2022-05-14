@@ -270,7 +270,7 @@ const RemoveAction = struct {
     pub const Config = struct {
         tag_core: ?[]const u8 = null,
         tag: ?[]const u8 = null,
-        given_args: *Args,
+        given_args: *const Args,
     };
 
     pub fn processArgs(args_it: *std.process.ArgIterator, given_args: *Args) !ActionConfig {
@@ -425,6 +425,35 @@ const RemoveAction = struct {
         try stdout.print("deleted {d} tags\n", .{deleted_count.?});
     }
 };
+
+test "remove action" {
+    var ctx = try manage_main.makeTestContext();
+    defer ctx.deinit();
+
+    var tag = try ctx.createNamedTag("test tag", "en", null);
+    var tag2 = try ctx.createNamedTag("test tag2", "en", null);
+    _ = tag2;
+
+    const tag1_core = tag.core.toHex();
+    const args = Args{ .ask_confirmation = false };
+
+    const config = RemoveAction.Config{
+        .tag_core = &tag1_core,
+        .tag = null,
+        .given_args = &args,
+    };
+
+    var action = try RemoveAction.init(&ctx, config);
+    defer action.deinit();
+
+    try action.run();
+
+    // tag must be gone
+    var maybe_tag = try ctx.fetchNamedTag("test tag1", "en");
+    try std.testing.expectEqual(@as(?Context.Tag, null), maybe_tag);
+    var maybe_tag2 = try ctx.fetchNamedTag("test tag2", "en");
+    try std.testing.expect(maybe_tag2 != null);
+}
 
 const SearchAction = struct {
     pub const Config = struct {
