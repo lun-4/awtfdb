@@ -124,7 +124,7 @@ pub const Context = struct {
 
     const Self = @This();
 
-    const LoadDatabaseOptions = struct {
+    pub const LoadDatabaseOptions = struct {
         create: bool = false,
     };
 
@@ -134,21 +134,23 @@ pub const Context = struct {
         // try to create the file always. this is done because
         // i give up. tried a lot of things to make sqlite create the db file
         // itself but it just hates me (SQLITE_CANTOPEN my beloathed).
+        if (self.db_path == null) {
+            self.home_path = self.home_path orelse std.os.getenv("HOME");
+            const resolved_path = try std.fs.path.resolve(
+                self.allocator,
+                &[_][]const u8{ self.home_path.?, "awtf.db" },
+            );
 
-        self.home_path = self.home_path orelse std.os.getenv("HOME");
-        const db_path = try std.fs.path.resolve(
-            self.allocator,
-            &[_][]const u8{ self.home_path.?, "awtf.db" },
-        );
-        self.db_path = db_path;
-
-        if (options.create) {
-            var file = try std.fs.cwd().createFile(db_path, .{ .truncate = false });
-            defer file.close();
-        } else {
-            try std.fs.cwd().access(db_path, .{});
+            if (options.create) {
+                var file = try std.fs.cwd().createFile(resolved_path, .{ .truncate = false });
+                defer file.close();
+            } else {
+                try std.fs.cwd().access(resolved_path, .{});
+            }
+            self.db_path = resolved_path;
         }
-        const db_path_cstr = try std.cstr.addNullByte(self.allocator, db_path);
+
+        const db_path_cstr = try std.cstr.addNullByte(self.allocator, self.db_path.?);
         defer self.allocator.free(db_path_cstr);
 
         var diags: sqlite.Diagnostics = undefined;
@@ -170,6 +172,48 @@ pub const Context = struct {
         }
 
         try self.db.?.exec("PRAGMA foreign_keys = ON", .{}, .{});
+    }
+
+    /// Convert the current connection into an in-memory database connection
+    /// so that operations are done non-destructively
+    ///
+    /// This function is useful for '--dry-run' switches in CLI applications.
+    pub fn turnIntoMemoryDb(self: *Self) !void {
+
+        // first, make sure our current connection can't do shit
+        try self.db.?.exec("PRAGMA query_only = ON;", .{}, .{});
+
+        // open a new one in memory
+        var new_db = try sqlite.Db.init(.{
+            .mode = sqlite.Db.Mode{ .Memory = {} },
+            .open_flags = .{
+                .write = true,
+                .create = true,
+            },
+            .threading_mode = .MultiThread,
+        });
+
+        // backup the one we have into the memory one
+        const maybe_backup = sqlite.c.sqlite3_backup_init(new_db.db, "main", self.db.?.db, "main");
+        defer if (maybe_backup) |backup| {
+            const result = sqlite.c.sqlite3_backup_finish(backup);
+            if (result != sqlite.c.SQLITE_OK) {
+                std.debug.panic("unexpected result code from backup finish: {d}", .{result});
+            }
+        };
+
+        if (maybe_backup) |backup| {
+            const result = sqlite.c.sqlite3_backup_step(backup, -1);
+            if (result != sqlite.c.SQLITE_DONE) {
+                return sqlite.errors.errorFromResultCode(result);
+            }
+        }
+
+        // then, close the db
+        self.db.?.deinit();
+
+        // then, make this new db the real db
+        self.db = new_db;
     }
 
     pub fn deinit(self: *Self) void {
@@ -933,13 +977,21 @@ pub fn main() anyerror!void {
     }
 }
 
+pub var test_db_path_buffer: [std.os.PATH_MAX]u8 = undefined;
+
 pub fn makeTestContext() !Context {
+    var tmp = std.testing.tmpDir(.{});
+    // lol, lmao, etc
+    //defer tmp.cleanup();
+
+    const homepath = try tmp.dir.realpath(".", &test_db_path_buffer);
+
     var ctx = Context{
         .args_it = undefined,
         .stdout = undefined,
         .db = null,
         .allocator = std.testing.allocator,
-        .home_path = std.os.getenv("HOME"),
+        .home_path = homepath,
         .db_path = null,
     };
 
@@ -951,6 +1003,40 @@ pub fn makeTestContext() !Context {
         },
         .threading_mode = .MultiThread,
     });
+
+    try ctx.createCommand();
+
+    return ctx;
+}
+
+pub fn makeTestContextRealFile() !Context {
+    var tmp = std.testing.tmpDir(.{});
+    // lol, lmao, etc
+    //defer tmp.cleanup();
+
+    const homepath = try tmp.dir.realpath(".", &test_db_path_buffer);
+
+    var file = try tmp.dir.createFile("test.db", .{});
+    defer file.close();
+    const dbpath = try tmp.dir.realpath("test.db", test_db_path_buffer[homepath.len..]);
+
+    var ctx = Context{
+        .args_it = undefined,
+        .stdout = undefined,
+        .db = null,
+        .allocator = std.testing.allocator,
+        .home_path = homepath,
+        .db_path = try std.testing.allocator.dupe(u8, dbpath),
+    };
+
+    //ctx.db = try sqlite.Db.init(.{
+    //    .mode = sqlite.Db.Mode{ .Memory = {} },
+    //    .open_flags = .{
+    //        .write = true,
+    //        .create = true,
+    //    },
+    //    .threading_mode = .MultiThread,
+    //});
 
     try ctx.createCommand();
 
@@ -1074,9 +1160,35 @@ test "file and tags" {
     try std.testing.expect(saw_correct_tag_core);
 }
 
+test "in memory database" {
+    var ctx = try makeTestContextRealFile();
+    defer ctx.deinit();
+
+    var tag1 = try ctx.createNamedTag("test_tag", "en", null);
+    _ = tag1;
+
+    try ctx.turnIntoMemoryDb();
+
+    var tag1_inmem = try ctx.fetchNamedTag("test_tag", "en");
+    try std.testing.expect(tag1_inmem != null);
+
+    var tag2 = try ctx.createNamedTag("test_tag2", "en", null);
+    _ = tag2;
+
+    var tag2_inmem = try ctx.fetchNamedTag("test_tag2", "en");
+    try std.testing.expect(tag2_inmem != null);
+
+    ctx.db.?.deinit();
+    ctx.db = null;
+    try ctx.loadDatabase(.{});
+
+    var tag2_infile = try ctx.fetchNamedTag("test_tag2", "en");
+    try std.testing.expect(tag2_infile == null);
+}
+
 test "everyone else" {
     std.testing.refAllDecls(@import("./include_main.zig"));
-    std.testing.refAllDecls(@import("./rename_watcher_main.zig"));
+    //std.testing.refAllDecls(@import("./rename_watcher_main.zig"));
     std.testing.refAllDecls(@import("./find_main.zig"));
     std.testing.refAllDecls(@import("./ls_main.zig"));
     std.testing.refAllDecls(@import("./rm_main.zig"));
