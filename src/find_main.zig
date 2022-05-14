@@ -420,6 +420,12 @@ pub const SqlGiver = struct {
                 switch (captured_regex_index.?) {
                     .Or => try list.writer().print(" or", .{}),
                     .Not => {
+                        // this edge case is hit when queries start with '-TAG'
+                        // since we already printed a select, we need to add
+                        // some kind of condition before it's a syntax error
+                        if (tags.items.len == 0) {
+                            try list.writer().print(" true", .{});
+                        }
                         try list.writer().print(" except", .{});
                         try list.writer().print(" select file_hash from tag_files where", .{});
                     },
@@ -486,4 +492,49 @@ test "sql parser errors" {
 
     try std.testing.expectEqual(@as(usize, 2), error_data.character);
     try std.testing.expectEqual(SqlGiver.ErrorType.UnexpectedCharacter, error_data.error_type);
+}
+
+test "sql parser batch test" {
+    const allocator = std.testing.allocator;
+
+    var ctx = try manage_main.makeTestContext();
+    defer ctx.deinit();
+
+    var giver = try SqlGiver.init();
+    defer giver.deinit();
+
+    const TEST_DATA = .{
+        .{ "a b c", .{ "a", "b", "c" } },
+        .{ "a bc d", .{ "a", "bc", "d" } },
+        .{ "a \"bc\" d", .{ "a", "bc", "d" } },
+        .{ "a \"b c\" d", .{ "a", "b c", "d" } },
+        .{ "a \"b c\" -d", .{ "a", "b c", "d" } },
+        .{ "-a \"b c\" d", .{ "a", "b c", "d" } },
+        .{ "-a -\"b c\" -d", .{ "a", "b c", "d" } },
+        .{ "-d", .{"d"} },
+    };
+
+    inline for (TEST_DATA) |test_case, test_case_index| {
+        const input_text = test_case.@"0";
+        const expected_tags = test_case.@"1";
+
+        const wrapped_result = try giver.giveMeSql(allocator, input_text);
+        defer wrapped_result.deinit();
+
+        const result = wrapped_result.Ok;
+
+        var stmt = ctx.db.?.prepareDynamic(result.query) catch |err| {
+            const detailed_error = ctx.db.?.getDetailedError();
+            std.debug.panic(
+                "unable to prepare statement test case {d} '{s}', error: {}, message: {s}\n",
+                .{ test_case_index, result.query, err, detailed_error },
+            );
+        };
+        defer stmt.deinit();
+
+        try std.testing.expectEqual(@as(usize, expected_tags.len), result.tags.len);
+        inline for (expected_tags) |expected_tag, index| {
+            try std.testing.expectEqualStrings(expected_tag, result.tags[index]);
+        }
+    }
 }
