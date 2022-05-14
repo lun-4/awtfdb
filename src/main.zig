@@ -980,12 +980,7 @@ pub fn main() anyerror!void {
 pub var test_db_path_buffer: [std.os.PATH_MAX]u8 = undefined;
 
 pub fn makeTestContext() !Context {
-    var tmp = std.testing.tmpDir(.{});
-    // lol, lmao, etc
-    //defer tmp.cleanup();
-
-    const homepath = try tmp.dir.realpath(".", &test_db_path_buffer);
-
+    const homepath = try std.fs.cwd().realpath(".", &test_db_path_buffer);
     var ctx = Context{
         .args_it = undefined,
         .stdout = undefined,
@@ -1180,7 +1175,7 @@ test "in memory database" {
 
 test "everyone else" {
     std.testing.refAllDecls(@import("./include_main.zig"));
-    //std.testing.refAllDecls(@import("./rename_watcher_main.zig"));
+    std.testing.refAllDecls(@import("./rename_watcher_main.zig"));
     std.testing.refAllDecls(@import("./find_main.zig"));
     std.testing.refAllDecls(@import("./ls_main.zig"));
     std.testing.refAllDecls(@import("./rm_main.zig"));
