@@ -1009,6 +1009,7 @@ pub fn makeTestContext() !Context {
     return ctx;
 }
 
+/// Create a test context backed up by a real file, rather than memory.
 pub fn makeTestContextRealFile() !Context {
     var tmp = std.testing.tmpDir(.{});
     // lol, lmao, etc
@@ -1028,15 +1029,6 @@ pub fn makeTestContextRealFile() !Context {
         .home_path = homepath,
         .db_path = try std.testing.allocator.dupe(u8, dbpath),
     };
-
-    //ctx.db = try sqlite.Db.init(.{
-    //    .mode = sqlite.Db.Mode{ .Memory = {} },
-    //    .open_flags = .{
-    //        .write = true,
-    //        .create = true,
-    //    },
-    //    .threading_mode = .MultiThread,
-    //});
 
     try ctx.createCommand();
 

@@ -109,9 +109,9 @@ const TestUtil = struct {
         test_vector_bytes: []const u8,
         comptime InferrerType: type,
         first_args: anytype,
+        ctx: *Context,
         wanted_tags: anytype,
     ) !void {
-        const ctx = first_args.@"1";
         var tmp = std.testing.tmpDir(.{});
         defer tmp.cleanup();
 
@@ -126,9 +126,21 @@ const TestUtil = struct {
         defer allocator.free(hashlist);
         try std.testing.expectEqual(@as(usize, 0), hashlist.len);
 
-        // actually run inferrer
+        var tags_to_add = std.ArrayList([]const u8).init(allocator);
+        defer {
+            for (tags_to_add.items) |tag| allocator.free(tag);
+            tags_to_add.deinit();
+        }
 
-        try @call(.{}, InferrerType.run, first_args ++ .{&indexed_file});
+        // actually run inferrer
+        try @call(.{}, InferrerType.run, first_args ++ .{ &indexed_file, &tags_to_add });
+
+        try std.testing.expectEqual(@as(usize, wanted_tags.len), tags_to_add.items.len);
+        try (Args{
+            .default_tags = undefined,
+            .wanted_inferrers = undefined,
+            .include_paths = undefined,
+        }).addTagList(ctx, &indexed_file, tags_to_add);
 
         const hashlist_after = try indexed_file.fetchTags(allocator);
         defer allocator.free(hashlist_after);
@@ -248,7 +260,11 @@ const RegexTagInferrer = struct {
         self.allocator.free(self.regex_cstr);
     }
 
-    pub fn run(self: *RunContext, ctx: *Context, file: *Context.File) !void {
+    pub fn run(
+        self: *RunContext,
+        file: *const Context.File,
+        tags_to_add: *std.ArrayList([]const u8),
+    ) !void {
         const basename = if (self.config.use_full_path) file.local_path else std.fs.path.basename(file.local_path);
 
         var offset: usize = 0;
@@ -269,16 +285,7 @@ const RegexTagInferrer = struct {
                     _ = try utilAddScope(self.config.tag_scope, &tag_text_list.writer());
                     _ = try utilAddRawTag(self.config, raw_tag_text, &tag_text_list.writer());
 
-                    const tag_text = tag_text_list.items;
-
-                    log.info("found tag: {s}", .{tag_text});
-                    var maybe_tag = try ctx.fetchNamedTag(tag_text, "en");
-                    if (maybe_tag) |tag| {
-                        try file.addTag(tag.core);
-                    } else {
-                        var tag = try ctx.createNamedTag(tag_text, "en", null);
-                        try file.addTag(tag.core);
-                    }
+                    try tags_to_add.append(tag_text_list.toOwnedSlice());
                 }
 
                 offset += full_match.end;
@@ -312,7 +319,8 @@ test "regex tag inferrer" {
         "test_[tag3] file [tag1] [tag2][tag4]",
         "awooga",
         RegexTagInferrer,
-        .{ &context, &ctx },
+        .{&context},
+        &ctx,
         .{ "tag1", "tag2", "tag3", "tag4" },
     );
 }
@@ -386,7 +394,11 @@ const AudioMetadataTagInferrer = struct {
         _ = self;
     }
 
-    pub fn run(self: *RunContext, ctx: *Context, file: *Context.File) !void {
+    pub fn run(
+        self: *RunContext,
+        file: *const Context.File,
+        tags_to_add: *std.ArrayList([]const u8),
+    ) !void {
         var file_fd = try std.fs.cwd().openFile(file.local_path, .{ .mode = .read_only });
         defer file_fd.close();
 
@@ -395,18 +407,12 @@ const AudioMetadataTagInferrer = struct {
         var audio_meta = try tunez.resolveId3(buffered_reader.reader(), self.allocator);
         defer audio_meta.deinit();
 
-        var tags_to_add = std.ArrayList([]const u8).init(self.allocator);
-        defer {
-            for (tags_to_add.items) |tag| self.allocator.free(tag);
-            tags_to_add.deinit();
-        }
-
         try utilAddTag(
             self.allocator,
             self.config,
             audio_meta.maybe_track_album,
             self.config.tag_scope_album,
-            &tags_to_add,
+            tags_to_add,
         );
 
         try utilAddTag(
@@ -414,7 +420,7 @@ const AudioMetadataTagInferrer = struct {
             self.config,
             audio_meta.maybe_track_title,
             self.config.tag_scope_title,
-            &tags_to_add,
+            tags_to_add,
         );
 
         if (audio_meta.maybe_track_artists) |artists| {
@@ -424,19 +430,8 @@ const AudioMetadataTagInferrer = struct {
                     self.config,
                     artist_name,
                     self.config.tag_scope_artist,
-                    &tags_to_add,
+                    tags_to_add,
                 );
-            }
-        }
-
-        for (tags_to_add.items) |named_tag_text| {
-            log.info("audio: inferred tag {s}", .{named_tag_text});
-            var maybe_tag = try ctx.fetchNamedTag(named_tag_text, "en");
-            if (maybe_tag) |tag| {
-                try file.addTag(tag.core);
-            } else {
-                var tag = try ctx.createNamedTag(named_tag_text, "en", null);
-                try file.addTag(tag.core);
             }
         }
     }
@@ -476,11 +471,52 @@ test "audio tag inferrer" {
             "test.mp3",
             test_vector_bytes,
             AudioMetadataTagInferrer,
-            .{ &context, &ctx },
+            .{&context},
+            &ctx,
             .{ "artist:Test Artist", "album:Test Album", "title:Test Track" },
         );
     }
 }
+
+const StringList = std.ArrayList([]const u8);
+const ConfigList = std.ArrayList(TagInferrerConfig);
+
+pub const Args = struct {
+    help: bool = false,
+    verbose: bool = false,
+    version: bool = false,
+    filter_indexed_files_only: bool = false,
+    dry_run: bool = false,
+    default_tags: StringList,
+    wanted_inferrers: ConfigList,
+    include_paths: StringList,
+
+    pub fn deinit(self: *@This()) void {
+        self.default_tags.deinit();
+        self.wanted_inferrers.deinit();
+        self.include_paths.deinit();
+    }
+
+    pub fn addTagList(
+        self: @This(),
+        ctx: *Context,
+        file: *Context.File,
+        tags_to_add: std.ArrayList([]const u8),
+    ) !void {
+        for (tags_to_add.items) |named_tag_text| {
+            log.info("adding tag {s}", .{named_tag_text});
+            if (!self.dry_run) {
+                var maybe_tag = try ctx.fetchNamedTag(named_tag_text, "en");
+                if (maybe_tag) |tag| {
+                    try file.addTag(tag.core);
+                } else {
+                    var tag = try ctx.createNamedTag(named_tag_text, "en", null);
+                    try file.addTag(tag.core);
+                }
+            }
+        }
+    }
+};
 
 pub fn main() anyerror!void {
     const rc = sqlite.c.sqlite3_config(sqlite.c.SQLITE_CONFIG_LOG, manage_main.sqliteLog, @as(?*anyopaque, null));
@@ -497,25 +533,6 @@ pub fn main() anyerror!void {
 
     var args_it = std.process.args();
     _ = args_it.skip();
-
-    const StringList = std.ArrayList([]const u8);
-    const ConfigList = std.ArrayList(TagInferrerConfig);
-
-    const Args = struct {
-        help: bool = false,
-        verbose: bool = false,
-        version: bool = false,
-        default_tags: StringList,
-        wanted_inferrers: ConfigList,
-        include_paths: StringList,
-        filter_indexed_files_only: bool = false,
-
-        pub fn deinit(self: *@This()) void {
-            self.default_tags.deinit();
-            self.wanted_inferrers.deinit();
-            self.include_paths.deinit();
-        }
-    };
 
     const ArgState = enum { None, FetchTag, InferMoreTags };
 
@@ -666,14 +683,22 @@ pub fn main() anyerror!void {
                 try file.addTag(tag_core);
             }
 
+            var tags_to_add = std.ArrayList([]const u8).init(allocator);
+            defer {
+                for (tags_to_add.items) |tag| allocator.free(tag);
+                tags_to_add.deinit();
+            }
+
             for (given_args.wanted_inferrers.items) |inferrer_config, index| {
                 log.info("found config for  {}", .{inferrer_config});
                 var inferrer_ctx = &contexts.items[index];
                 switch (inferrer_ctx.*) {
-                    .regex => |*regex_ctx| try RegexTagInferrer.run(regex_ctx, &ctx, &file),
-                    .audio => |*audio_ctx| try AudioMetadataTagInferrer.run(audio_ctx, &ctx, &file),
+                    .regex => |*regex_ctx| try RegexTagInferrer.run(regex_ctx, &file, &tags_to_add),
+                    .audio => |*audio_ctx| try AudioMetadataTagInferrer.run(audio_ctx, &file, &tags_to_add),
                 }
             }
+
+            try given_args.addTagList(&ctx, &file, tags_to_add);
         } else {
             var walker = try dir.?.walk(allocator);
             defer walker.deinit();
@@ -715,6 +740,12 @@ pub fn main() anyerror!void {
                             errdefer savepoint.rollback();
                             defer savepoint.commit();
 
+                            var tags_to_add = std.ArrayList([]const u8).init(allocator);
+                            defer {
+                                for (tags_to_add.items) |tag| allocator.free(tag);
+                                tags_to_add.deinit();
+                            }
+
                             for (default_tag_cores.items) |tag_core| {
                                 try file.addTag(tag_core);
                             }
@@ -723,10 +754,12 @@ pub fn main() anyerror!void {
                                 log.info("found config for  {}", .{inferrer_config});
                                 var inferrer_ctx = &contexts.items[index];
                                 switch (inferrer_ctx.*) {
-                                    .regex => |*regex_ctx| try RegexTagInferrer.run(regex_ctx, &ctx, &file),
-                                    .audio => |*audio_ctx| try AudioMetadataTagInferrer.run(audio_ctx, &ctx, &file),
+                                    .regex => |*regex_ctx| try RegexTagInferrer.run(regex_ctx, &file, &tags_to_add),
+                                    .audio => |*audio_ctx| try AudioMetadataTagInferrer.run(audio_ctx, &file, &tags_to_add),
                                 }
                             }
+
+                            try given_args.addTagList(&ctx, &file, tags_to_add);
                         }
                     },
                     else => {},
