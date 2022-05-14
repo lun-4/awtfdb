@@ -436,6 +436,18 @@ test "remove action" {
     var tag3 = try ctx.createNamedTag("test tag3", "en", null);
     _ = tag3;
 
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var file = try tmp.dir.createFile("test_file", .{});
+    defer file.close();
+    _ = try file.write("awooga");
+    var indexed_file = try ctx.createFileFromDir(tmp.dir, "test_file");
+    defer indexed_file.deinit();
+
+    // setup file tags to 1, 2, 3
+    try indexed_file.addTag(tag.core);
+    try indexed_file.addTag(tag3.core);
+
     const tag1_core = tag.core.toHex();
     const args = Args{ .ask_confirmation = false };
 
@@ -457,6 +469,13 @@ test "remove action" {
     try std.testing.expectEqual(@as(?Context.Tag, null), maybe_tag2);
     var maybe_tag3 = try ctx.fetchNamedTag("test tag3", "en");
     try std.testing.expect(maybe_tag3 != null);
+
+    // file should only have tag3
+    var tag_cores = try indexed_file.fetchTags(std.testing.allocator);
+    defer std.testing.allocator.free(tag_cores);
+
+    try std.testing.expectEqual(@as(usize, 1), tag_cores.len);
+    try std.testing.expectEqual(tag3.core.id, tag_cores[0].id);
 }
 
 const SearchAction = struct {
