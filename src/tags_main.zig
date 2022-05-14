@@ -431,8 +431,10 @@ test "remove action" {
     defer ctx.deinit();
 
     var tag = try ctx.createNamedTag("test tag", "en", null);
-    var tag2 = try ctx.createNamedTag("test tag2", "en", null);
+    var tag2 = try ctx.createNamedTag("test tag2", "en", tag.core);
     _ = tag2;
+    var tag3 = try ctx.createNamedTag("test tag3", "en", null);
+    _ = tag3;
 
     const tag1_core = tag.core.toHex();
     const args = Args{ .ask_confirmation = false };
@@ -449,10 +451,12 @@ test "remove action" {
     try action.run();
 
     // tag must be gone
-    var maybe_tag = try ctx.fetchNamedTag("test tag1", "en");
-    try std.testing.expectEqual(@as(?Context.Tag, null), maybe_tag);
+    var maybe_tag1 = try ctx.fetchNamedTag("test tag1", "en");
+    try std.testing.expectEqual(@as(?Context.Tag, null), maybe_tag1);
     var maybe_tag2 = try ctx.fetchNamedTag("test tag2", "en");
-    try std.testing.expect(maybe_tag2 != null);
+    try std.testing.expectEqual(@as(?Context.Tag, null), maybe_tag2);
+    var maybe_tag3 = try ctx.fetchNamedTag("test tag3", "en");
+    try std.testing.expect(maybe_tag3 != null);
 }
 
 const SearchAction = struct {
