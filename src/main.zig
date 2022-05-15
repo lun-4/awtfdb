@@ -205,7 +205,7 @@ pub const Context = struct {
         if (maybe_backup) |backup| {
             const result = sqlite.c.sqlite3_backup_step(backup, -1);
             if (result != sqlite.c.SQLITE_DONE) {
-                return sqlite.errors.errorFromResultCode(result);
+                return sqlite.errorFromResultCode(result);
             }
         }
 
@@ -868,7 +868,7 @@ pub const Context = struct {
                 if (current_version < decl_version) {
                     log.info("running migration {d}", .{decl_version});
                     var diags = sqlite.Diagnostics{};
-                    self.db.?.runMulti(decl_sql, .{ .diags = &diags }) catch |err| {
+                    self.db.?.execMulti(decl_sql, .{ .diags = &diags }) catch |err| {
                         log.err("unable to prepare statement, got error {s}. diagnostics: {s}", .{ err, diags });
                         return err;
                     };
