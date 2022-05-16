@@ -113,12 +113,14 @@ pub fn main() anyerror!void {
         defer walker.deinit();
 
         while (try walker.next()) |entry| {
+            if (entry.kind != .File) continue;
             var inner_realpath_buffer: [std.os.PATH_MAX]u8 = undefined;
             const inner_full_path = try entry.dir.realpath(entry.basename, &inner_realpath_buffer);
             const maybe_inner_file = try ctx.fetchFileByPath(inner_full_path);
 
             if (maybe_inner_file) |file| {
                 defer file.deinit();
+                log.info("removing path {s}", .{entry.path});
                 try file.delete();
                 count += 1;
             }
