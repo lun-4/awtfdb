@@ -2,6 +2,8 @@
 
 (wip) a "many-compromises" file indexing system.
 
+understand what's up with it here: https://blog.l4.pm/the-system-is-the-solution
+
 ## project state
 
 v0.1 is released:
