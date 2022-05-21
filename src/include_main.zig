@@ -396,12 +396,28 @@ const AudioMetadataTagInferrer = struct {
         file: *const Context.File,
         tags_to_add: *std.ArrayList([]const u8),
     ) !void {
+        const extension = std.fs.path.extension(file.local_path);
+        const is_mp3 = std.mem.eql(u8, extension, ".mp3");
+        const is_flac = std.mem.eql(u8, extension, ".flac");
+        if (!is_mp3 and !is_flac) {
+            log.err(
+                "file {s} is not mp3 or flac (extension '{s}'), please exclude from paths",
+                .{ file.local_path, extension },
+            );
+            return error.InvalidAudioFile;
+        }
+
         var file_fd = try std.fs.cwd().openFile(file.local_path, .{ .mode = .read_only });
         defer file_fd.close();
 
         var buffered_reader = std.io.bufferedReader(file_fd.reader());
 
-        var audio_meta = try tunez.resolveId3(buffered_reader.reader(), self.allocator);
+        var audio_meta = if (is_mp3)
+            try tunez.resolveId3(buffered_reader.reader(), self.allocator)
+        else if (is_flac)
+            try tunez.resolveFlac(buffered_reader.reader(), self.allocator)
+        else
+            unreachable;
         defer audio_meta.deinit();
 
         try utilAddTag(
