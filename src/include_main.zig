@@ -26,7 +26,7 @@ const HELPTEXT =
     \\					processed using that inferrer's options,
     \\					if any of them don't match, then argument
     \\					processing comes back to normal options
-    \\ 					 (available processors: regex)
+    \\ 					 (available processors: regex, audio)
     \\ --filter-indexed-files-only	only include files already indexed
     \\ 					(useful if you're moving files around
     \\ 					and they're not catched by the
