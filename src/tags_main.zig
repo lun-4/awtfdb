@@ -558,6 +558,7 @@ const Args = struct {
     version: bool = false,
     ask_confirmation: bool = true,
     action_config: ?ActionConfig = null,
+    dry_run: bool = false,
 };
 
 pub fn main() anyerror!void {
@@ -585,6 +586,8 @@ pub fn main() anyerror!void {
             given_args.version = true;
         } else if (std.mem.eql(u8, arg, "--no-confirm")) {
             given_args.ask_confirmation = false;
+        } else if (std.mem.eql(u8, arg, "--dry-run")) {
+            given_args.dry_run = true;
         } else {
             if (std.mem.eql(u8, arg, "search")) {
                 given_args.action_config = try SearchAction.processArgs(&args_it, &given_args);
@@ -623,6 +626,7 @@ pub fn main() anyerror!void {
     defer ctx.deinit();
 
     try ctx.loadDatabase(.{});
+    if (given_args.dry_run) try ctx.turnIntoMemoryDb();
 
     switch (action_config) {
         .Search => |search_config| {
