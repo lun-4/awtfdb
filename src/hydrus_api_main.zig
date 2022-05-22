@@ -623,7 +623,15 @@ fn inferMimetype(response: *http.Response, allocator: std.mem.Allocator, local_p
     const local_path_cstr = try std.cstr.addNullByte(allocator, local_path);
     defer allocator.free(local_path_cstr);
 
-    return MagicResult{ .cookie = cookie, .result = std.mem.span(c.magic_file(cookie, local_path_cstr)) };
+    const mimetype = c.magic_file(cookie, local_path_cstr) orelse {
+        const magic_error_value = c.magic_error(cookie);
+        log.err("failed to infer mimetype: {s}", .{magic_error_value});
+        return error.MimetypeFail;
+    };
+    return MagicResult{
+        .cookie = cookie,
+        .result = std.mem.span(mimetype),
+    };
 }
 
 fn fileThumbnail(
