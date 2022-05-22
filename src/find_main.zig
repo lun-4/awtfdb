@@ -378,7 +378,11 @@ pub const SqlGiver = struct {
         var tags = std.ArrayList([]const u8).init(allocator);
         defer tags.deinit();
 
-        try list.writer().print("select file_hash from tag_files where", .{});
+        if (query.len == 0) {
+            try list.writer().print("select distinct file_hash from tag_files", .{});
+        } else {
+            try list.writer().print("select file_hash from tag_files where", .{});
+        }
 
         while (true) {
             // try to match on every regex with that same order:
