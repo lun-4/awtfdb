@@ -17,6 +17,7 @@ const HELPTEXT =
     \\ 	-h				prints this help and exits
     \\ 	-V				prints version and exits
     \\ 	-r				remove files recursively (in a folder)
+    \\ 	--dry-run			don't edit the index database
     \\
     \\ examples:
     \\  arm path/to/file
@@ -43,6 +44,7 @@ pub fn main() anyerror!void {
         help: bool = false,
         version: bool = false,
         recursive: bool = false,
+        dry_run: bool = false,
         path: ?[]const u8 = null,
     };
 
@@ -55,6 +57,8 @@ pub fn main() anyerror!void {
             given_args.version = true;
         } else if (std.mem.eql(u8, arg, "-r")) {
             given_args.recursive = true;
+        } else if (std.mem.eql(u8, arg, "--dry-run")) {
+            given_args.dry_run = true;
         } else {
             given_args.path = arg;
         }
@@ -84,6 +88,7 @@ pub fn main() anyerror!void {
     defer ctx.deinit();
 
     try ctx.loadDatabase(.{});
+    if (given_args.dry_run) try ctx.turnIntoMemoryDb();
 
     var full_path_buffer: [std.os.PATH_MAX]u8 = undefined;
     const full_path = try std.fs.cwd().realpath(path, &full_path_buffer);
@@ -114,6 +119,7 @@ pub fn main() anyerror!void {
 
         while (try walker.next()) |entry| {
             if (entry.kind != .File) continue;
+            log.debug("checking path {s}", .{entry.path});
             var inner_realpath_buffer: [std.os.PATH_MAX]u8 = undefined;
             const inner_full_path = try entry.dir.realpath(entry.basename, &inner_realpath_buffer);
             const maybe_inner_file = try ctx.fetchFileByPath(inner_full_path);
