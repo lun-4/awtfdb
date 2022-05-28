@@ -118,7 +118,8 @@ const TestUtil = struct {
 
         var file = try tmp.dir.createFile(filename, .{});
         defer file.close();
-        _ = try file.write(test_vector_bytes);
+        const written_bytes = try file.write(test_vector_bytes);
+        std.debug.assert(written_bytes == test_vector_bytes.len);
 
         var indexed_file = try ctx.createFileFromDir(tmp.dir, filename);
         defer indexed_file.deinit();
@@ -163,13 +164,22 @@ const TestUtil = struct {
 
         // assert its all true
 
-        for (found_tags) |value| try std.testing.expect(value);
+        for (found_tags) |value, index| {
+            if (!value) {
+                log.err("tag on index {d} not found", .{index});
+                for (tags_to_add.items) |tag| {
+                    log.err("given tag {s}", .{tag});
+                }
+                return error.TestUnexpectedResult;
+            }
+        }
     }
 };
 
 const TagInferrer = enum {
     regex,
     audio,
+    mime,
 };
 
 const TagInferrerConfig = struct {
@@ -177,12 +187,14 @@ const TagInferrerConfig = struct {
     config: union(TagInferrer) {
         regex: RegexTagInferrer.Config,
         audio: AudioMetadataTagInferrer.Config,
+        mime: MimeTagInferrer.Config,
     },
 };
 
 const TagInferrerContext = union(TagInferrer) {
     regex: RegexTagInferrer.RunContext,
     audio: AudioMetadataTagInferrer.RunContext,
+    mime: MimeTagInferrer.RunContext,
 };
 
 const RegexTagInferrer = struct {
@@ -491,6 +503,193 @@ test "audio tag inferrer" {
     }
 }
 
+const c = @cImport({
+    @cInclude("magic.h");
+});
+
+const MimeCookie = struct {
+    cookie: c.magic_t,
+
+    const Self = @This();
+
+    pub fn init() !Self {
+        var cookie = c.magic_open(
+            c.MAGIC_MIME_TYPE | c.MAGIC_CHECK | c.MAGIC_SYMLINK | c.MAGIC_ERROR,
+        ) orelse return error.MagicCookieFail;
+
+        // TODO use proper path resolution?
+        if (c.magic_check(cookie, "/usr/share/misc/magic") == -1) {
+            const magic_error_value = c.magic_error(cookie);
+            log.err("failed to check magic file: {s}", .{magic_error_value});
+            return error.MagicFileFail;
+        }
+
+        if (c.magic_load(cookie, "/usr/share/misc/magic") == -1) {
+            const magic_error_value = c.magic_error(cookie);
+            log.err("failed to load magic file: {s}", .{magic_error_value});
+            return error.MagicFileFail;
+        }
+        return MimeCookie{ .cookie = cookie };
+    }
+
+    pub fn deinit(self: Self) void {
+        c.magic_close(self.cookie);
+    }
+
+    pub fn inferFile(self: Self, path: [:0]const u8) ![]const u8 {
+        const mimetype = c.magic_file(self.cookie, path) orelse {
+            const magic_error_value = c.magic_error(self.cookie);
+            log.err("failed to infer mimetype: {s}", .{magic_error_value});
+            return error.MimetypeFail;
+        };
+        return std.mem.span(mimetype);
+    }
+};
+
+const MimeTagInferrer = struct {
+    pub const Config = struct {
+        tag_scope_mimetype: ?[]const u8 = null,
+        tag_for_all_images: ?[]const u8 = null,
+        tag_for_all_audio: ?[]const u8 = null,
+        cast_lowercase: bool = true,
+    };
+
+    pub const RunContext = struct {
+        allocator: std.mem.Allocator,
+        cookie: MimeCookie,
+        config: Config,
+    };
+
+    pub fn consumeArguments(args_it: *std.process.ArgIterator) !TagInferrerConfig {
+        var arg_state: enum { None, TagScopeMimetype, TagImage, TagAudio } = .None;
+        var config: TagInferrerConfig = .{
+            .last_argument = undefined,
+            .config = .{ .mime = .{} },
+        };
+        var arg: []const u8 = undefined;
+        while (args_it.next()) |arg_from_loop| {
+            arg = arg_from_loop;
+            log.debug("(mime tag inferrer) state: {} arg: {s}", .{ arg_state, arg });
+
+            switch (arg_state) {
+                .None => {},
+                .TagScopeMimetype => config.config.mime.tag_scope_mimetype = arg,
+                .TagAudio => config.config.mime.tag_for_all_audio = arg,
+                .TagImage => config.config.mime.tag_for_all_images = arg,
+            }
+
+            // if we hit non-None states, we need to know if we're going
+            // to have another configuration parameter or not
+            //
+            // and we do this by next()'ing into the next argument
+            if (arg_state != .None) {
+                arg = args_it.next() orelse break;
+                arg_state = .None;
+            }
+            log.debug("(mime tag inferrer, main loop) state: {s} arg: {s}", .{ arg_state, arg });
+
+            if (std.mem.eql(u8, arg, "--mime-tag-scope")) {
+                arg_state = .TagScopeMimetype;
+            } else if (std.mem.eql(u8, arg, "--image-tag")) {
+                arg_state = .TagImage;
+            } else if (std.mem.eql(u8, arg, "--audio-tag")) {
+                arg_state = .TagAudio;
+            } else {
+                config.last_argument = arg;
+                break;
+            }
+        }
+
+        return config;
+    }
+
+    pub fn init(config: TagInferrerConfig, allocator: std.mem.Allocator) !RunContext {
+        std.debug.assert(c.MAGIC_VERSION == c.magic_version());
+        log.debug("version: {d}", .{c.magic_version()});
+        return RunContext{
+            .allocator = allocator,
+            .cookie = try MimeCookie.init(),
+            .config = config.config.mime,
+        };
+    }
+
+    pub fn deinit(self: *RunContext) void {
+        self.cookie.deinit();
+    }
+
+    pub fn run(
+        self: *RunContext,
+        file: *const Context.File,
+        tags_to_add: *std.ArrayList([]const u8),
+    ) !void {
+        _ = self;
+        _ = tags_to_add;
+
+        const path_cstr = try std.cstr.addNullByte(self.allocator, file.local_path);
+        defer self.allocator.free(path_cstr);
+
+        var mimetype = try self.cookie.inferFile(path_cstr);
+        log.debug("mime: {s}", .{mimetype});
+
+        try utilAddTag(
+            self.allocator,
+            self.config,
+            mimetype,
+            self.config.tag_scope_mimetype,
+            tags_to_add,
+        );
+
+        if (std.mem.startsWith(u8, mimetype, "image/")) {
+            try utilAddTag(
+                self.allocator,
+                self.config,
+                self.config.tag_for_all_images,
+                null,
+                tags_to_add,
+            );
+        }
+
+        if (std.mem.startsWith(u8, mimetype, "audio/")) {
+            try utilAddTag(
+                self.allocator,
+                self.config,
+                self.config.tag_for_all_audio,
+                null,
+                tags_to_add,
+            );
+        }
+    }
+};
+
+test "mime tag inferrer" {
+    var ctx = try manage_main.makeTestContext();
+    defer ctx.deinit();
+
+    const test_vector_bytes = @embedFile("./test_vectors/audio_test_vector.mp3");
+
+    const config = MimeTagInferrer.Config{
+        .tag_scope_mimetype = "mime:",
+        .tag_for_all_audio = "funky",
+    };
+    const allocator = std.testing.allocator;
+
+    var context = try MimeTagInferrer.init(
+        .{ .last_argument = undefined, .config = .{ .mime = config } },
+        allocator,
+    );
+    defer MimeTagInferrer.deinit(&context);
+
+    try TestUtil.runTestInferrerFile(
+        allocator,
+        "test.mp3",
+        test_vector_bytes,
+        MimeTagInferrer,
+        .{&context},
+        &ctx,
+        .{ "mime:audio/mpeg", "funky" },
+    );
+}
+
 const StringList = std.ArrayList([]const u8);
 const ConfigList = std.ArrayList(TagInferrerConfig);
 
@@ -570,6 +769,7 @@ pub fn main() anyerror!void {
                 var inferrer_config = switch (tag_inferrer) {
                     .regex => try RegexTagInferrer.consumeArguments(&args_it),
                     .audio => try AudioMetadataTagInferrer.consumeArguments(&args_it),
+                    .mime => try MimeTagInferrer.consumeArguments(&args_it),
                 };
 
                 try given_args.wanted_inferrers.append(inferrer_config);
@@ -666,11 +866,13 @@ pub fn main() anyerror!void {
         switch (inferrer_config.config) {
             .regex => try contexts.append(.{ .regex = try RegexTagInferrer.init(inferrer_config, allocator) }),
             .audio => try contexts.append(.{ .audio = try AudioMetadataTagInferrer.init(inferrer_config, allocator) }),
+            .mime => try contexts.append(.{ .mime = try MimeTagInferrer.init(inferrer_config, allocator) }),
         }
     }
     defer for (contexts.items) |*context| switch (context.*) {
         .regex => |*regex_ctx| RegexTagInferrer.deinit(regex_ctx),
         .audio => |*audio_ctx| AudioMetadataTagInferrer.deinit(audio_ctx),
+        .mime => |*mime_ctx| MimeTagInferrer.deinit(mime_ctx),
     };
 
     for (given_args.include_paths.items) |path_to_include| {
@@ -708,6 +910,7 @@ pub fn main() anyerror!void {
                 switch (inferrer_ctx.*) {
                     .regex => |*regex_ctx| try RegexTagInferrer.run(regex_ctx, &file, &tags_to_add),
                     .audio => |*audio_ctx| try AudioMetadataTagInferrer.run(audio_ctx, &file, &tags_to_add),
+                    .mime => |*mime_ctx| try MimeTagInferrer.run(mime_ctx, &file, &tags_to_add),
                 }
             }
 
@@ -769,6 +972,7 @@ pub fn main() anyerror!void {
                                 switch (inferrer_ctx.*) {
                                     .regex => |*regex_ctx| try RegexTagInferrer.run(regex_ctx, &file, &tags_to_add),
                                     .audio => |*audio_ctx| try AudioMetadataTagInferrer.run(audio_ctx, &file, &tags_to_add),
+                                    .mime => |*mime_ctx| try MimeTagInferrer.run(mime_ctx, &file, &tags_to_add),
                                 }
                             }
 
