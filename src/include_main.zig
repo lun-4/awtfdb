@@ -137,6 +137,11 @@ const TestUtil = struct {
         // actually run inferrer
         try @call(.{}, InferrerType.run, first_args ++ .{ &indexed_file, &tags_to_add });
 
+        try addTagList(ctx, &indexed_file, tags_to_add);
+
+        const hashlist_after = try indexed_file.fetchTags(allocator);
+        defer allocator.free(hashlist_after);
+
         var found_tags: [wanted_tags.len]bool = undefined;
         // initialize
         for (found_tags) |_, idx| found_tags[idx] = false;
@@ -167,12 +172,8 @@ const TestUtil = struct {
             }
         }
 
-        try std.testing.expectEqual(@as(usize, wanted_tags.len), tags_to_add.items.len);
-        try addTagList(ctx, &indexed_file, tags_to_add);
-
-        const hashlist_after = try indexed_file.fetchTags(allocator);
-        defer allocator.free(hashlist_after);
         try std.testing.expectEqual(@as(usize, wanted_tags.len), hashlist_after.len);
+        try std.testing.expectEqual(@as(usize, wanted_tags.len), tags_to_add.items.len);
     }
 };
 
