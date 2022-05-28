@@ -164,7 +164,15 @@ const TestUtil = struct {
 
         // assert its all true
 
-        for (found_tags) |value| try std.testing.expect(value);
+        for (found_tags) |value, index| {
+            if (!value) {
+                log.err("tag on index {d} not found", .{index});
+                for (tags_to_add.items) |tag| {
+                    log.err("given tag {s}", .{tag});
+                }
+                return error.TestUnexpectedResult;
+            }
+        }
     }
 };
 
@@ -499,56 +507,56 @@ const c = @cImport({
     @cInclude("magic.h");
 });
 
-const MimeResult = struct {
+const MimeCookie = struct {
     cookie: c.magic_t,
-    result: []const u8,
 
-    pub fn deinit(self: @This()) void {
+    const Self = @This();
+
+    pub fn init() !Self {
+        var cookie = c.magic_open(
+            c.MAGIC_MIME_TYPE | c.MAGIC_CHECK | c.MAGIC_SYMLINK | c.MAGIC_ERROR,
+        ) orelse return error.MagicCookieFail;
+
+        // TODO use proper path resolution?
+        if (c.magic_check(cookie, "/usr/share/misc/magic") == -1) {
+            const magic_error_value = c.magic_error(cookie);
+            log.err("failed to check magic file: {s}", .{magic_error_value});
+            return error.MagicFileFail;
+        }
+
+        if (c.magic_load(cookie, "/usr/share/misc/magic") == -1) {
+            const magic_error_value = c.magic_error(cookie);
+            log.err("failed to load magic file: {s}", .{magic_error_value});
+            return error.MagicFileFail;
+        }
+        return MimeCookie{ .cookie = cookie };
+    }
+
+    pub fn deinit(self: Self) void {
         c.magic_close(self.cookie);
     }
+
+    pub fn inferFile(self: Self, path: [:0]const u8) ![]const u8 {
+        const mimetype = c.magic_file(self.cookie, path) orelse {
+            const magic_error_value = c.magic_error(self.cookie);
+            log.err("failed to infer mimetype: {s}", .{magic_error_value});
+            return error.MimetypeFail;
+        };
+        return std.mem.span(mimetype);
+    }
 };
-
-fn inferMimetype(path: []const u8, allocator: std.mem.Allocator) !MimeResult {
-    var cookie = c.magic_open(
-        c.MAGIC_MIME | c.MAGIC_CHECK | c.MAGIC_SYMLINK | c.MAGIC_ERROR,
-    ) orelse return error.MagicCookieFail;
-
-    if (c.magic_check(cookie, null) == -1) {
-        const magic_error_value = c.magic_error(cookie);
-        log.err("failed to check magic file: {s}", .{magic_error_value});
-        return error.MagicFileFail;
-    }
-
-    if (c.magic_load(cookie, null) == -1) {
-        const magic_error_value = c.magic_error(cookie);
-        log.err("failed to load magic file: {s}", .{magic_error_value});
-        return error.MagicFileFail;
-    }
-
-    const local_path_cstr = try std.cstr.addNullByte(allocator, path);
-    defer allocator.free(local_path_cstr);
-    log.warn("test: {s}", .{local_path_cstr});
-
-    const mimetype = c.magic_file(cookie, local_path_cstr) orelse {
-        const magic_error_value = c.magic_error(cookie);
-        log.err("failed to infer mimetype: {s}", .{magic_error_value});
-        return error.MimetypeFail;
-    };
-    return MimeResult{
-        .cookie = cookie,
-        .result = std.mem.span(mimetype),
-    };
-}
 
 const MimeTagInferrer = struct {
     pub const Config = struct {
         tag_scope_mimetype: ?[]const u8 = null,
         tag_for_all_images: ?[]const u8 = null,
         tag_for_all_audio: ?[]const u8 = null,
+        cast_lowercase: bool = true,
     };
 
     pub const RunContext = struct {
         allocator: std.mem.Allocator,
+        cookie: MimeCookie,
         config: Config,
     };
 
@@ -597,15 +605,16 @@ const MimeTagInferrer = struct {
 
     pub fn init(config: TagInferrerConfig, allocator: std.mem.Allocator) !RunContext {
         std.debug.assert(c.MAGIC_VERSION == c.magic_version());
-        std.log.err("version: {d}", .{c.magic_version()});
+        log.debug("version: {d}", .{c.magic_version()});
         return RunContext{
             .allocator = allocator,
+            .cookie = try MimeCookie.init(),
             .config = config.config.mime,
         };
     }
 
     pub fn deinit(self: *RunContext) void {
-        _ = self;
+        self.cookie.deinit();
     }
 
     pub fn run(
@@ -615,18 +624,40 @@ const MimeTagInferrer = struct {
     ) !void {
         _ = self;
         _ = tags_to_add;
-        var mime_result = try inferMimetype(file.local_path, self.allocator);
-        defer mime_result.deinit();
 
-        std.log.err("mime: {s}", .{mime_result.result});
+        const path_cstr = try std.cstr.addNullByte(self.allocator, file.local_path);
+        defer self.allocator.free(path_cstr);
 
-        //try utilAddTag(
-        //    self.allocator,
-        //    self.config,
-        //    audio_meta.maybe_track_album,
-        //    self.config.tag_scope_album,
-        //    tags_to_add,
-        //);
+        var mimetype = try self.cookie.inferFile(path_cstr);
+        log.debug("mime: {s}", .{mimetype});
+
+        try utilAddTag(
+            self.allocator,
+            self.config,
+            mimetype,
+            self.config.tag_scope_mimetype,
+            tags_to_add,
+        );
+
+        if (std.mem.startsWith(u8, mimetype, "image/")) {
+            try utilAddTag(
+                self.allocator,
+                self.config,
+                self.config.tag_for_all_images,
+                null,
+                tags_to_add,
+            );
+        }
+
+        if (std.mem.startsWith(u8, mimetype, "audio/")) {
+            try utilAddTag(
+                self.allocator,
+                self.config,
+                self.config.tag_for_all_audio,
+                null,
+                tags_to_add,
+            );
+        }
     }
 };
 
@@ -636,7 +667,10 @@ test "mime tag inferrer" {
 
     const test_vector_bytes = @embedFile("./test_vectors/audio_test_vector.mp3");
 
-    const config = MimeTagInferrer.Config{};
+    const config = MimeTagInferrer.Config{
+        .tag_scope_mimetype = "mime:",
+        .tag_for_all_audio = "funky",
+    };
     const allocator = std.testing.allocator;
 
     var context = try MimeTagInferrer.init(
@@ -652,7 +686,7 @@ test "mime tag inferrer" {
         MimeTagInferrer,
         .{&context},
         &ctx,
-        .{},
+        .{ "mime:audio/mpeg", "funky" },
     );
 }
 
