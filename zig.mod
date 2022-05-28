@@ -7,7 +7,8 @@ root_dependencies:
   - src: git https://github.com/kivikakk/libpcre.zig
   - src: git https://github.com/Luukdegram/apple_pie
   - src: git https://github.com/truemedian/hzzp
-  - src: git https://github.com/lun-4/libmagic-5.41 branch-luna-built-541
+  #- src: git https://github.com/lun-4/libmagic-5.41 branch-luna-built-541
+  - src: system_lib magic
   - src: system_lib z
   - src: system_lib GraphicsMagick
   - src: system_lib GraphicsMagickWand
