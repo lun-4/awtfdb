@@ -4,5 +4,5 @@ git https://github.com/kivikakk/libpcre.zig commit-5e3b58e151530b59e7761e28fc448
 git https://github.com/nektro/pcre-8.45 commit-10bc0a2fd91f3a40be9825738661f8748eb60e14
 git https://github.com/Luukdegram/apple_pie commit-55b25cf50018fe314606765ca984a0a841743eb5
 git https://github.com/truemedian/hzzp commit-bf5aaf224e94561e035a631c3c40fbf02faa27d2
-git https://github.com/lun-4/libmagic-5.41 commit-c84829f928e73196f0d9e7e6cc6555e5813dfda8
+git https://github.com/lun-4/libmagic-5.41 commit-4a28603f2cd6df239ee3dabe3aba206ad294a45c
 git https://github.com/haze/tunez commit-fb600bb439c0e19e44e4e37a4233f837d1bb663c
