@@ -137,13 +137,6 @@ const TestUtil = struct {
         // actually run inferrer
         try @call(.{}, InferrerType.run, first_args ++ .{ &indexed_file, &tags_to_add });
 
-        try std.testing.expectEqual(@as(usize, wanted_tags.len), tags_to_add.items.len);
-        try addTagList(ctx, &indexed_file, tags_to_add);
-
-        const hashlist_after = try indexed_file.fetchTags(allocator);
-        defer allocator.free(hashlist_after);
-        try std.testing.expectEqual(@as(usize, wanted_tags.len), hashlist_after.len);
-
         var found_tags: [wanted_tags.len]bool = undefined;
         // initialize
         for (found_tags) |_, idx| found_tags[idx] = false;
@@ -173,6 +166,13 @@ const TestUtil = struct {
                 return error.TestUnexpectedResult;
             }
         }
+
+        try std.testing.expectEqual(@as(usize, wanted_tags.len), tags_to_add.items.len);
+        try addTagList(ctx, &indexed_file, tags_to_add);
+
+        const hashlist_after = try indexed_file.fetchTags(allocator);
+        defer allocator.free(hashlist_after);
+        try std.testing.expectEqual(@as(usize, wanted_tags.len), hashlist_after.len);
     }
 };
 
@@ -522,6 +522,18 @@ const MimeCookie = struct {
         var cookie = c.magic_open(
             c.MAGIC_MIME_TYPE | c.MAGIC_CHECK | c.MAGIC_SYMLINK | c.MAGIC_ERROR,
         ) orelse return error.MagicCookieFail;
+
+        // this attempts to find the path for the magic db file dynamically
+        // through some paths i have found around the systems i have.
+        //
+        // libmagic's build process enables you to override the default
+        // path to the magic file, which means that doing a static build of it
+        // means it won't work on a separate system since it doesn't have
+        // that one hardcoded in.
+        //
+        // a future iteration might bundle the magic database with the
+        // executable through possibly, @embedFile, then dump that into a
+        // temporary file for super compatibility with windows and macos
 
         var found_prefix: ?usize = null;
 
