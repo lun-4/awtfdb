@@ -1,9 +1,14 @@
+import asyncio
 import datetime
 import re
 import logging
+import mimetypes
+from pathlib import Path
 
-from quart import Quart, request, send_file
+import magic
 import aiosqlite
+from quart import Quart, request, send_file
+from PIL import Image
 
 
 log = logging.getLogger(__name__)
@@ -12,6 +17,7 @@ app = Quart(__name__)
 
 @app.before_serving
 async def app_before_serving():
+    app.loop = asyncio.get_running_loop()
     app.db = await aiosqlite.connect("/home/luna/awtf.db")
 
 
@@ -313,6 +319,12 @@ async def content(file_id: int):
     return await send_file(file_local_path)
 
 
+def thumbnail_given_path(path: Path, thumbnail_path: Path) -> Path:
+    with Image.open(path) as file_as_image:
+        file_as_image.thumbnail((500, 500))
+        file_as_image.save(thumbnail_path)
+
+
 @app.get("/_awtfdb_thumbnails/<int:file_id>")
 async def thumbnail(file_id: int):
     file_local_path = (
@@ -321,7 +333,21 @@ async def thumbnail(file_id: int):
             (file_id,),
         )
     )[0][0]
-    return await send_file(file_local_path)
+
+    mimetype = magic.from_file(file_local_path, mime=True)
+    extension = mimetypes.guess_extension(mimetype)
+
+    thumbnail_folder = Path("/tmp") / "awtfdb-szurubooru-thumbnails"
+    thumbnail_folder.mkdir(exist_ok=True)
+    thumbnail_path = thumbnail_folder / f"{file_id}{extension}"
+
+    if mimetype.startswith("image/"):
+        await app.loop.run_in_executor(
+            None, thumbnail_given_path, file_local_path, thumbnail_path
+        )
+        return await send_file(thumbnail_path)
+    else:
+        return await send_file(file_local_path)
 
 
 @app.get("/posts/")
@@ -406,6 +432,13 @@ async def fetch_file_entity(file_id: int) -> dict:
                 }
             )
 
+    file_local_path = (
+        await app.db.execute_fetchall(
+            "select local_path from files where file_hash = ?",
+            (file_id,),
+        )
+    )[0][0]
+
     return {
         "version": 1,
         "version": 1,
@@ -438,7 +471,7 @@ async def fetch_file_entity(file_id: int) -> dict:
         "lastFeatureTime": "1900-01-01T00:00:00Z",
         "favoritedBy": [],
         "hasCustomThumbnail": True,
-        "mimeType": "image/png",
+        "mimeType": magic.from_file(file_local_path, mime=True),
         "comments": [],
         "pools": [],
     }
