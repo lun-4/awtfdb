@@ -21,6 +21,7 @@ async def app_before_serving():
     app.loop = asyncio.get_running_loop()
     app.db = await aiosqlite.connect("/home/luna/awtf.db")
     app.thumbnailing_tasks = {}
+    app.video_thumbnail_semaphore = asyncio.Semaphore(5)
 
 
 @app.after_serving
@@ -323,15 +324,19 @@ async def content(file_id: int):
 
 def blocking_thumbnail_image(path, thumbnail_path):
     with Image.open(path) as file_as_image:
-        file_as_image.thumbnail((500, 500))
+        file_as_image.thumbnail((200, 200))
         file_as_image.save(thumbnail_path)
 
 
 async def thumbnail_given_path(path: Path, thumbnail_path: Path):
-    await loop.run_in_executor(None, blocking_thumbnail_image, path, thumbnail_path)
+    await app.loop.run_in_executor(None, blocking_thumbnail_image, path, thumbnail_path)
 
 
-MIME_MAPPING = {"video/x-matroska": ".mkv"}
+MIME_MAPPING = {
+    "video/x-matroska": ".mkv",
+    "audio/x-m4a": ".m4a",
+    "application/vnd.oasis.opendocument.text": ".odt",
+}
 
 
 def get_extension(mimetype):
@@ -343,6 +348,11 @@ def get_extension(mimetype):
 
 
 async def thumbnail_given_video(file_local_path, thumbnail_path):
+    async with app.video_thumbnail_semaphore:
+        await _actually_thumbnail_given_video(file_local_path, thumbnail_path)
+
+
+async def _actually_thumbnail_given_video(file_local_path, thumbnail_path):
     proc = await asyncio.create_subprocess_shell(
         "ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1"
         f" {shlex.quote(file_local_path)}",
@@ -583,8 +593,8 @@ async def fetch_file_entity(file_id: int) -> dict:
         "type": file_type,
         "checksum": "test",
         "checksumMD5": "test",
-        "canvasWidth": int(canvas_size[0]),
-        "canvasHeight": int(canvas_size[1]),
+        "canvasWidth": int(canvas_size[0]) if canvas_size[0] else None,
+        "canvasHeight": int(canvas_size[1]) if canvas_size[1] else None,
         "contentUrl": f"api/_awtfdb_content/{file_id}",
         "thumbnailUrl": f"api/_awtfdb_thumbnails/{file_id}",
         "flags": [],
