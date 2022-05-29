@@ -329,7 +329,7 @@ async def posts_fetch():
     # GET /posts/?offset=<initial-pos>&limit=<page-size>&query=<query>
     # GET /tags/?offset=<initial-pos>&limit=<page-size>&query=<query>
     print(request.args)
-    query = request.args["query"]
+    query = request.args.get("query", "")
     offset = int(request.args.get("offset", 0))
     limit = int(request.args.get("limit", 15))
     result = compile_query(query)
