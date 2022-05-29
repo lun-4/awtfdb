@@ -351,9 +351,14 @@ async def posts_fetch():
     log.debug("tags: %r", result.tags)
     log.debug("mapped: %r", mapped_tag_args)
     tag_rows = await app.db.execute(
+        result.query + f" limit {limit} offset {offset}",
+        mapped_tag_args,
+    )
+    total_rows_count = await app.db.execute(
         result.query,
         mapped_tag_args,
     )
+    total_files = len(await total_rows_count.fetchall())
 
     rows = []
     async for file_hash_row in tag_rows:
@@ -432,8 +437,8 @@ async def posts_fetch():
     return {
         "query": query,
         "offset": offset,
-        "limit": 10000,
-        "total": len(rows),
+        "limit": limit,
+        "total": total_files,
         "results": rows,
     }
 
