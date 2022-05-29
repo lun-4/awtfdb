@@ -363,76 +363,7 @@ async def posts_fetch():
     rows = []
     async for file_hash_row in tag_rows:
         file_hash = file_hash_row[0]
-
-        file_tags = []
-
-        file_tags_cursor = await app.db.execute(
-            "select core_hash from tag_files where file_hash = ?",
-            (file_hash,),
-        )
-        async for core_hash in file_tags_cursor:
-            named_tag_cursor = await app.db.execute(
-                """
-            select tag_text
-            from tag_names
-            where tag_names.core_hash = ?
-            """,
-                (core_hash[0],),
-            )
-
-            usages_cursor = await app.db.execute(
-                "select count(*) from tag_files where core_hash = ?",
-                (core_hash[0],),
-            )
-            usages = (await usages_cursor.fetchone())[0]
-
-            async for named_tag in named_tag_cursor:
-                file_tags.append(
-                    {
-                        "names": [named_tag[0]],
-                        "category": "default",
-                        "usages": usages,
-                    }
-                )
-
-        rows.append(
-            {
-                "version": 1,
-                "version": 1,
-                "id": file_hash,
-                "creationTime": "1900-01-01T00:00:00Z",
-                "lastEditTime": "1900-01-01T00:00:00Z",
-                "safety": "safe",
-                "source": None,
-                "type": "image",
-                "checksum": "test",
-                "checksumMD5": "test",
-                "canvasWidth": 500,
-                "canvasHeight": 500,
-                "contentUrl": f"api/_awtfdb_content/{file_hash}",
-                "thumbnailUrl": f"api/_awtfdb_thumbnails/{file_hash}",
-                "flags": [],
-                "tags": file_tags,
-                "relations": [],
-                "notes": [],
-                "user": {"name": "root", "avatarUrl": None},
-                "score": 0,
-                "ownScore": 0,
-                "ownFavorite": False,
-                "tagCount": len(file_tags),
-                "favoriteCount": 0,
-                "commentCount": 0,
-                "noteCount": 0,
-                "featureCount": 0,
-                "relationCount": 0,
-                "lastFeatureTime": "1900-01-01T00:00:00Z",
-                "favoritedBy": [],
-                "hasCustomThumbnail": True,
-                "mimeType": "image/png",
-                "comments": [],
-                "pools": [],
-            }
-        )
+        rows.append(await fetch_file_entity(file_hash))
 
     return {
         "query": query,
@@ -440,6 +371,113 @@ async def posts_fetch():
         "limit": limit,
         "total": total_files,
         "results": rows,
+    }
+
+
+async def fetch_file_entity(file_id: int) -> dict:
+    file_tags = []
+
+    file_tags_cursor = await app.db.execute(
+        "select core_hash from tag_files where file_hash = ?",
+        (file_id,),
+    )
+    async for core_hash in file_tags_cursor:
+        named_tag_cursor = await app.db.execute(
+            """
+        select tag_text
+        from tag_names
+        where tag_names.core_hash = ?
+        """,
+            (core_hash[0],),
+        )
+
+        usages_cursor = await app.db.execute(
+            "select count(*) from tag_files where core_hash = ?",
+            (core_hash[0],),
+        )
+        usages = (await usages_cursor.fetchone())[0]
+
+        async for named_tag in named_tag_cursor:
+            file_tags.append(
+                {
+                    "names": [named_tag[0]],
+                    "category": "default",
+                    "usages": usages,
+                }
+            )
+
+    return {
+        "version": 1,
+        "version": 1,
+        "id": file_id,
+        "creationTime": "1900-01-01T00:00:00Z",
+        "lastEditTime": "1900-01-01T00:00:00Z",
+        "safety": "safe",
+        "source": None,
+        "type": "image",
+        "checksum": "test",
+        "checksumMD5": "test",
+        "canvasWidth": 500,
+        "canvasHeight": 500,
+        "contentUrl": f"api/_awtfdb_content/{file_id}",
+        "thumbnailUrl": f"api/_awtfdb_thumbnails/{file_id}",
+        "flags": [],
+        "tags": file_tags,
+        "relations": [],
+        "notes": [],
+        "user": {"name": "root", "avatarUrl": None},
+        "score": 0,
+        "ownScore": 0,
+        "ownFavorite": False,
+        "tagCount": len(file_tags),
+        "favoriteCount": 0,
+        "commentCount": 0,
+        "noteCount": 0,
+        "featureCount": 0,
+        "relationCount": 0,
+        "lastFeatureTime": "1900-01-01T00:00:00Z",
+        "favoritedBy": [],
+        "hasCustomThumbnail": True,
+        "mimeType": "image/png",
+        "comments": [],
+        "pools": [],
+    }
+
+
+@app.get("/post/<int:file_id>")
+async def single_post_fetch(file_id: int):
+    # GET /post/<id>
+    return await fetch_file_entity(file_id)
+
+
+@app.get("/post/<int:file_id>/around/")
+async def single_post_fetch_around(file_id: int):
+    # GET /post/<id>
+    prev_cursor = await app.db.execute(
+        """
+        select file_hash
+        from files
+        where file_hash < ?
+        order by file_hash desc
+        limit 1
+        """,
+        (file_id,),
+    )
+    next_cursor = await app.db.execute(
+        """
+        select file_hash
+        from files
+        where file_hash > ?
+        order by file_hash asc
+        limit 1
+        """,
+        (file_id,),
+    )
+    prev_id = (await prev_cursor.fetchone())[0]
+    next_id = (await next_cursor.fetchone())[0]
+    return {
+        "prev": await fetch_file_entity(prev_id),
+        "next": await fetch_file_entity(next_id),
     }
 
 
