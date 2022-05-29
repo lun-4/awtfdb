@@ -1,0 +1,2 @@
+quart==0.17.0
+aiosqlite==0.17.0
