@@ -1,3 +1,4 @@
+import shlex
 import asyncio
 import datetime
 import re
@@ -19,6 +20,7 @@ app = Quart(__name__)
 async def app_before_serving():
     app.loop = asyncio.get_running_loop()
     app.db = await aiosqlite.connect("/home/luna/awtf.db")
+    app.thumbnailing_tasks = {}
 
 
 @app.after_serving
@@ -319,10 +321,86 @@ async def content(file_id: int):
     return await send_file(file_local_path)
 
 
-def thumbnail_given_path(path: Path, thumbnail_path: Path) -> Path:
+def blocking_thumbnail_image(path, thumbnail_path):
     with Image.open(path) as file_as_image:
         file_as_image.thumbnail((500, 500))
         file_as_image.save(thumbnail_path)
+
+
+async def thumbnail_given_path(path: Path, thumbnail_path: Path):
+    await loop.run_in_executor(None, blocking_thumbnail_image, path, thumbnail_path)
+
+
+MIME_MAPPING = {"video/x-matroska": ".mkv"}
+
+
+def get_extension(mimetype):
+    from_mimetypes = mimetypes.guess_extension(mimetype)
+    if from_mimetypes:
+        return from_mimetypes
+
+    return MIME_MAPPING[mimetype]
+
+
+async def thumbnail_given_video(file_local_path, thumbnail_path):
+    proc = await asyncio.create_subprocess_shell(
+        "ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1"
+        f" {shlex.quote(file_local_path)}",
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    out, err = await proc.communicate()
+    out, err = out.strip().decode(), err.decode()
+    log.info("out: %r, err: %r", out, err)
+    assert proc.returncode == 0
+
+    total_seconds = int(float(out))
+    total_5percent_seconds = total_seconds // 20
+    time_5percent_minutes = total_5percent_seconds // 60
+    time_5percent_seconds = total_5percent_seconds - (60 * time_5percent_minutes)
+
+    proc = await asyncio.create_subprocess_shell(
+        " ".join(
+            [
+                "ffmpeg",
+                "-n",
+                "-i",
+                shlex.quote(file_local_path),
+                f"-ss 00:{time_5percent_minutes:02d}:{time_5percent_seconds}.000",
+                "-vframes 1",
+                shlex.quote(str(thumbnail_path)),
+            ]
+        ),
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    out, err = await proc.communicate()
+    out, err = out.decode(), err.decode()
+    log.info("out: %r, err: %r", out, err)
+    assert proc.returncode == 0
+
+
+async def submit_thumbnail(file_id, mimetype, file_local_path, thumbnail_path):
+    if mimetype.startswith("image/"):
+        thumbnailing_function = thumbnail_given_path
+    elif mimetype.startswith("video/"):
+        thumbnail_path = thumbnail_path.parent / f"{file_id}.png"
+        thumbnailing_function = thumbnail_given_video
+    else:
+        return None
+
+    task = app.thumbnailing_tasks.get(file_id)
+    if not task:
+        coro = thumbnailing_function(file_local_path, thumbnail_path)
+        task = app.loop.create_task(coro)
+        app.thumbnailing_tasks[file_id] = task
+
+    await asyncio.gather(task)
+    try:
+        app.thumbnailing_tasks.pop(file_id)
+    except KeyError:
+        pass
+    return thumbnail_path
 
 
 @app.get("/_awtfdb_thumbnails/<int:file_id>")
@@ -335,16 +413,21 @@ async def thumbnail(file_id: int):
     )[0][0]
 
     mimetype = magic.from_file(file_local_path, mime=True)
-    extension = mimetypes.guess_extension(mimetype)
+    extension = get_extension(mimetype)
+    log.info("mime %s ext %r", mimetype, extension)
+    assert extension is not None
 
     thumbnail_folder = Path("/tmp") / "awtfdb-szurubooru-thumbnails"
     thumbnail_folder.mkdir(exist_ok=True)
     thumbnail_path = thumbnail_folder / f"{file_id}{extension}"
 
-    if mimetype.startswith("image/"):
-        await app.loop.run_in_executor(
-            None, thumbnail_given_path, file_local_path, thumbnail_path
-        )
+    if thumbnail_path.exists():
+        return await send_file(thumbnail_path)
+
+    thumbnail_path = await submit_thumbnail(
+        file_id, mimetype, file_local_path, thumbnail_path
+    )
+    if thumbnail_path:
         return await send_file(thumbnail_path)
     else:
         return await send_file(file_local_path)
@@ -371,7 +454,12 @@ async def posts_fetch():
         """,
             (tag_name,),
         )
-        mapped_tag_args.append((await tag_name_cursor.fetchone())[0])
+
+        tag_name_id = await tag_name_cursor.fetchone()
+        if tag_name_id is None:
+            raise Exception(f"tag not found {tag_name!r}")
+
+        mapped_tag_args.append(tag_name_id[0])
 
     log.debug("query: %r", result.query)
     log.debug("tags: %r", result.tags)
@@ -398,6 +486,11 @@ async def posts_fetch():
         "total": total_files,
         "results": rows,
     }
+
+
+def extract_canvas_size(path: Path) -> tuple:
+    with Image.open(path) as im:
+        return im.width, im.height
 
 
 async def fetch_file_entity(file_id: int) -> dict:
@@ -439,6 +532,46 @@ async def fetch_file_entity(file_id: int) -> dict:
         )
     )[0][0]
 
+    file_mime = magic.from_file(file_local_path, mime=True)
+    canvas_size = (None, None)
+
+    file_type = None
+
+    if file_mime.startswith("image/"):
+        file_type = "image"
+        if file_mime == "image/gif":
+            file_type = "animation"
+        canvas_size = await app.loop.run_in_executor(
+            None, extract_canvas_size, file_local_path
+        )
+
+    elif file_mime.startswith("video/"):
+        file_type = "video"
+        proc = await asyncio.create_subprocess_shell(
+            " ".join(
+                [
+                    "ffprobe",
+                    "-v",
+                    "error",
+                    "-select_streams",
+                    "v:0",
+                    "-show_entries",
+                    "stream=width,height",
+                    "-of",
+                    "csv=s=x:p=0",
+                    shlex.quote(file_local_path),
+                ]
+            ),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        out, err = await proc.communicate()
+        assert proc.returncode == 0
+        out, err = out.decode().strip(), err.decode()
+        log.info("out: %r, err: %r", out, err)
+        canvas_size = out.split("x")
+        assert len(canvas_size) == 2
+
     return {
         "version": 1,
         "version": 1,
@@ -447,11 +580,11 @@ async def fetch_file_entity(file_id: int) -> dict:
         "lastEditTime": "1900-01-01T00:00:00Z",
         "safety": "safe",
         "source": None,
-        "type": "image",
+        "type": file_type,
         "checksum": "test",
         "checksumMD5": "test",
-        "canvasWidth": 500,
-        "canvasHeight": 500,
+        "canvasWidth": int(canvas_size[0]),
+        "canvasHeight": int(canvas_size[1]),
         "contentUrl": f"api/_awtfdb_content/{file_id}",
         "thumbnailUrl": f"api/_awtfdb_thumbnails/{file_id}",
         "flags": [],
@@ -471,7 +604,7 @@ async def fetch_file_entity(file_id: int) -> dict:
         "lastFeatureTime": "1900-01-01T00:00:00Z",
         "favoritedBy": [],
         "hasCustomThumbnail": True,
-        "mimeType": magic.from_file(file_local_path, mime=True),
+        "mimeType": file_mime,
         "comments": [],
         "pools": [],
     }
@@ -546,6 +679,7 @@ async def pool_categories():
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
     app.run(
         host="0.0.0.0",
         port=6666,
