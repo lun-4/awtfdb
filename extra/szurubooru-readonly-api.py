@@ -5,10 +5,11 @@ import re
 import logging
 import mimetypes
 from pathlib import Path
+from typing import Optional
 
 import magic
 import aiosqlite
-from quart import Quart, request, send_file
+from quart import Quart, request, send_file as quart_send_file
 from PIL import Image
 
 
@@ -16,12 +17,25 @@ log = logging.getLogger(__name__)
 app = Quart(__name__)
 
 
+async def send_file(path: str, *, mimetype: Optional[str] = None):
+    """Helper function to send files while also supporting Ranged Requests."""
+    response = await quart_send_file(path, mimetype=mimetype, conditional=True)
+
+    filebody = response.response
+    response.headers["content-length"] = filebody.end - filebody.begin
+    response.headers["content-disposition"] = "inline"
+    response.headers["content-security-policy"] = "sandbox; frame-src 'None'"
+
+    return response
+
+
 @app.before_serving
 async def app_before_serving():
     app.loop = asyncio.get_running_loop()
     app.db = await aiosqlite.connect("/home/luna/awtf.db")
     app.thumbnailing_tasks = {}
-    app.video_thumbnail_semaphore = asyncio.Semaphore(5)
+    app.expensive_thumbnail_semaphore = asyncio.Semaphore(3)
+    app.image_thumbnail_semaphore = asyncio.Semaphore(10)
 
 
 @app.after_serving
@@ -324,7 +338,7 @@ async def content(file_id: int):
 
 def blocking_thumbnail_image(path, thumbnail_path):
     with Image.open(path) as file_as_image:
-        file_as_image.thumbnail((200, 200))
+        file_as_image.thumbnail((350, 350))
         file_as_image.save(thumbnail_path)
 
 
@@ -332,10 +346,12 @@ async def thumbnail_given_path(path: Path, thumbnail_path: Path):
     await app.loop.run_in_executor(None, blocking_thumbnail_image, path, thumbnail_path)
 
 
-MIME_MAPPING = {
+MIME_EXTENSION_MAPPING = {
     "video/x-matroska": ".mkv",
     "audio/x-m4a": ".m4a",
+    "video/x-m4v": ".m4v",
     "application/vnd.oasis.opendocument.text": ".odt",
+    "application/epub+zip": ".epub",
 }
 
 
@@ -344,12 +360,15 @@ def get_extension(mimetype):
     if from_mimetypes:
         return from_mimetypes
 
-    return MIME_MAPPING[mimetype]
+    return MIME_EXTENSION_MAPPING[mimetype]
 
 
-async def thumbnail_given_video(file_local_path, thumbnail_path):
-    async with app.video_thumbnail_semaphore:
-        await _actually_thumbnail_given_video(file_local_path, thumbnail_path)
+MIME_REMAPPING = {"video/x-matroska": "video/webm"}
+
+
+def fetch_mimetype(file_path: str):
+    original_mime = magic.from_file(file_path, mime=True)
+    return MIME_REMAPPING.get(original_mime, original_mime)
 
 
 async def _actually_thumbnail_given_video(file_local_path, thumbnail_path):
@@ -390,18 +409,51 @@ async def _actually_thumbnail_given_video(file_local_path, thumbnail_path):
     assert proc.returncode == 0
 
 
+async def thumbnail_given_pdf(file_local_path, thumbnail_path):
+    proc = await asyncio.create_subprocess_shell(
+        f"gm convert {shlex.quote(file_local_path)} {shlex.quote(str(thumbnail_path))}",
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    out, err = await proc.communicate()
+    out, err = out.decode(), err.decode()
+    log.info("out: %r, err: %r", out, err)
+    assert proc.returncode == 0
+
+
+async def thumbnail_given_video(file_local_path, thumbnail_path):
+    async with app.video_thumbnail_semaphore:
+        await _actually_thumbnail_given_video(file_local_path, thumbnail_path)
+
+
+async def _thumbnail_wrapper(semaphore, function, local_path, thumb_path):
+    async with semaphore:
+        await function(local_path, thumb_path)
+
+
 async def submit_thumbnail(file_id, mimetype, file_local_path, thumbnail_path):
     if mimetype.startswith("image/"):
         thumbnailing_function = thumbnail_given_path
+        semaphore = app.image_thumbnail_semaphore
+    elif mimetype == ("application/pdf"):
+        thumbnail_path = thumbnail_path.parent / f"{file_id}.png"
+        semaphore = app.expensive_thumbnail_semaphore
+        thumbnailing_function = thumbnail_given_pdf
     elif mimetype.startswith("video/"):
         thumbnail_path = thumbnail_path.parent / f"{file_id}.png"
         thumbnailing_function = thumbnail_given_video
+        semaphore = app.expensive_thumbnail_semaphore
     else:
         return None
 
+    if thumbnail_path.exists():
+        return thumbnail_path
+
     task = app.thumbnailing_tasks.get(file_id)
     if not task:
-        coro = thumbnailing_function(file_local_path, thumbnail_path)
+        coro = _thumbnail_wrapper(
+            semaphore, thumbnailing_function, file_local_path, thumbnail_path
+        )
         task = app.loop.create_task(coro)
         app.thumbnailing_tasks[file_id] = task
 
@@ -422,17 +474,14 @@ async def thumbnail(file_id: int):
         )
     )[0][0]
 
-    mimetype = magic.from_file(file_local_path, mime=True)
+    mimetype = fetch_mimetype(file_local_path)
     extension = get_extension(mimetype)
-    log.info("mime %s ext %r", mimetype, extension)
+    log.info("thumbnailing mime %s ext %r", mimetype, extension)
     assert extension is not None
 
     thumbnail_folder = Path("/tmp") / "awtfdb-szurubooru-thumbnails"
     thumbnail_folder.mkdir(exist_ok=True)
     thumbnail_path = thumbnail_folder / f"{file_id}{extension}"
-
-    if thumbnail_path.exists():
-        return await send_file(thumbnail_path)
 
     thumbnail_path = await submit_thumbnail(
         file_id, mimetype, file_local_path, thumbnail_path
@@ -440,7 +489,8 @@ async def thumbnail(file_id: int):
     if thumbnail_path:
         return await send_file(thumbnail_path)
     else:
-        return await send_file(file_local_path)
+        log.warning("cant thumbnail %s", mimetype)
+        return "", 500
 
 
 @app.get("/posts/")
@@ -542,7 +592,7 @@ async def fetch_file_entity(file_id: int) -> dict:
         )
     )[0][0]
 
-    file_mime = magic.from_file(file_local_path, mime=True)
+    file_mime = fetch_mimetype(file_local_path)
     canvas_size = (None, None)
 
     file_type = None
