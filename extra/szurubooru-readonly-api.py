@@ -371,7 +371,7 @@ def fetch_mimetype(file_path: str):
     return MIME_REMAPPING.get(original_mime, original_mime)
 
 
-async def _actually_thumbnail_given_video(file_local_path, thumbnail_path):
+async def thumbnail_given_video(file_local_path, thumbnail_path):
     proc = await asyncio.create_subprocess_shell(
         "ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1"
         f" {shlex.quote(file_local_path)}",
@@ -384,22 +384,12 @@ async def _actually_thumbnail_given_video(file_local_path, thumbnail_path):
     assert proc.returncode == 0
 
     total_seconds = int(float(out))
-    total_5percent_seconds = total_seconds // 20
-    time_5percent_minutes = total_5percent_seconds // 60
-    time_5percent_seconds = total_5percent_seconds - (60 * time_5percent_minutes)
+    total_5percent_seconds = total_seconds // 50
 
     proc = await asyncio.create_subprocess_shell(
-        " ".join(
-            [
-                "ffmpeg",
-                "-n",
-                "-i",
-                shlex.quote(file_local_path),
-                f"-ss 00:{time_5percent_minutes:02d}:{time_5percent_seconds}.000",
-                "-vframes 1",
-                shlex.quote(str(thumbnail_path)),
-            ]
-        ),
+        f"ffmpeg -n -i {shlex.quote(file_local_path)} "
+        f"-ss {total_5percent_seconds} -frames:v 1 "
+        f"{shlex.quote(str(thumbnail_path))}",
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
@@ -419,11 +409,6 @@ async def thumbnail_given_pdf(file_local_path, thumbnail_path):
     out, err = out.decode(), err.decode()
     log.info("out: %r, err: %r", out, err)
     assert proc.returncode == 0
-
-
-async def thumbnail_given_video(file_local_path, thumbnail_path):
-    async with app.video_thumbnail_semaphore:
-        await _actually_thumbnail_given_video(file_local_path, thumbnail_path)
 
 
 async def _thumbnail_wrapper(semaphore, function, local_path, thumb_path):
