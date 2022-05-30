@@ -2,3 +2,4 @@ quart==0.17.0
 aiosqlite==0.17.0
 python-magic==0.4.26
 Pillow==9.1.1
+expiringdict==1.2.1

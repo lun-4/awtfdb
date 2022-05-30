@@ -1,3 +1,4 @@
+import os
 import shlex
 import asyncio
 import datetime
@@ -5,7 +6,9 @@ import re
 import logging
 import mimetypes
 from pathlib import Path
-from typing import Optional
+from typing import Optional, List
+from dataclasses import dataclass
+from expiringdict import ExpiringDict
 
 import magic
 import aiosqlite
@@ -29,13 +32,26 @@ async def send_file(path: str, *, mimetype: Optional[str] = None):
     return response
 
 
+@dataclass
+class FileCache:
+    canvas_size: dict
+    file_type: dict
+    mime_type: dict
+
+
 @app.before_serving
 async def app_before_serving():
     app.loop = asyncio.get_running_loop()
-    app.db = await aiosqlite.connect("/home/luna/awtf.db")
+    indexpath = Path(os.getenv("HOME")) / "awtf.db"
+    app.db = await aiosqlite.connect(str(indexpath))
     app.thumbnailing_tasks = {}
     app.expensive_thumbnail_semaphore = asyncio.Semaphore(3)
     app.image_thumbnail_semaphore = asyncio.Semaphore(10)
+    app.file_cache = FileCache(
+        canvas_size=ExpiringDict(max_len=10000, max_age_seconds=1200),
+        file_type=ExpiringDict(max_len=10000, max_age_seconds=1200),
+        mime_type=ExpiringDict(max_len=1000, max_age_seconds=300),
+    )
 
 
 @app.after_serving
@@ -220,10 +236,6 @@ async def tags_fetch():
     }
 
 
-from dataclasses import dataclass
-from typing import List
-
-
 @dataclass
 class CompiledSearch:
     query: str
@@ -336,14 +348,16 @@ async def content(file_id: int):
     return await send_file(file_local_path)
 
 
-def blocking_thumbnail_image(path, thumbnail_path):
+def blocking_thumbnail_image(path, thumbnail_path, size):
     with Image.open(path) as file_as_image:
-        file_as_image.thumbnail((350, 350))
+        file_as_image.thumbnail(size)
         file_as_image.save(thumbnail_path)
 
 
-async def thumbnail_given_path(path: Path, thumbnail_path: Path):
-    await app.loop.run_in_executor(None, blocking_thumbnail_image, path, thumbnail_path)
+async def thumbnail_given_path(path: Path, thumbnail_path: Path, size=(350, 350)):
+    await app.loop.run_in_executor(
+        None, blocking_thumbnail_image, path, thumbnail_path, size
+    )
 
 
 MIME_EXTENSION_MAPPING = {
@@ -367,8 +381,12 @@ MIME_REMAPPING = {"video/x-matroska": "video/webm"}
 
 
 def fetch_mimetype(file_path: str):
-    original_mime = magic.from_file(file_path, mime=True)
-    return MIME_REMAPPING.get(original_mime, original_mime)
+    mimetype = app.file_cache.mime_type.get(file_path)
+    if not mimetype:
+        mimetype = magic.from_file(file_path, mime=True)
+        mimetype = MIME_REMAPPING.get(mimetype, mimetype)
+        app.file_cache.mime_type[file_path] = mimetype
+    return mimetype
 
 
 async def thumbnail_given_video(file_local_path, thumbnail_path):
@@ -578,19 +596,18 @@ async def fetch_file_entity(file_id: int) -> dict:
     )[0][0]
 
     file_mime = fetch_mimetype(file_local_path)
-    canvas_size = (None, None)
 
-    file_type = None
+    canvas_size = app.file_cache.canvas_size.get(file_id)
+    file_type = app.file_cache.file_type.get(file_id)
 
-    if file_mime.startswith("image/"):
+    if canvas_size is None and file_mime.startswith("image/"):
         file_type = "image"
         if file_mime == "image/gif":
             file_type = "animation"
         canvas_size = await app.loop.run_in_executor(
             None, extract_canvas_size, file_local_path
         )
-
-    elif file_mime.startswith("video/"):
+    elif canvas_size is None and file_mime.startswith("video/"):
         file_type = "video"
         proc = await asyncio.create_subprocess_shell(
             " ".join(
@@ -615,7 +632,14 @@ async def fetch_file_entity(file_id: int) -> dict:
         out, err = out.decode().strip(), err.decode()
         log.info("out: %r, err: %r", out, err)
         canvas_size = out.split("x")
-        assert len(canvas_size) == 2
+    elif canvas_size is None:
+        canvas_size = (None, None)
+        file_type = "image"
+
+    assert len(canvas_size) == 2
+    assert file_type in ("image", "animation", "video", "flash")
+    app.file_cache.canvas_size[file_id] = canvas_size
+    app.file_cache.file_type[file_id] = file_type
 
     return {
         "version": 1,
