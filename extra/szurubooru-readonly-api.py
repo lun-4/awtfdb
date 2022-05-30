@@ -402,7 +402,7 @@ async def thumbnail_given_video(file_local_path, thumbnail_path):
     assert proc.returncode == 0
 
     total_seconds = int(float(out))
-    total_5percent_seconds = total_seconds // 50
+    total_5percent_seconds = total_seconds // 15
 
     proc = await asyncio.create_subprocess_shell(
         f"ffmpeg -n -i {shlex.quote(file_local_path)} "
@@ -416,6 +416,8 @@ async def thumbnail_given_video(file_local_path, thumbnail_path):
     log.info("out: %r, err: %r", out, err)
     assert proc.returncode == 0
 
+    await thumbnail_given_path(str(thumbnail_path), str(thumbnail_path))
+
 
 async def thumbnail_given_pdf(file_local_path, thumbnail_path):
     proc = await asyncio.create_subprocess_shell(
@@ -427,6 +429,8 @@ async def thumbnail_given_pdf(file_local_path, thumbnail_path):
     out, err = out.decode(), err.decode()
     log.info("out: %r, err: %r", out, err)
     assert proc.returncode == 0
+
+    await thumbnail_given_path(str(thumbnail_path), str(thumbnail_path), (600, 600))
 
 
 async def _thumbnail_wrapper(semaphore, function, local_path, thumb_path):
