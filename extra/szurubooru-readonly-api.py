@@ -37,6 +37,13 @@ class FileCache:
     canvas_size: dict
     file_type: dict
     mime_type: dict
+    local_path: dict
+
+
+@dataclass
+class TagEntry:
+    name: str
+    usages: int
 
 
 @app.before_serving
@@ -51,7 +58,9 @@ async def app_before_serving():
         canvas_size=ExpiringDict(max_len=10000, max_age_seconds=1200),
         file_type=ExpiringDict(max_len=10000, max_age_seconds=1200),
         mime_type=ExpiringDict(max_len=1000, max_age_seconds=300),
+        local_path=ExpiringDict(max_len=1000, max_age_seconds=3600),
     )
+    app.tag_cache = ExpiringDict(max_len=1000, max_age_seconds=300)
 
 
 @app.after_serving
@@ -199,33 +208,21 @@ async def tags_fetch():
     )
     rows = []
     async for tag in tag_rows:
-
-        named_tag_cursor = await app.db.execute(
-            "select tag_text, tag_language from tag_names where core_hash = ?",
-            (tag[0],),
-        )
-
-        namedtag = await named_tag_cursor.fetchone()
-
-        filecount_cursor = await app.db.execute(
-            "select count(*) from tag_files where core_hash = ?",
-            (tag[0],),
-        )
-        filecount = (await filecount_cursor.fetchone())[0]
-
-        rows.append(
-            {
-                "version": 1,
-                "names": [namedtag[0]],
-                "category": "default",
-                "implications": [],
-                "suggestions": [],
-                "creationTime": "1900-01-01T00:00:00Z",
-                "lastEditTime": "1900-01-01T00:00:00Z",
-                "usages": filecount,
-                "description": "awooga",
-            }
-        )
+        tags = await fetch_tag(tag[0])
+        for tag in tags:
+            rows.append(
+                {
+                    "version": 1,
+                    "names": tag["names"],
+                    "category": "default",
+                    "implications": [],
+                    "suggestions": [],
+                    "creationTime": "1900-01-01T00:00:00Z",
+                    "lastEditTime": "1900-01-01T00:00:00Z",
+                    "usages": tag["usages"],
+                    "description": "awooga",
+                }
+            )
 
     return {
         "query": query,
@@ -560,6 +557,46 @@ def extract_canvas_size(path: Path) -> tuple:
         return im.width, im.height
 
 
+async def fetch_tag(core_hash):
+
+    tag_entry = app.tag_cache.get(core_hash)
+    if tag_entry is None:
+        named_tag_cursor = await app.db.execute(
+            """
+            select tag_text
+            from tag_names
+            where tag_names.core_hash = ?
+            """,
+            (core_hash,),
+        )
+
+        usages_cursor = await app.db.execute(
+            "select count(*) from tag_files where core_hash = ?",
+            (core_hash,),
+        )
+        usages = (await usages_cursor.fetchone())[0]
+
+        tag_entry = []
+        async for named_tag in named_tag_cursor:
+            tag_entry.append(TagEntry(named_tag[0], usages))
+
+    assert tag_entry is not None
+    app.tag_cache[core_hash] = tag_entry
+
+    tags_result = []
+
+    for named_tag in tag_entry:
+        tags_result.append(
+            {
+                "names": [named_tag.name],
+                "category": "default",
+                "usages": named_tag.usages,
+            }
+        )
+
+    return tags_result
+
+
 async def fetch_file_entity(file_id: int) -> dict:
     file_tags = []
 
@@ -568,36 +605,18 @@ async def fetch_file_entity(file_id: int) -> dict:
         (file_id,),
     )
     async for core_hash in file_tags_cursor:
-        named_tag_cursor = await app.db.execute(
-            """
-        select tag_text
-        from tag_names
-        where tag_names.core_hash = ?
-        """,
-            (core_hash[0],),
-        )
+        tags = await fetch_tag(core_hash[0])
+        file_tags.extend(tags)
 
-        usages_cursor = await app.db.execute(
-            "select count(*) from tag_files where core_hash = ?",
-            (core_hash[0],),
-        )
-        usages = (await usages_cursor.fetchone())[0]
-
-        async for named_tag in named_tag_cursor:
-            file_tags.append(
-                {
-                    "names": [named_tag[0]],
-                    "category": "default",
-                    "usages": usages,
-                }
+    file_local_path = app.file_cache.local_path.get(file_id)
+    if file_local_path is None:
+        file_local_path = (
+            await app.db.execute_fetchall(
+                "select local_path from files where file_hash = ?",
+                (file_id,),
             )
-
-    file_local_path = (
-        await app.db.execute_fetchall(
-            "select local_path from files where file_hash = ?",
-            (file_id,),
-        )
-    )[0][0]
+        )[0][0]
+        app.file_cache.local_path[file_id] = file_local_path
 
     file_mime = fetch_mimetype(file_local_path)
 
