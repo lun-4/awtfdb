@@ -731,11 +731,13 @@ async def single_post_fetch_around(file_id: int):
         """,
         (file_id,),
     )
-    prev_id = (await prev_cursor.fetchone())[0]
-    next_id = (await next_cursor.fetchone())[0]
+    prev_value = await prev_cursor.fetchone()
+    prev_id = prev_value[0] if prev_value else None
+    next_value = await next_cursor.fetchone()
+    next_id = next_value[0] if next_value else None
     return {
-        "prev": await fetch_file_entity(prev_id),
-        "next": await fetch_file_entity(next_id),
+        "prev": await fetch_file_entity(prev_id) if prev_id else None,
+        "next": await fetch_file_entity(next_id) if next_id else None,
     }
 
 
