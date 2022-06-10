@@ -362,6 +362,7 @@ MIME_EXTENSION_MAPPING = {
     "video/x-matroska": ".mkv",
     "audio/x-m4a": ".m4a",
     "video/x-m4v": ".m4v",
+    "video/3gpp": ".3gpp",
     "application/vnd.oasis.opendocument.text": ".odt",
     "application/epub+zip": ".epub",
 }
