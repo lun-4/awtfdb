@@ -193,6 +193,7 @@ async def tags_fetch():
     # GET /tags/?offset=<initial-pos>&limit=<page-size>&query=<query>
     print(request.args)
     query = request.args["query"]
+    query = query.replace("\\:", ":")
     offset = request.args.get("offset", 0)
     query = query.replace("*", "")
     query = query.replace(" sort:usages", "")
@@ -505,6 +506,7 @@ async def posts_fetch():
     query = request.args.get("query", "")
     offset = int(request.args.get("offset", 0))
     limit = int(request.args.get("limit", 15))
+    query = query.replace("\\:", ":")
     result = compile_query(query)
     mapped_tag_args = []
     for tag_name in result.tags:
