@@ -26,7 +26,7 @@ const HELPTEXT =
     \\					processed using that inferrer's options,
     \\					if any of them don't match, then argument
     \\					processing comes back to normal options
-    \\ 					 (available processors: regex, audio)
+    \\ 					 (available processors: regex, audio, mime)
     \\ --filter-indexed-files-only	only include files already indexed
     \\ 					(useful if you're moving files around
     \\ 					and they're not catched by the
@@ -605,6 +605,7 @@ const MimeTagInferrer = struct {
         tag_scope_mimetype: ?[]const u8 = null,
         tag_for_all_images: ?[]const u8 = null,
         tag_for_all_audio: ?[]const u8 = null,
+        tag_for_all_video: ?[]const u8 = null,
         cast_lowercase: bool = true,
     };
 
@@ -615,7 +616,7 @@ const MimeTagInferrer = struct {
     };
 
     pub fn consumeArguments(args_it: *std.process.ArgIterator) !TagInferrerConfig {
-        var arg_state: enum { None, TagScopeMimetype, TagImage, TagAudio } = .None;
+        var arg_state: enum { None, TagScopeMimetype, TagImage, TagAudio, TagVideo } = .None;
         var config: TagInferrerConfig = .{
             .last_argument = undefined,
             .config = .{ .mime = .{} },
@@ -629,6 +630,7 @@ const MimeTagInferrer = struct {
                 .None => {},
                 .TagScopeMimetype => config.config.mime.tag_scope_mimetype = arg,
                 .TagAudio => config.config.mime.tag_for_all_audio = arg,
+                .TagVideo => config.config.mime.tag_for_all_video = arg,
                 .TagImage => config.config.mime.tag_for_all_images = arg,
             }
 
@@ -648,6 +650,8 @@ const MimeTagInferrer = struct {
                 arg_state = .TagImage;
             } else if (std.mem.eql(u8, arg, "--audio-tag")) {
                 arg_state = .TagAudio;
+            } else if (std.mem.eql(u8, arg, "--video-tag")) {
+                arg_state = .TagVideo;
             } else {
                 config.last_argument = arg;
                 break;
@@ -685,13 +689,15 @@ const MimeTagInferrer = struct {
         var mimetype = try self.cookie.inferFile(path_cstr);
         log.debug("mime: {s}", .{mimetype});
 
-        try utilAddTag(
-            self.allocator,
-            self.config,
-            mimetype,
-            self.config.tag_scope_mimetype,
-            tags_to_add,
-        );
+        if (self.config.tag_scope_mimetype != null) {
+            try utilAddTag(
+                self.allocator,
+                self.config,
+                mimetype,
+                self.config.tag_scope_mimetype,
+                tags_to_add,
+            );
+        }
 
         if (std.mem.startsWith(u8, mimetype, "image/")) {
             try utilAddTag(
@@ -708,6 +714,16 @@ const MimeTagInferrer = struct {
                 self.allocator,
                 self.config,
                 self.config.tag_for_all_audio,
+                null,
+                tags_to_add,
+            );
+        }
+
+        if (std.mem.startsWith(u8, mimetype, "video/")) {
+            try utilAddTag(
+                self.allocator,
+                self.config,
+                self.config.tag_for_all_video,
                 null,
                 tags_to_add,
             );
