@@ -404,8 +404,9 @@ async def thumbnail_given_video(file_local_path, thumbnail_path):
     total_5percent_seconds = total_seconds // 15
 
     proc = await asyncio.create_subprocess_shell(
-        f"ffmpeg -n -i {shlex.quote(file_local_path)} "
-        f"-ss {total_5percent_seconds} -frames:v 1 "
+        f"ffmpeg -n -ss {total_5percent_seconds} "
+        f"-i {shlex.quote(file_local_path)} "
+        f"-frames:v 1 "
         f"{shlex.quote(str(thumbnail_path))}",
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
