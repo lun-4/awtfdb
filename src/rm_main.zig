@@ -16,6 +16,8 @@ const HELPTEXT =
     \\ options:
     \\ 	-h				prints this help and exits
     \\ 	-V				prints version and exits
+    \\ 	-f				forcefully delete a path
+    \\ 					(TODO support folder paths)
     \\ 	-r				remove files recursively (in a folder)
     \\ 	--dry-run			don't edit the index database
     \\
@@ -44,6 +46,7 @@ pub fn main() anyerror!void {
         help: bool = false,
         version: bool = false,
         recursive: bool = false,
+        force: bool = false,
         dry_run: bool = false,
         path: ?[]const u8 = null,
     };
@@ -57,6 +60,8 @@ pub fn main() anyerror!void {
             given_args.version = true;
         } else if (std.mem.eql(u8, arg, "-r")) {
             given_args.recursive = true;
+        } else if (std.mem.eql(u8, arg, "-f")) {
+            given_args.force = true;
         } else if (std.mem.eql(u8, arg, "--dry-run")) {
             given_args.dry_run = true;
         } else {
@@ -91,7 +96,11 @@ pub fn main() anyerror!void {
     if (given_args.dry_run) try ctx.turnIntoMemoryDb();
 
     var full_path_buffer: [std.os.PATH_MAX]u8 = undefined;
-    const full_path = try std.fs.cwd().realpath(path, &full_path_buffer);
+    // if forcing a deletion, do not give a shit about filesystem
+    const full_path = if (given_args.force)
+        path
+    else
+        try std.fs.cwd().realpath(path, &full_path_buffer);
     const maybe_file = try ctx.fetchFileByPath(full_path);
 
     var count: usize = 0;
