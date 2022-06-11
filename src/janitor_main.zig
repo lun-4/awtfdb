@@ -184,13 +184,25 @@ pub fn main() anyerror!u8 {
         defer file.close();
 
         if (given_args.full) {
+            var can_do_full_hash: bool = false;
+            if (given_args.only.items.len > 0) {
+                for (given_args.only.items) |prefix| {
+                    if ((!can_do_full_hash) and std.mem.startsWith(u8, row.local_path, prefix)) {
+                        can_do_full_hash = true;
+                    }
+                }
+            } else {
+                can_do_full_hash = true;
+            }
+
+            if (!can_do_full_hash) continue;
+
             var calculated_hash = try ctx.calculateHash(file, .{ .insert_new_hash = false });
 
             if (!std.mem.eql(u8, &calculated_hash.hash_data, &indexed_file.hash.hash_data)) {
                 // repair option: fuck
 
                 counters.incorrect_hash_files.total += 1;
-                counters.incorrect_hash_files.unrepairable += 1;
 
                 log.err(
                     "hashes are incorrect for file {d}",
