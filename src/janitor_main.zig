@@ -210,12 +210,22 @@ pub fn main() anyerror!u8 {
                 );
 
                 if (given_args.repair) {
-                    return error.ManualInterventionRequired;
+                    log.warn("repair: forcefully setting hash for file {d}", .{row.file_hash});
+
+                    const hash_blob = sqlite.Blob{ .data = &calculated_hash.hash_data };
+                    try ctx.db.?.exec(
+                        \\ update hashes
+                        \\ set hash_data = ?
+                        \\ where id = ?
+                    ,
+                        .{},
+                        .{ hash_blob, row.file_hash },
+                    );
                 }
                 continue;
             }
         }
-        log.info("path {s} ok", .{row.local_path});
+        //log.info("path {s} ok", .{row.local_path});
     }
 
     // calculate hashes for tag_cores
