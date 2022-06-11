@@ -16,6 +16,8 @@ const HELPTEXT =
     \\ options:
     \\ 	-h				prints this help and exits
     \\ 	-V				prints version and exits
+    \\ 	--full				validate hashes of all files (very slow)
+    \\ 	--only <path>			only run full validation on given path
     \\ 	--repair			attempt to repair consistency
     \\ 					(this operation may be destructive to
     \\ 					the index file, only run this manually)
@@ -37,16 +39,35 @@ pub fn main() anyerror!u8 {
     var args_it = std.process.args();
     _ = args_it.skip();
 
+    const StringList = std.ArrayList([]const u8);
     const Args = struct {
         help: bool = false,
         version: bool = false,
         repair: bool = false,
         full: bool = false,
+        only: StringList,
     };
 
-    var given_args = Args{};
+    var given_args = Args{ .only = StringList.init(allocator) };
+    defer {
+        for (given_args.only.items) |path| allocator.free(path);
+        given_args.only.deinit();
+    }
+
+    var state: enum { None, Only } = .None;
 
     while (args_it.next()) |arg| {
+        switch (state) {
+            .Only => {
+                try given_args.only.append(try std.fs.path.resolve(
+                    allocator,
+                    &[_][]const u8{arg},
+                ));
+                state = .None;
+                continue;
+            },
+            .None => {},
+        }
         if (std.mem.eql(u8, arg, "-h")) {
             given_args.help = true;
         } else if (std.mem.eql(u8, arg, "-V")) {
@@ -55,6 +76,8 @@ pub fn main() anyerror!u8 {
             given_args.repair = true;
         } else if (std.mem.eql(u8, arg, "--full")) {
             given_args.full = true;
+        } else if (std.mem.eql(u8, arg, "--only")) {
+            state = .Only;
         } else {
             return error.InvalidArgument;
         }
