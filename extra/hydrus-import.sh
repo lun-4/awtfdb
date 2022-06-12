@@ -11,6 +11,9 @@
 set -eux
 
 export_folder=$1
+set +u
+ainclude_extra_args=$AINCLUDE_ARGS
+set -u
 
 find "$export_folder" -type f |
 while IFS= read -r filename; do
@@ -23,5 +26,5 @@ while IFS= read -r filename; do
     fi
     set -e
     ainclude_tags=$(echo "$tag_file_contents" | awk '{ printf "--tag \"%s\" ", $0; }')
-    echo "$ainclude_tags '$filename'" | xargs ainclude
+    echo "$ainclude_tags '$filename'" | xargs ainclude $ainclude_extra_args
 done
