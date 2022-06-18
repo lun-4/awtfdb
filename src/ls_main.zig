@@ -40,13 +40,16 @@ pub fn main() anyerror!void {
     var args_it = std.process.args();
     _ = args_it.skip();
 
+    const StringList = std.ArrayList([]const u8);
+
     const Args = struct {
         help: bool = false,
         version: bool = false,
-        query: ?[]const u8 = null,
+        paths: StringList,
     };
 
-    var given_args = Args{};
+    var given_args = Args{ .paths = StringList.init(allocator) };
+    defer given_args.paths.deinit();
 
     while (args_it.next()) |arg| {
         if (std.mem.eql(u8, arg, "-h")) {
@@ -54,8 +57,12 @@ pub fn main() anyerror!void {
         } else if (std.mem.eql(u8, arg, "-V")) {
             given_args.version = true;
         } else {
-            given_args.query = arg;
+            try given_args.paths.append(arg);
         }
+    }
+
+    if (given_args.paths.items.len == 0) {
+        try given_args.paths.append(".");
     }
 
     if (given_args.help) {
@@ -65,8 +72,6 @@ pub fn main() anyerror!void {
         std.debug.print("ainclude {s}\n", .{VERSION});
         return;
     }
-
-    const query = given_args.query orelse ".";
 
     var ctx = Context{
         .home_path = null,
@@ -81,48 +86,50 @@ pub fn main() anyerror!void {
 
     var stdout = std.io.getStdOut().writer();
 
-    var maybe_dir = std.fs.cwd().openDir(query, .{ .iterate = true }) catch |err| switch (err) {
-        error.FileNotFound => {
-            log.err("path not found: {s}", .{query});
-            return err;
-        },
-        error.NotDir => blk: {
-            break :blk null;
-        },
-        else => return err,
-    };
+    for (given_args.paths.items) |query| {
+        var maybe_dir = std.fs.cwd().openDir(query, .{ .iterate = true }) catch |err| switch (err) {
+            error.FileNotFound => {
+                log.err("path not found: {s}", .{query});
+                return err;
+            },
+            error.NotDir => blk: {
+                break :blk null;
+            },
+            else => return err,
+        };
 
-    if (maybe_dir) |dir| {
-        var it = dir.iterate();
-        while (try it.next()) |entry| {
-            // TODO get stat?
-            switch (entry.kind) {
-                .File => try stdout.print("-", .{}),
-                .Directory => try stdout.print("d", .{}),
-                else => try stdout.print("-", .{}),
-            }
-            try stdout.print(" {s}", .{entry.name});
-            if (entry.kind == .File) {
-                var realpath_buf: [std.os.PATH_MAX]u8 = undefined;
-                const full_path = try dir.realpath(entry.name, &realpath_buf);
-                var maybe_inner_file = try ctx.fetchFileByPath(full_path);
-                if (maybe_inner_file) |*file| {
-                    defer file.deinit();
-                    try file.printTagsTo(allocator, stdout);
+        if (maybe_dir) |dir| {
+            var it = dir.iterate();
+            while (try it.next()) |entry| {
+                // TODO get stat?
+                switch (entry.kind) {
+                    .File => try stdout.print("-", .{}),
+                    .Directory => try stdout.print("d", .{}),
+                    else => try stdout.print("-", .{}),
                 }
+                try stdout.print(" {s}", .{entry.name});
+                if (entry.kind == .File) {
+                    var realpath_buf: [std.os.PATH_MAX]u8 = undefined;
+                    const full_path = try dir.realpath(entry.name, &realpath_buf);
+                    var maybe_inner_file = try ctx.fetchFileByPath(full_path);
+                    if (maybe_inner_file) |*file| {
+                        defer file.deinit();
+                        try file.printTagsTo(allocator, stdout);
+                    }
+                }
+                try stdout.print("\n", .{});
+            }
+        } else {
+            var realpath_buf: [std.os.PATH_MAX]u8 = undefined;
+            const full_path = try std.fs.cwd().realpath(query, &realpath_buf);
+
+            const maybe_file = try ctx.fetchFileByPath(full_path);
+            try stdout.print("- {s}", .{query});
+            if (maybe_file) |file| {
+                defer file.deinit();
+                try file.printTagsTo(allocator, stdout);
             }
             try stdout.print("\n", .{});
         }
-    } else {
-        var realpath_buf: [std.os.PATH_MAX]u8 = undefined;
-        const full_path = try std.fs.cwd().realpath(query, &realpath_buf);
-
-        const maybe_file = try ctx.fetchFileByPath(full_path);
-        try stdout.print("- {s}", .{query});
-        if (maybe_file) |file| {
-            defer file.deinit();
-            try file.printTagsTo(allocator, stdout);
-        }
-        try stdout.print("\n", .{});
     }
 }
