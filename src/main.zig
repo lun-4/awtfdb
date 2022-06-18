@@ -492,11 +492,12 @@ pub const Context = struct {
                 .{},
                 .{ self.hash.id, self.local_path },
             );
-            try self.ctx.db.?.exec(
-                "delete from hashes where id = ?",
-                .{},
-                .{self.hash.id},
-            );
+            // TODO only delete from hashes if it's going to be unused
+            //try self.ctx.db.?.exec(
+            //    "delete from hashes where id = ?",
+            //    .{},
+            //    .{self.hash.id},
+            //);
         }
 
         /// Returns all tag core hashes for the file.
