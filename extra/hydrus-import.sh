@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/usr/bin/env bash
 # hydrus-import.sh - import hydrus exports into awtfdb
 #
 # hydrus has an export button! it's kinda cool, if you want to take your
@@ -26,5 +26,6 @@ while IFS= read -r filename; do
     fi
     set -e
     ainclude_tags=$(echo "$tag_file_contents" | awk '{ printf "--tag \"%s\" ", $0; }')
-    echo "$ainclude_tags '$filename'" | xargs ainclude $ainclude_extra_args
+    filename_escaped=$(printf "%q" "$filename")
+    echo "$ainclude_tags $filename_escaped" | xargs ainclude $ainclude_extra_args
 done
