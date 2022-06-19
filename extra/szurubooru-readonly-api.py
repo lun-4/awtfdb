@@ -203,7 +203,7 @@ async def tags_fetch():
     from tag_names
     join hashes
     on hashes.id = tag_names.core_hash
-    where tag_text LIKE '%' || ? || '%'
+    where lower(tag_text) LIKE '%' || lower(?) || '%'
     """,
         (query,),
     )
