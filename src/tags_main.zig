@@ -25,12 +25,20 @@ const HELPTEXT =
     \\ 	atags search tag
     \\ 	atags remove --tag tag
     \\ 	atags remove --core dslkjfsldkjf
+    \\ 	atags parent create child_tag parent_tag
+    \\ 	atags parent list
+    \\ 	atags parent remove child_tag parent_tag
+    \\ 	atags parent remove --preserve-files child_tag parent_tag
 ;
 
 const ActionConfig = union(enum) {
     Create: CreateAction.Config,
     Remove: RemoveAction.Config,
     Search: SearchAction.Config,
+
+    CreateParent: CreateParent.Config,
+    ListParent: void,
+    RemoveParent: RemoveParent.Config,
 };
 
 const CreateAction = struct {
@@ -553,6 +561,201 @@ const SearchAction = struct {
     }
 };
 
+const CreateParent = struct {
+    pub const Config = struct {
+        child_tag: ?[]const u8 = null,
+        parent_tag: ?[]const u8 = null,
+    };
+
+    pub fn processArgs(args_it: *std.process.ArgIterator, given_args: *Args) !ActionConfig {
+        _ = given_args;
+        var config = Config{};
+
+        const ArgState = enum { None, NeedChildTag, NeedParentTag };
+        var state: ArgState = .NeedParentTag;
+        while (args_it.next()) |arg| {
+            if (state == .NeedChildTag) {
+                config.child_tag = arg;
+                state = .None;
+            } else if (state == .NeedParentTag) {
+                config.parent_tag = arg;
+                state = .NeedChildTag;
+            } else {
+                log.err("invalid argument '{s}'", .{arg});
+                return error.InvalidArgument;
+            }
+
+            if (config.child_tag == null) {
+                log.err("child tag is required", .{});
+                return error.ChildTagRequired;
+            }
+
+            if (config.parent_tag == null) {
+                log.err("parent tag is required", .{});
+                return error.ParentTagRequired;
+            }
+        }
+        return ActionConfig{ .CreateParent = config };
+    }
+
+    ctx: *Context,
+    config: Config,
+
+    const Self = @This();
+
+    pub fn init(ctx: *Context, config: Config) !Self {
+        return Self{ .ctx = ctx, .config = config };
+    }
+
+    pub fn deinit(self: *Self) void {
+        _ = self;
+    }
+
+    pub fn run(self: *Self) !void {
+        var stdout = std.io.getStdOut().writer();
+        const child_tag = (try self.ctx.fetchNamedTag(self.config.child_tag.?, "en")) orelse {
+            log.err("expected '{s}' to be a named tag", .{self.config.child_tag});
+            return error.ChildTagNotFound;
+        };
+        const parent_tag = (try self.ctx.fetchNamedTag(self.config.parent_tag.?, "en")) orelse {
+            log.err("expected '{s}' to be a named tag", .{self.config.parent_tag});
+            return error.ParentTagNotFound;
+        };
+
+        try self.ctx.createTagParent(child_tag, parent_tag);
+        try stdout.print(
+            "created tag parent where every file with '{s}' is also '{s}'\nprocessing new parents...\n",
+            .{ child_tag, parent_tag },
+        );
+
+        // now that the relationship is created, we must go through all files
+        // and process new implications
+        try self.ctx.processTagTree();
+    }
+};
+
+const ListParent = struct {
+    pub fn processArgs(args_it: *std.process.ArgIterator, given_args: *Args) !ActionConfig {
+        _ = given_args;
+        _ = args_it;
+        return ActionConfig{ .ListParent = {} };
+    }
+
+    ctx: *Context,
+    config: void,
+
+    const Self = @This();
+
+    pub fn init(ctx: *Context, config: void) !Self {
+        _ = config;
+        return Self{ .ctx = ctx, .config = {} };
+    }
+
+    pub fn deinit(self: *Self) void {
+        _ = self;
+    }
+
+    pub fn run(self: *Self) !void {
+        var stdout = std.io.getStdOut().writer();
+
+        var stmt = try self.ctx.db.?.prepare(
+            "select child_tag,parent_tag from tag_implications",
+        );
+        defer stmt.deinit();
+        var iter = try stmt.iterator(struct {
+            child_tag: i64,
+            parent_tag: i64,
+        }, .{});
+        while (try iter.next(.{})) |tree_row| {
+            const child_tags = try self.ctx.fetchTagsFromCore(
+                self.ctx.allocator,
+                .{ .id = tree_row.child_tag, .hash_data = undefined },
+            );
+            for (child_tags.items) |child_tag| {
+                try stdout.print("{s} ", .{child_tag});
+            }
+            try stdout.print("-> ", .{});
+
+            const parent_tags = try self.ctx.fetchTagsFromCore(
+                self.ctx.allocator,
+                .{ .id = tree_row.parent_tag, .hash_data = undefined },
+            );
+            for (parent_tags.items) |parent_tag| {
+                try stdout.print("{s} ", .{parent_tag});
+            }
+            try stdout.print("\n", .{});
+        }
+    }
+};
+
+const RemoveParent = struct {
+    pub const Config = struct {
+        child_tag: ?[]const u8 = null,
+        parent_tag: ?[]const u8 = null,
+    };
+
+    pub fn processArgs(args_it: *std.process.ArgIterator, given_args: *Args) !ActionConfig {
+        _ = given_args;
+        var config = Config{};
+
+        const ArgState = enum { None, NeedChildTag, NeedParentTag };
+        var state: ArgState = .NeedParentTag;
+        while (args_it.next()) |arg| {
+            if (state == .NeedChildTag) {
+                config.child_tag = arg;
+                state = .None;
+            } else if (state == .NeedParentTag) {
+                config.parent_tag = arg;
+                state = .NeedChildTag;
+            } else {
+                log.err("invalid argument '{s}'", .{arg});
+                return error.InvalidArgument;
+            }
+
+            if (config.child_tag == null) {
+                log.err("child tag is required", .{});
+                return error.ChildTagRequired;
+            }
+
+            if (config.parent_tag == null) {
+                log.err("parent tag is required", .{});
+                return error.ParentTagRequired;
+            }
+        }
+        return ActionConfig{ .RemoveParent = config };
+    }
+
+    ctx: *Context,
+    config: Config,
+
+    const Self = @This();
+
+    pub fn init(ctx: *Context, config: Config) !Self {
+        return Self{ .ctx = ctx, .config = config };
+    }
+
+    pub fn deinit(self: *Self) void {
+        _ = self;
+    }
+
+    pub fn run(self: *Self) !void {
+        var stdout = std.io.getStdOut().writer();
+        const child_tag = (try self.ctx.fetchNamedTag(self.config.child_tag.?, "en")) orelse {
+            log.err("expected '{s}' to be a named tag", .{self.config.child_tag});
+            return error.ChildTagNotFound;
+        };
+        const parent_tag = (try self.ctx.fetchNamedTag(self.config.parent_tag.?, "en")) orelse {
+            log.err("expected '{s}' to be a named tag", .{self.config.parent_tag});
+            return error.ParentTagNotFound;
+        };
+        _ = child_tag;
+        _ = parent_tag;
+        _ = stdout;
+
+        std.debug.todo("awooga");
+    }
+};
+
 const Args = struct {
     help: bool = false,
     version: bool = false,
@@ -578,8 +781,26 @@ pub fn main() anyerror!void {
     _ = args_it.skip();
 
     var given_args = Args{};
+    var arg_state: enum { None, Parent } = .None;
 
     while (args_it.next()) |arg| {
+        switch (arg_state) {
+            .Parent => {
+                if (std.mem.eql(u8, arg, "create")) {
+                    given_args.action_config = try CreateParent.processArgs(&args_it, &given_args);
+                } else if (std.mem.eql(u8, arg, "list")) {
+                    given_args.action_config = try ListParent.processArgs(&args_it, &given_args);
+                } else if (std.mem.eql(u8, arg, "remove")) {
+                    given_args.action_config = try RemoveParent.processArgs(&args_it, &given_args);
+                } else {
+                    log.err("{s} is an invalid parent action", .{arg});
+                    return error.InvalidParentAction;
+                }
+                arg_state = .None;
+            },
+            .None => {},
+        }
+
         if (std.mem.eql(u8, arg, "-h")) {
             given_args.help = true;
         } else if (std.mem.eql(u8, arg, "-V")) {
@@ -588,17 +809,17 @@ pub fn main() anyerror!void {
             given_args.ask_confirmation = false;
         } else if (std.mem.eql(u8, arg, "--dry-run")) {
             given_args.dry_run = true;
+        } else if (std.mem.eql(u8, arg, "search")) {
+            given_args.action_config = try SearchAction.processArgs(&args_it, &given_args);
+        } else if (std.mem.eql(u8, arg, "create")) {
+            given_args.action_config = try CreateAction.processArgs(&args_it, &given_args);
+        } else if (std.mem.eql(u8, arg, "remove")) {
+            given_args.action_config = try RemoveAction.processArgs(&args_it, &given_args);
+        } else if (std.mem.eql(u8, arg, "parent")) {
+            arg_state = .Parent;
         } else {
-            if (std.mem.eql(u8, arg, "search")) {
-                given_args.action_config = try SearchAction.processArgs(&args_it, &given_args);
-            } else if (std.mem.eql(u8, arg, "create")) {
-                given_args.action_config = try CreateAction.processArgs(&args_it, &given_args);
-            } else if (std.mem.eql(u8, arg, "remove")) {
-                given_args.action_config = try RemoveAction.processArgs(&args_it, &given_args);
-            } else {
-                log.err("{s} is an invalid action", .{arg});
-                return error.InvalidAction;
-            }
+            log.err("{s} is an invalid action", .{arg});
+            return error.InvalidAction;
         }
     }
 
@@ -641,6 +862,21 @@ pub fn main() anyerror!void {
         },
         .Remove => |remove_config| {
             var self = try RemoveAction.init(&ctx, remove_config);
+            defer self.deinit();
+            try self.run();
+        },
+        .CreateParent => |config| {
+            var self = try CreateParent.init(&ctx, config);
+            defer self.deinit();
+            try self.run();
+        },
+        .ListParent => |config| {
+            var self = try ListParent.init(&ctx, config);
+            defer self.deinit();
+            try self.run();
+        },
+        .RemoveParent => |config| {
+            var self = try RemoveParent.init(&ctx, config);
             defer self.deinit();
             try self.run();
         },
