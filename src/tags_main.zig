@@ -798,6 +798,7 @@ pub fn main() anyerror!void {
                     return error.InvalidParentAction;
                 }
                 arg_state = .None;
+                continue;
             },
             .None => {},
         }
