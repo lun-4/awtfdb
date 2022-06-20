@@ -482,7 +482,7 @@ pub const Context = struct {
                 .{},
                 .{ core_hash.id, self.hash.id },
             );
-            log.debug("link file {s} (hash {s}) with tag core hash {s}", .{ self.local_path, self.hash, core_hash });
+            log.debug("link file {s} (hash {s}) with tag core hash {d} {s}", .{ self.local_path, self.hash, core_hash.id, core_hash });
         }
 
         // Copies ownership of given new_local_path
@@ -928,6 +928,14 @@ pub const Context = struct {
 
             var tags_iter = tags_to_add.iterator();
             while (tags_iter.next()) |entry| {
+                // don't need to readd tags that are already in
+                // (prevent db locking i/o)
+                var already_has_it = false;
+                for (tag_cores) |core| {
+                    if (entry.key_ptr.* == core.id) already_has_it = true;
+                }
+                if (already_has_it) continue;
+
                 try file.addTag(.{ .id = entry.key_ptr.*, .hash_data = undefined });
             }
         }
