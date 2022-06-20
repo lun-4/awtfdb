@@ -672,6 +672,7 @@ const ListParent = struct {
                 self.ctx.allocator,
                 .{ .id = tree_row.child_tag, .hash_data = undefined },
             );
+            defer child_tags.deinit();
             for (child_tags.items) |child_tag| {
                 try stdout.print("{s} ", .{child_tag});
             }
@@ -681,6 +682,7 @@ const ListParent = struct {
                 self.ctx.allocator,
                 .{ .id = tree_row.parent_tag, .hash_data = undefined },
             );
+            defer parent_tags.deinit();
             for (parent_tags.items) |parent_tag| {
                 try stdout.print("{s} ", .{parent_tag});
             }
