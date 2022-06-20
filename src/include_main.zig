@@ -1054,4 +1054,6 @@ pub fn main() anyerror!void {
             }
         }
     }
+
+    try ctx.processTagTree();
 }
