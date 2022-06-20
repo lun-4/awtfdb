@@ -893,16 +893,42 @@ pub const Context = struct {
             var file = (try self.fetchFile(file_hash)).?;
             defer file.deinit();
 
+            const TagSet = std.AutoHashMap(i64, void);
+            var tags_to_add = TagSet.init(self.allocator);
+            defer tags_to_add.deinit();
+
             var tag_cores = try file.fetchTags(self.allocator);
             defer self.allocator.free(tag_cores);
 
-            for (tag_cores) |tag_core| {
-                var maybe_parents = treemap.get(tag_core.id);
-                if (maybe_parents) |parents| {
-                    for (parents) |parent| {
-                        try file.addTag(.{ .id = parent, .hash_data = undefined });
+            while (true) {
+                const old_tags_to_add_len = tags_to_add.count();
+
+                for (tag_cores) |tag_core| {
+                    var maybe_parents = treemap.get(tag_core.id);
+                    if (maybe_parents) |parents| {
+                        for (parents) |parent| {
+                            try tags_to_add.put(parent, {});
+                        }
                     }
                 }
+
+                var tags_iter = tags_to_add.iterator();
+                while (tags_iter.next()) |entry| {
+                    var maybe_parents = treemap.get(entry.key_ptr.*);
+                    if (maybe_parents) |parents| {
+                        for (parents) |parent| {
+                            try tags_to_add.put(parent, {});
+                        }
+                    }
+                }
+
+                const new_tags_to_add_len = tags_to_add.count();
+                if (old_tags_to_add_len == new_tags_to_add_len) break;
+            }
+
+            var tags_iter = tags_to_add.iterator();
+            while (tags_iter.next()) |entry| {
+                try file.addTag(.{ .id = entry.key_ptr.*, .hash_data = undefined });
             }
         }
     }
@@ -1292,8 +1318,10 @@ test "tag parenting" {
     // only add this through inferrence
     var parent_tag = try ctx.createNamedTag("parent_test_tag", "en", null);
     var parent_tag2 = try ctx.createNamedTag("parent_test_tag2", "en", null);
+    var parent_tag3 = try ctx.createNamedTag("parent_test_tag3", "en", null);
     try ctx.createTagParent(child_tag, parent_tag);
     try ctx.createTagParent(child_tag, parent_tag2);
+    try ctx.createTagParent(parent_tag2, parent_tag3);
     try ctx.processTagTree();
 
     // assert both now exist
@@ -1304,15 +1332,18 @@ test "tag parenting" {
     var saw_child = false;
     var saw_parent = false;
     var saw_parent2 = false;
+    var saw_parent3 = false;
 
     for (tag_cores) |core| {
         if (core.id == parent_tag.core.id) saw_parent = true;
         if (core.id == parent_tag2.core.id) saw_parent2 = true;
+        if (core.id == parent_tag3.core.id) saw_parent3 = true;
         if (core.id == child_tag.core.id) saw_child = true;
     }
 
     try std.testing.expect(saw_parent);
     try std.testing.expect(saw_parent2);
+    try std.testing.expect(saw_parent3);
     try std.testing.expect(saw_child);
 }
 
