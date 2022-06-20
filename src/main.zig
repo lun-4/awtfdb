@@ -837,6 +837,8 @@ pub const Context = struct {
     }
 
     pub fn processTagTree(self: *Self) !void {
+        log.info("processing tag tree...");
+
         var tree_stmt = try self.db.?.prepare(
             "select child_tag, parent_tag from tag_implications",
         );
