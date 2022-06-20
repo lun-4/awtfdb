@@ -572,29 +572,30 @@ const CreateParent = struct {
         var config = Config{};
 
         const ArgState = enum { None, NeedChildTag, NeedParentTag };
-        var state: ArgState = .NeedParentTag;
+        var state: ArgState = .NeedChildTag;
         while (args_it.next()) |arg| {
             if (state == .NeedChildTag) {
                 config.child_tag = arg;
-                state = .None;
+                state = .NeedParentTag;
             } else if (state == .NeedParentTag) {
                 config.parent_tag = arg;
-                state = .NeedChildTag;
+                state = .None;
             } else {
                 log.err("invalid argument '{s}'", .{arg});
                 return error.InvalidArgument;
             }
-
-            if (config.child_tag == null) {
-                log.err("child tag is required", .{});
-                return error.ChildTagRequired;
-            }
-
-            if (config.parent_tag == null) {
-                log.err("parent tag is required", .{});
-                return error.ParentTagRequired;
-            }
         }
+
+        if (config.child_tag == null) {
+            log.err("child tag is required", .{});
+            return error.ChildTagRequired;
+        }
+
+        if (config.parent_tag == null) {
+            log.err("parent tag is required", .{});
+            return error.ParentTagRequired;
+        }
+
         return ActionConfig{ .CreateParent = config };
     }
 
