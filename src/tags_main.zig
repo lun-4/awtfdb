@@ -631,7 +631,7 @@ const CreateParent = struct {
 
         // now that the relationship is created, we must go through all files
         // and process new implications
-        try self.ctx.processTagTree();
+        try self.ctx.processTagTree(.{});
     }
 };
 

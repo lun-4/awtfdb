@@ -836,8 +836,64 @@ pub const Context = struct {
         );
     }
 
-    pub fn processTagTree(self: *Self) !void {
-        log.info("processing tag tree...");
+    fn processSingleFileIntoTagTree(self: *Self, file_hash: i64, treemap: TagTreeMap) !void {
+        var file = (try self.fetchFile(file_hash)).?;
+        defer file.deinit();
+
+        const TagSet = std.AutoHashMap(i64, void);
+        var tags_to_add = TagSet.init(self.allocator);
+        defer tags_to_add.deinit();
+
+        var tag_cores = try file.fetchTags(self.allocator);
+        defer self.allocator.free(tag_cores);
+
+        while (true) {
+            const old_tags_to_add_len = tags_to_add.count();
+
+            for (tag_cores) |tag_core| {
+                var maybe_parents = treemap.get(tag_core.id);
+                if (maybe_parents) |parents| {
+                    for (parents) |parent| {
+                        try tags_to_add.put(parent, {});
+                    }
+                }
+            }
+
+            var tags_iter = tags_to_add.iterator();
+            while (tags_iter.next()) |entry| {
+                var maybe_parents = treemap.get(entry.key_ptr.*);
+                if (maybe_parents) |parents| {
+                    for (parents) |parent| {
+                        try tags_to_add.put(parent, {});
+                    }
+                }
+            }
+
+            const new_tags_to_add_len = tags_to_add.count();
+            if (old_tags_to_add_len == new_tags_to_add_len) break;
+        }
+
+        var tags_iter = tags_to_add.iterator();
+        while (tags_iter.next()) |entry| {
+            // don't need to readd tags that are already in
+            // (prevent db locking i/o)
+            var already_has_it = false;
+            for (tag_cores) |core| {
+                if (entry.key_ptr.* == core.id) already_has_it = true;
+            }
+            if (already_has_it) continue;
+
+            try file.addTag(.{ .id = entry.key_ptr.*, .hash_data = undefined });
+        }
+    }
+
+    const ProcessTagTreeOptions = struct {
+        files: ?[]const i64 = null,
+    };
+    const TagTreeMap = std.AutoHashMap(i64, []i64);
+
+    pub fn processTagTree(self: *Self, options: ProcessTagTreeOptions) !void {
+        log.info("processing tag tree...", .{});
 
         var tree_stmt = try self.db.?.prepare(
             "select child_tag, parent_tag from tag_implications",
@@ -851,7 +907,6 @@ pub const Context = struct {
         );
         defer self.allocator.free(tree_rows);
 
-        const TagTreeMap = std.AutoHashMap(i64, []i64);
         var treemap = TagTreeMap.init(self.allocator);
         defer {
             var iter = treemap.iterator();
@@ -875,70 +930,28 @@ pub const Context = struct {
             }
         }
 
-        var stmt = try self.db.?.prepare(
-            \\ select file_hash
-            \\ from files
-        );
-        defer stmt.deinit();
-
-        const FileRow = struct {
-            file_hash: i64,
-        };
-        var iter = try stmt.iterator(
-            FileRow,
-            .{},
-        );
-
-        while (try iter.next(.{})) |file_row| {
-            const file_hash = file_row.file_hash;
-
-            var file = (try self.fetchFile(file_hash)).?;
-            defer file.deinit();
-
-            const TagSet = std.AutoHashMap(i64, void);
-            var tags_to_add = TagSet.init(self.allocator);
-            defer tags_to_add.deinit();
-
-            var tag_cores = try file.fetchTags(self.allocator);
-            defer self.allocator.free(tag_cores);
-
-            while (true) {
-                const old_tags_to_add_len = tags_to_add.count();
-
-                for (tag_cores) |tag_core| {
-                    var maybe_parents = treemap.get(tag_core.id);
-                    if (maybe_parents) |parents| {
-                        for (parents) |parent| {
-                            try tags_to_add.put(parent, {});
-                        }
-                    }
-                }
-
-                var tags_iter = tags_to_add.iterator();
-                while (tags_iter.next()) |entry| {
-                    var maybe_parents = treemap.get(entry.key_ptr.*);
-                    if (maybe_parents) |parents| {
-                        for (parents) |parent| {
-                            try tags_to_add.put(parent, {});
-                        }
-                    }
-                }
-
-                const new_tags_to_add_len = tags_to_add.count();
-                if (old_tags_to_add_len == new_tags_to_add_len) break;
+        if (options.files) |files_array| {
+            for (files_array) |file_hash| {
+                try self.processSingleFileIntoTagTree(file_hash, treemap);
             }
+        } else {
+            var stmt = try self.db.?.prepare(
+                \\ select file_hash
+                \\ from files
+            );
+            defer stmt.deinit();
 
-            var tags_iter = tags_to_add.iterator();
-            while (tags_iter.next()) |entry| {
-                // don't need to readd tags that are already in
-                // (prevent db locking i/o)
-                var already_has_it = false;
-                for (tag_cores) |core| {
-                    if (entry.key_ptr.* == core.id) already_has_it = true;
-                }
-                if (already_has_it) continue;
+            const FileRow = struct {
+                file_hash: i64,
+            };
+            var iter = try stmt.iterator(
+                FileRow,
+                .{},
+            );
 
-                try file.addTag(.{ .id = entry.key_ptr.*, .hash_data = undefined });
+            while (try iter.next(.{})) |file_row| {
+                const file_hash = file_row.file_hash;
+                try self.processSingleFileIntoTagTree(file_hash, treemap);
             }
         }
     }
@@ -1332,7 +1345,7 @@ test "tag parenting" {
     try ctx.createTagParent(child_tag, parent_tag);
     try ctx.createTagParent(child_tag, parent_tag2);
     try ctx.createTagParent(parent_tag2, parent_tag3);
-    try ctx.processTagTree();
+    try ctx.processTagTree(.{});
 
     // assert both now exist
 

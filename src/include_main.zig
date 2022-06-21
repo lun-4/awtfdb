@@ -945,6 +945,9 @@ pub fn main() anyerror!void {
         .mime => |*mime_ctx| MimeTagInferrer.deinit(mime_ctx),
     };
 
+    var file_ids_for_tagtree = std.ArrayList(i64).init(allocator);
+    defer file_ids_for_tagtree.deinit();
+
     for (given_args.include_paths.items) |path_to_include| {
         var dir: ?std.fs.Dir = std.fs.cwd().openDir(path_to_include, .{ .iterate = true }) catch |err| blk: {
             if (err == error.NotDir) break :blk null;
@@ -957,6 +960,7 @@ pub fn main() anyerror!void {
             if (given_args.filter_indexed_files_only)
                 std.debug.todo("TODO support filter_indexed_files_only on file paths");
             var file = try ctx.createFileFromPath(path_to_include);
+            try file_ids_for_tagtree.append(file.hash.id);
             defer file.deinit();
             log.debug("adding file '{s}'", .{file.local_path});
 
@@ -1020,6 +1024,7 @@ pub fn main() anyerror!void {
                         }
 
                         var file = try ctx.createFileFromDir(entry.dir, entry.basename);
+                        try file_ids_for_tagtree.append(file.hash.id);
                         defer file.deinit();
                         {
                             var savepoint = try ctx.db.?.savepoint("tags");
@@ -1055,5 +1060,5 @@ pub fn main() anyerror!void {
         }
     }
 
-    try ctx.processTagTree();
+    try ctx.processTagTree(.{ .files = file_ids_for_tagtree.items });
 }
