@@ -1,0 +1,24 @@
+name: szurubooru-testing
+on:
+  push:
+    paths:
+      - "./extra/szurubooru-readonly-api.py"
+      - "./extra/szurubooru-readonly-api.requirements.txt"
+jobs:
+  test:
+    strategy:
+      matrix:
+        # TODO https://github.com/lun-4/awtfdb/issues/1
+        # TODO https://github.com/lun-4/awtfdb/issues/2
+        # os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [ubuntu-latest]
+    runs-on: ${{matrix.os}}
+    steps:
+      - uses: actions/checkout@v3
+      - name: Setup Python
+        uses: actions/setup-python@v4.0.0
+        with:
+          python-version: "3.x"
+      - run: python -V
+      - run: pip install -Ur ./extra/szurubooru-readonly-api.requirements.txt
+      - run: pip install pytest==7.1.2
