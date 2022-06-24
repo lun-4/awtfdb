@@ -888,6 +888,10 @@ pub const Context = struct {
     }
 
     const ProcessTagTreeOptions = struct {
+        /// Only process the given file ids.
+        ///
+        /// Useful if you are ainclude(1) and don't want to process the entire
+        /// file database.
         files: ?[]const i64 = null,
     };
     const TagTreeMap = std.AutoHashMap(i64, []i64);

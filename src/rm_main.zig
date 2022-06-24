@@ -42,16 +42,19 @@ pub fn main() anyerror!void {
     var args_it = std.process.args();
     _ = args_it.skip();
 
+    const StringList = std.ArrayList([]const u8);
+
     const Args = struct {
         help: bool = false,
         version: bool = false,
         recursive: bool = false,
         force: bool = false,
         dry_run: bool = false,
-        path: ?[]const u8 = null,
+        paths: StringList,
     };
 
-    var given_args = Args{};
+    var given_args = Args{ .paths = StringList.init(allocator) };
+    defer given_args.paths.deinit();
 
     while (args_it.next()) |arg| {
         if (std.mem.eql(u8, arg, "-h")) {
@@ -65,7 +68,7 @@ pub fn main() anyerror!void {
         } else if (std.mem.eql(u8, arg, "--dry-run")) {
             given_args.dry_run = true;
         } else {
-            given_args.path = arg;
+            try given_args.paths.append(arg);
         }
     }
 
@@ -77,11 +80,10 @@ pub fn main() anyerror!void {
         return;
     }
 
-    if (given_args.path == null) {
+    if (given_args.paths.items.len == 0) {
         std.log.err("path is a required argument", .{});
         return error.MissingPath;
     }
-    const path = given_args.path.?;
 
     var ctx = Context{
         .home_path = null,
@@ -95,49 +97,51 @@ pub fn main() anyerror!void {
     try ctx.loadDatabase(.{});
     if (given_args.dry_run) try ctx.turnIntoMemoryDb();
 
-    var full_path_buffer: [std.os.PATH_MAX]u8 = undefined;
-    // if forcing a deletion, do not give a shit about filesystem
-    const full_path = if (given_args.force)
-        path
-    else
-        try std.fs.cwd().realpath(path, &full_path_buffer);
-    const maybe_file = try ctx.fetchFileByPath(full_path);
-
     var count: usize = 0;
 
-    if (maybe_file) |file| {
-        defer file.deinit();
-        try file.delete();
-        count += 1;
-    } else {
-        var dir = std.fs.cwd().openDir(full_path, .{ .iterate = true }) catch |err| switch (err) {
-            std.fs.Dir.OpenError.FileNotFound => {
-                log.err("path not found: {s}", .{full_path});
-                return err;
-            },
-            else => return err,
-        };
+    for (given_args.paths.items) |path| {
+        var full_path_buffer: [std.os.PATH_MAX]u8 = undefined;
+        // if forcing a deletion, do not give a shit about filesystem
+        const full_path = if (given_args.force)
+            path
+        else
+            try std.fs.cwd().realpath(path, &full_path_buffer);
+        const maybe_file = try ctx.fetchFileByPath(full_path);
 
-        if (!given_args.recursive) {
-            log.err("given path is a folder but -r is not set", .{});
-            return error.MissingRecursiveFlag;
-        }
+        if (maybe_file) |file| {
+            defer file.deinit();
+            try file.delete();
+            count += 1;
+        } else {
+            var dir = std.fs.cwd().openDir(full_path, .{ .iterate = true }) catch |err| switch (err) {
+                std.fs.Dir.OpenError.FileNotFound => {
+                    log.err("path not found: {s}", .{full_path});
+                    return err;
+                },
+                else => return err,
+            };
 
-        var walker = try dir.walk(allocator);
-        defer walker.deinit();
+            if (!given_args.recursive) {
+                log.err("given path is a folder but -r is not set", .{});
+                return error.MissingRecursiveFlag;
+            }
 
-        while (try walker.next()) |entry| {
-            if (entry.kind != .File) continue;
-            log.debug("checking path {s}", .{entry.path});
-            var inner_realpath_buffer: [std.os.PATH_MAX]u8 = undefined;
-            const inner_full_path = try entry.dir.realpath(entry.basename, &inner_realpath_buffer);
-            const maybe_inner_file = try ctx.fetchFileByPath(inner_full_path);
+            var walker = try dir.walk(allocator);
+            defer walker.deinit();
 
-            if (maybe_inner_file) |file| {
-                defer file.deinit();
-                log.info("removing path {s}", .{entry.path});
-                try file.delete();
-                count += 1;
+            while (try walker.next()) |entry| {
+                if (entry.kind != .File) continue;
+                log.debug("checking path {s}", .{entry.path});
+                var inner_realpath_buffer: [std.os.PATH_MAX]u8 = undefined;
+                const inner_full_path = try entry.dir.realpath(entry.basename, &inner_realpath_buffer);
+                const maybe_inner_file = try ctx.fetchFileByPath(inner_full_path);
+
+                if (maybe_inner_file) |file| {
+                    defer file.deinit();
+                    log.info("removing path {s}", .{entry.path});
+                    try file.delete();
+                    count += 1;
+                }
             }
         }
     }
