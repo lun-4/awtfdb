@@ -1,3 +1,4 @@
+import time
 import os
 import shlex
 import asyncio
@@ -13,11 +14,14 @@ from expiringdict import ExpiringDict
 import magic
 import aiosqlite
 from quart import Quart, request, send_file as quart_send_file
+from quart.ctx import copy_current_app_context
 from PIL import Image
 
 
 log = logging.getLogger(__name__)
 app = Quart(__name__)
+
+THUMBNAIL_FOLDER = Path("/tmp") / "awtfdb-szurubooru-thumbnails"
 
 
 async def send_file(path: str, *, mimetype: Optional[str] = None):
@@ -48,6 +52,7 @@ class TagEntry:
 
 @app.before_serving
 async def app_before_serving():
+    THUMBNAIL_FOLDER.mkdir(exist_ok=True)
     app.loop = asyncio.get_running_loop()
     indexpath = Path(os.getenv("HOME")) / "awtf.db"
     app.db = await aiosqlite.connect(str(indexpath))
@@ -61,6 +66,35 @@ async def app_before_serving():
         local_path=ExpiringDict(max_len=1000, max_age_seconds=3600),
     )
     app.tag_cache = ExpiringDict(max_len=1000, max_age_seconds=300)
+
+    @copy_current_app_context
+    async def thumbnail_cleaner_run():
+        await thumbnail_cleaner()
+
+    app.loop.create_task(thumbnail_cleaner())
+
+
+async def thumbnail_cleaner_tick():
+    log.info("cleaning thumbnails..")
+    WEEK = 60 * 60 * 24 * 7
+    count = 0
+    for thumbnail_path in THUMBNAIL_FOLDER.glob("*"):
+        stat = thumbnail_path.stat()
+        delta = time.time() - stat.st_atime
+        if delta > WEEK:
+            thumb_path.unlink(missing_ok=True)
+            count += 1
+    if count > 0:
+        log.info(f"removed {count} thumbnails")
+
+
+async def thumbnail_cleaner():
+    try:
+        while True:
+            await thumbnail_cleaner_tick()
+            await asyncio.sleep(3600)
+    except:
+        log.exception("thumbnail cleaner task error")
 
 
 @app.after_serving
@@ -486,9 +520,7 @@ async def thumbnail(file_id: int):
     log.info("thumbnailing mime %s ext %r", mimetype, extension)
     assert extension is not None
 
-    thumbnail_folder = Path("/tmp") / "awtfdb-szurubooru-thumbnails"
-    thumbnail_folder.mkdir(exist_ok=True)
-    thumbnail_path = thumbnail_folder / f"{file_id}{extension}"
+    thumbnail_path = THUMBNAIL_FOLDER / f"{file_id}{extension}"
 
     thumbnail_path = await submit_thumbnail(
         file_id, mimetype, file_local_path, thumbnail_path
