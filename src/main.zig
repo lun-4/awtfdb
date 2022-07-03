@@ -485,6 +485,15 @@ pub const Context = struct {
             log.debug("link file {s} (hash {s}) with tag core hash {d} {s}", .{ self.local_path, self.hash, core_hash.id, core_hash });
         }
 
+        pub fn removeTag(self: *FileSelf, core_hash: Hash) !void {
+            try self.ctx.db.?.exec(
+                "delete from tag_files where core_hash = ? and file_hash = ?",
+                .{},
+                .{ core_hash.id, self.hash.id },
+            );
+            log.debug("remove file {s} (hash {s}) with tag core hash {d}", .{ self.local_path, self.hash, core_hash.id });
+        }
+
         // Copies ownership of given new_local_path
         pub fn setLocalPath(self: *FileSelf, new_local_path: []const u8) !void {
             try self.ctx.db.?.exec(
@@ -1285,19 +1294,29 @@ test "file and tags" {
     defer indexed_file.deinit();
 
     var tag = try ctx.createNamedTag("test_tag", "en", null);
+
+    // add tag
     try indexed_file.addTag(tag.core);
 
     var tag_cores = try indexed_file.fetchTags(std.testing.allocator);
     defer std.testing.allocator.free(tag_cores);
 
     var saw_correct_tag_core = false;
-
     for (tag_cores) |core| {
         if (std.mem.eql(u8, &tag.core.hash_data, &core.hash_data))
             saw_correct_tag_core = true;
     }
-
     try std.testing.expect(saw_correct_tag_core);
+
+    // remove tag
+    try indexed_file.removeTag(tag.core);
+
+    var tag_cores_after_removal = try indexed_file.fetchTags(std.testing.allocator);
+    defer std.testing.allocator.free(tag_cores_after_removal);
+    for (tag_cores_after_removal) |core| {
+        if (std.mem.eql(u8, &tag.core.hash_data, &core.hash_data))
+            return error.TagShouldNotBeThere;
+    }
 }
 
 test "in memory database" {
