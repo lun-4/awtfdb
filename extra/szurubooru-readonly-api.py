@@ -509,12 +509,15 @@ async def submit_thumbnail(file_id, mimetype, file_local_path, thumbnail_path):
 
 @app.get("/_awtfdb_thumbnails/<int:file_id>")
 async def thumbnail(file_id: int):
-    file_local_path = (
-        await app.db.execute_fetchall(
-            "select local_path from files where file_hash = ?",
-            (file_id,),
-        )
-    )[0][0]
+    file_local_path_result = await app.db.execute_fetchall(
+        "select local_path from files where file_hash = ?",
+        (file_id,),
+    )
+
+    if not file_local_path_result:
+        return "", 404
+
+    file_local_path = file_local_path_result[0][0]
 
     mimetype = fetch_mimetype(file_local_path)
     extension = get_extension(mimetype)
