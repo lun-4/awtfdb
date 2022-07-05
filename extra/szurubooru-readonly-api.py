@@ -456,7 +456,7 @@ async def thumbnail_given_video(file_local_path, thumbnail_path):
 
 async def thumbnail_given_pdf(file_local_path, thumbnail_path):
     proc = await asyncio.create_subprocess_shell(
-        f"gm convert {shlex.quote(file_local_path)} {shlex.quote(str(thumbnail_path))}",
+        f"convert -cache 20 {shlex.quote(file_local_path)}[0] -density 900 {shlex.quote(str(thumbnail_path))}",
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
