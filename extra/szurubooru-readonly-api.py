@@ -278,7 +278,7 @@ def compile_query(search_query: str) -> CompiledSearch:
     or_operator = re.compile("( +)?\\|( +)?")
     not_operator = re.compile("( +)?-( +)?")
     and_operator = re.compile(" +")
-    tag_regex = re.compile("[a-zA-Z-_0-9:;&\\*]+")
+    tag_regex = re.compile("[a-zA-Z-_0-9:;&\\*\(\)]+")
     raw_tag_regex = re.compile('".*?"')
 
     regexes = (
@@ -337,6 +337,7 @@ def compile_query(search_query: str) -> CompiledSearch:
 
 def test_compiler():
     assert compile_query("a b c d") is not None
+    assert compile_query("a d_(test)") is not None
     result = compile_query('a b | "cd"|e')
     assert (
         result.query

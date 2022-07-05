@@ -349,7 +349,7 @@ pub const SqlGiver = struct {
         var or_operator = try libpcre.Regex.compile("( +)?\\|( +)?", .{});
         var not_operator = try libpcre.Regex.compile("( +)?-( +)?", .{});
         var and_operator = try libpcre.Regex.compile(" +", .{});
-        var tag_regex = try libpcre.Regex.compile("[a-zA-Z-_0-9:;&\\*]+", .{});
+        var tag_regex = try libpcre.Regex.compile("[a-zA-Z-_0-9:;&\\*\(\)]+", .{});
         var raw_tag_regex = try libpcre.Regex.compile("\".*?\"", .{});
 
         return Self{ .operators = [_]libpcre.Regex{
