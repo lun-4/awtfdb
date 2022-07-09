@@ -370,14 +370,30 @@ def test_compiler_errors():
         compile_query('a "cd')
 
 
+async def fetch_file_local_path(file_id: int) -> Optional[str]:
+    cached_path = app.file_cache.local_path.get(file_id)
+    if cached_path:
+        return cached_path
+
+    file_local_path_result = await app.db.execute_fetchall(
+        "select local_path from files where file_hash = ?",
+        (file_id,),
+    )
+
+    if not file_local_path_result:
+        return None
+
+    path = file_local_path_result[0][0]
+    app.file_cache.local_path[file_id] = path
+    return path
+
+
 @app.get("/_awtfdb_content/<int:file_id>")
 async def content(file_id: int):
-    file_local_path = (
-        await app.db.execute_fetchall(
-            "select local_path from files where file_hash = ?",
-            (file_id,),
-        )
-    )[0][0]
+    file_local_path = await fetch_file_local_path(file_id)
+    if not file_local_path:
+        return "", 404
+
     return await send_file(file_local_path)
 
 
@@ -509,15 +525,9 @@ async def submit_thumbnail(file_id, mimetype, file_local_path, thumbnail_path):
 
 @app.get("/_awtfdb_thumbnails/<int:file_id>")
 async def thumbnail(file_id: int):
-    file_local_path_result = await app.db.execute_fetchall(
-        "select local_path from files where file_hash = ?",
-        (file_id,),
-    )
-
-    if not file_local_path_result:
+    file_local_path = await fetch_file_local_path(file_id)
+    if not file_local_path:
         return "", 404
-
-    file_local_path = file_local_path_result[0][0]
 
     mimetype = fetch_mimetype(file_local_path)
     extension = get_extension(mimetype)
