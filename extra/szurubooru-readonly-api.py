@@ -6,10 +6,12 @@ import datetime
 import re
 import logging
 import mimetypes
+import uvloop
 from pathlib import Path
 from typing import Optional, List
 from dataclasses import dataclass
 from expiringdict import ExpiringDict
+from hypercorn.asyncio import serve, Config
 
 import magic
 import aiosqlite
@@ -824,8 +826,7 @@ async def pool_categories():
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
-    app.run(
-        host="0.0.0.0",
-        port=6666,
-        debug=True,
-    )
+    uvloop.install()
+    config = Config()
+    config.bind = ["0.0.0.0:6666"]
+    asyncio.run(serve(app, config))

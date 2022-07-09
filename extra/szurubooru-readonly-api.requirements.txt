@@ -3,3 +3,5 @@ aiosqlite==0.17.0
 python-magic==0.4.27
 Pillow==9.1.1
 expiringdict==1.2.2
+# max perf
+uvloop==0.16.0
