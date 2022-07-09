@@ -731,7 +731,7 @@ async def fetch_file_entity(file_id: int) -> dict:
         "canvasHeight": int(canvas_size[1]) if canvas_size[1] else None,
         "contentUrl": f"api/_awtfdb_content/{file_id}",
         "thumbnailUrl": f"api/_awtfdb_thumbnails/{file_id}",
-        "flags": [],
+        "flags": ["loop"],
         "tags": file_tags,
         "relations": [],
         "notes": [],
