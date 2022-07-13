@@ -84,7 +84,7 @@ async def thumbnail_cleaner_tick():
         stat = thumbnail_path.stat()
         delta = time.time() - stat.st_atime
         if delta > WEEK:
-            thumb_path.unlink(missing_ok=True)
+            thumbnail_path.unlink(missing_ok=True)
             count += 1
     if count > 0:
         log.info(f"removed {count} thumbnails")
