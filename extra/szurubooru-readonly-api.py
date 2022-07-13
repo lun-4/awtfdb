@@ -261,6 +261,8 @@ async def tags_fetch():
                 }
             )
 
+    rows = sorted(rows, key=lambda r: r["usages"], reverse=True)
+
     return {
         "query": query,
         "offset": offset,
