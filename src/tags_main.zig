@@ -27,8 +27,7 @@ const HELPTEXT =
     \\ 	atags remove --core dslkjfsldkjf
     \\ 	atags parent create child_tag parent_tag
     \\ 	atags parent list
-    \\ 	atags parent remove child_tag parent_tag
-    \\ 	atags parent remove --preserve-files child_tag parent_tag
+    \\ 	atags parent remove id
 ;
 
 const ActionConfig = union(enum) {
@@ -660,10 +659,11 @@ const ListParent = struct {
         var stdout = std.io.getStdOut().writer();
 
         var stmt = try self.ctx.db.?.prepare(
-            "select child_tag,parent_tag from tag_implications",
+            "select rowid,child_tag,parent_tag from tag_implications",
         );
         defer stmt.deinit();
         var iter = try stmt.iterator(struct {
+            rowid: i64,
             child_tag: i64,
             parent_tag: i64,
         }, .{});
@@ -672,6 +672,7 @@ const ListParent = struct {
                 self.ctx.allocator,
                 .{ .id = tree_row.child_tag, .hash_data = undefined },
             );
+            try stdout.print("{d}: ", .{tree_row.rowid});
             defer child_tags.deinit();
             for (child_tags.items) |child_tag| {
                 try stdout.print("{s} ", .{child_tag});
