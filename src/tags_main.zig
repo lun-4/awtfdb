@@ -694,38 +694,17 @@ const ListParent = struct {
 
 const RemoveParent = struct {
     pub const Config = struct {
-        child_tag: ?[]const u8 = null,
-        parent_tag: ?[]const u8 = null,
+        given_args: *Args,
+        rowid: ?i64 = null,
     };
 
     pub fn processArgs(args_it: *std.process.ArgIterator, given_args: *Args) !ActionConfig {
         _ = given_args;
-        var config = Config{};
+        var config = Config{
+            .given_args = given_args,
+            .rowid = try std.fmt.parseInt(i64, args_it.next() orelse return error.NeedParentId, 10),
+        };
 
-        const ArgState = enum { None, NeedChildTag, NeedParentTag };
-        var state: ArgState = .NeedParentTag;
-        while (args_it.next()) |arg| {
-            if (state == .NeedChildTag) {
-                config.child_tag = arg;
-                state = .None;
-            } else if (state == .NeedParentTag) {
-                config.parent_tag = arg;
-                state = .NeedChildTag;
-            } else {
-                log.err("invalid argument '{s}'", .{arg});
-                return error.InvalidArgument;
-            }
-
-            if (config.child_tag == null) {
-                log.err("child tag is required", .{});
-                return error.ChildTagRequired;
-            }
-
-            if (config.parent_tag == null) {
-                log.err("parent tag is required", .{});
-                return error.ParentTagRequired;
-            }
-        }
         return ActionConfig{ .RemoveParent = config };
     }
 
@@ -744,19 +723,34 @@ const RemoveParent = struct {
 
     pub fn run(self: *Self) !void {
         var stdout = std.io.getStdOut().writer();
-        const child_tag = (try self.ctx.fetchNamedTag(self.config.child_tag.?, "en")) orelse {
-            log.err("expected '{s}' to be a named tag", .{self.config.child_tag});
-            return error.ChildTagNotFound;
-        };
-        const parent_tag = (try self.ctx.fetchNamedTag(self.config.parent_tag.?, "en")) orelse {
-            log.err("expected '{s}' to be a named tag", .{self.config.parent_tag});
-            return error.ParentTagNotFound;
-        };
-        _ = child_tag;
-        _ = parent_tag;
-        _ = stdout;
+        var stdin = std.io.getStdIn().reader();
 
-        std.debug.todo("awooga");
+        var parent_relationship = (try self.ctx.db.?.one(
+            struct { child_tag: i64, parent_tag: i64 },
+            "select child_tag, parent_tag from tag_implications where rowid = ?",
+            .{},
+            .{self.config.rowid.?},
+        )) orelse return error.InvalidParentId;
+
+        try stdout.print(
+            "the parent relationship is between tags {d} -> {d}\n",
+            .{ parent_relationship.parent_tag, parent_relationship.child_tag },
+        );
+
+        if (self.config.given_args.ask_confirmation) {
+            try stdout.print("do you wish to remove it? (press y) ", .{});
+            var outcome: [1]u8 = undefined;
+            _ = try stdin.read(&outcome);
+            if (!std.mem.eql(u8, &outcome, "y")) return error.NotConfirmed;
+        }
+
+        try self.ctx.db.?.exec(
+            "delete from tag_implications where rowid = ?",
+            .{},
+            .{self.config.rowid.?},
+        );
+
+        try stdout.print("deleted parent id {d}\n", .{self.config.rowid.?});
     }
 };
 
