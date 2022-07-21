@@ -22,6 +22,8 @@ const HELPTEXT =
     \\ 		shows tags about a single file
     \\ 	als path/to/directory
     \\ 		shows files and their respective tags inside a directory
+    \\  als @1234
+    \\  	list file by id
 ;
 
 pub fn main() anyerror!void {
@@ -87,6 +89,24 @@ pub fn main() anyerror!void {
     var stdout = std.io.getStdOut().writer();
 
     for (given_args.paths.items) |query| {
+        if (std.mem.startsWith(u8, query, "@")) {
+            // direct file id fetch
+            var it = std.mem.split(u8, query, "@");
+            _ = it.next();
+            const file_hash_as_str = it.next() orelse return error.InvalidFileIdSyntax;
+            const file_hash = try std.fmt.parseInt(i64, file_hash_as_str, 10);
+
+            var maybe_file = try ctx.fetchFile(file_hash);
+            if (maybe_file) |file| {
+                defer file.deinit();
+
+                try stdout.print("- {s}", .{file.local_path});
+                try file.printTagsTo(allocator, stdout);
+                try stdout.print("\n", .{});
+            }
+            continue;
+        }
+
         var maybe_dir = std.fs.cwd().openDir(query, .{ .iterate = true }) catch |err| switch (err) {
             error.FileNotFound => {
                 log.err("path not found: {s}", .{query});
