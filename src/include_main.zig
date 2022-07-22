@@ -769,6 +769,7 @@ pub const Args = struct {
     version: bool = false,
     filter_indexed_files_only: bool = false,
     dry_run: bool = false,
+    cli_v1: bool = true,
     default_tags: StringList,
     wanted_inferrers: ConfigList,
     include_paths: StringList,
@@ -861,6 +862,8 @@ pub fn main() anyerror!void {
             given_args.filter_indexed_files_only = true;
         } else if (std.mem.eql(u8, arg, "--dry-run")) {
             given_args.dry_run = true;
+        } else if (std.mem.eql(u8, arg, "--v1")) {
+            given_args.cli_v1 = true; // doesn't do anything yet
         } else if (std.mem.eql(u8, arg, "--tag") or std.mem.eql(u8, arg, "-t")) {
             state = .FetchTag;
             // tag inferrers require more than one arg, so we need to load
