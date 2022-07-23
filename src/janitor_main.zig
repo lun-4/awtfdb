@@ -312,6 +312,17 @@ pub fn main() anyerror!u8 {
 
         if (file_count > 0) continue;
 
+        const pool_count = (try ctx.db.?.one(
+            i64,
+            \\ select count(*) from pools
+            \\ where pool_hash = ?
+        ,
+            .{},
+            .{hash_id},
+        )).?;
+
+        if (pool_count > 0) continue;
+
         log.warn("unused hash in table: {d}", .{hash_id});
 
         counters.unused_hash.total += 1;
