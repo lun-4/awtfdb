@@ -43,7 +43,6 @@ const Args = struct {
     dry_run: bool = false,
     paths: StringList,
     tags: CoreList,
-    pool: ?i64 = null,
     pool: ?Context.Pool = null,
 };
 
