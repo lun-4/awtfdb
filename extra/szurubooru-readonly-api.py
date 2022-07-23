@@ -662,8 +662,14 @@ async def fetch_tag(core_hash):
     return tags_result
 
 
-async def fetch_file_entity(file_id: int) -> dict:
+async def fetch_file_entity(file_id: int, micro=False) -> dict:
     file_tags = []
+
+    if micro:
+        return {
+            "id": file_id,
+            "thumbnailUrl": f"api/_awtfdb_thumbnails/{file_id}",
+        }
 
     file_tags_cursor = await app.db.execute(
         "select core_hash from tag_files where file_hash = ?",
@@ -806,7 +812,7 @@ async def single_post_fetch_around(file_id: int):
     }
 
 
-async def fetch_pool_entity(pool_hash: int):
+async def fetch_pool_entity(pool_hash: int, micro=False):
     pool_rows = await app.db.execute_fetchall(
         "select title from pools where pool_hash = ?", [pool_hash]
     )
@@ -818,11 +824,14 @@ async def fetch_pool_entity(pool_hash: int):
     )
     post_count = int(count_rows[0][0])
 
-    post_rows = await app.db.execute_fetchall(
-        "select file_hash from pool_entries where pool_hash = ? order by entry_index asc",
-        [pool_hash],
-    )
-    pool_posts = [await fetch_file_entity(row[0]) for row in post_rows]
+    if not micro:
+        post_rows = await app.db.execute_fetchall(
+            "select file_hash from pool_entries where pool_hash = ? order by entry_index asc",
+            [pool_hash],
+        )
+        pool_posts = [await fetch_file_entity(row[0], micro=True) for row in post_rows]
+    else:
+        pool_posts = []
 
     return {
         "version": 1,
