@@ -113,6 +113,31 @@ const MIGRATIONS = .{
         \\     constraint tag_implications_pk primary key (child_tag, parent_tag)
         \\ ) strict;
     },
+
+    .{
+        4, "add pool system",
+        \\ create table pools (
+        \\     pool_hash int
+        \\     	constraint pools_hash_fk references hashes (id) on delete restrict
+        \\     	constraint pools_pk primary key,
+        \\
+        \\     pool_core_data blob not null
+        \\     	constraint pool_core_data check (length(pool_core_data) >= 64),
+        \\
+        \\     title text not null
+        \\ ) strict;
+        \\
+        \\ create table pool_entries (
+        \\     file_hash int not null
+        \\      -- not referencing files (file_hash) so that it still works
+        \\     	constraint pool_entries_file_fk references hashes (id) on delete cascade,
+        \\     pool_hash int not null
+        \\     	constraint pool_entries_pool_fk references pools (pool_hash) on delete cascade,
+        \\     entry_index int not null,
+        \\     constraint pool_entries_pk primary key (file_hash, pool_hash),
+        \\     constraint pool_unique_index unique (pool_hash, entry_index)
+        \\ ) strict;
+    },
 };
 
 const MIGRATION_LOG_TABLE =
@@ -335,6 +360,8 @@ pub const Context = struct {
         };
     }
 
+    /// Helper struct to convert hash data given in an sqlite.Blob
+    /// back into [32]u8 for the API.
     pub const HashWithBlob = struct {
         id: i64,
         hash_data: sqlite.Blob,
@@ -568,6 +595,12 @@ pub const Context = struct {
                     try writer.print(" '{s}'", .{tag});
                 }
             }
+        }
+
+        pub fn fetchPools(self: FileSelf, allocator: std.mem.Allocator) ![]Hash {
+            _ = self;
+            _ = allocator;
+            std.debug.todo("impl");
         }
     };
 
@@ -966,6 +999,176 @@ pub const Context = struct {
                 const file_hash = file_row.file_hash;
                 try self.processSingleFileIntoTagTree(file_hash, treemap);
             }
+        }
+    }
+
+    pub const Pool = struct {
+        ctx: *Context,
+        hash: Hash,
+        title: []const u8,
+
+        const PoolSelf = @This();
+
+        pub fn deinit(self: PoolSelf) void {
+            self.ctx.allocator.free(self.title);
+        }
+
+        fn availableIndex(self: PoolSelf) !usize {
+            const maybe_max_index = try self.ctx.db.?.one(
+                usize,
+                "select max(entry_index) from pool_entries where pool_hash = ?",
+                .{},
+                .{self.hash.id},
+            );
+
+            return if (maybe_max_index) |max_index| max_index + 1 else 0;
+        }
+
+        pub fn delete(self: PoolSelf) !void {
+            try self.ctx.db.?.exec(
+                "delete from pools where pool_hash = ?",
+                .{},
+                .{self.hash.id},
+            );
+        }
+
+        pub fn addFile(self: PoolSelf, file_id: i64) !void {
+            const index = try self.availableIndex();
+            log.warn("adding file {d} to pool {d} index {d}", .{ file_id, self.hash.id, index });
+            try self.ctx.db.?.exec(
+                "insert into pool_entries (file_hash, pool_hash, entry_index) values (?, ?, ?)",
+                .{},
+                .{ file_id, self.hash.id, index },
+            );
+        }
+
+        pub fn removeFile(self: PoolSelf, file_id: i64) !void {
+            try self.ctx.db.?.exec(
+                "delete from pool_entries where file_hash = ? and pool_hash = ?",
+                .{},
+                .{ file_id, self.hash.id },
+            );
+        }
+
+        pub fn addFileAtIndex(self: PoolSelf, file_id: i64, index: usize) !void {
+            _ = self;
+            _ = file_id;
+            _ = index;
+            std.debug.todo("impl");
+        }
+
+        pub fn fetchFiles(self: PoolSelf, allocator: std.mem.Allocator) ![]Hash {
+            // TODO decrease repetition between this and File.fetchTags
+
+            var diags = sqlite.Diagnostics{};
+            var stmt = self.ctx.db.?.prepareWithDiags(
+                \\ select hashes.id, hashes.hash_data
+                \\ from pool_entries
+                \\ join hashes
+                \\ 	on pool_entries.file_hash = hashes.id
+                \\ where pool_entries.pool_hash = ?
+                \\ order by pool_entries.entry_index asc
+            , .{ .diags = &diags }) catch |err| {
+                log.err("unable to prepare statement, got error {s}. diagnostics: {s}", .{ err, diags });
+                return err;
+            };
+            defer stmt.deinit();
+
+            const internal_hashes = try stmt.all(
+                HashWithBlob,
+                allocator,
+                .{},
+                .{self.hash.id},
+            );
+            defer {
+                for (internal_hashes) |hash| allocator.free(hash.hash_data.data);
+                allocator.free(internal_hashes);
+            }
+
+            var list = HashList.init(allocator);
+            defer list.deinit();
+
+            for (internal_hashes) |hash| {
+                try list.append(hash.toRealHash());
+            }
+
+            return list.toOwnedSlice();
+        }
+    };
+
+    pub fn createPool(self: *Self, title: []const u8) !Pool {
+        // TODO decrease repetition with createNamedTag
+        var core_data: [64]u8 = undefined;
+        self.randomCoreData(&core_data);
+
+        var core_hash_bytes: Blake3Hash = undefined;
+        var hasher = std.crypto.hash.Blake3.initKdf(AWTFDB_BLAKE3_CONTEXT, .{});
+        hasher.update(&core_data);
+        hasher.final(&core_hash_bytes);
+
+        var savepoint = try self.db.?.savepoint("pool_core");
+        errdefer savepoint.rollback();
+        defer savepoint.commit();
+
+        const hash_blob = sqlite.Blob{ .data = &core_hash_bytes };
+        const core_hash_id = (try self.db.?.one(
+            i64,
+            "insert into hashes (hash_data) values (?) returning id",
+            .{},
+            .{hash_blob},
+        )).?;
+
+        // core_hash_bytes is passed by reference here, so we don't
+        // have to worry about losing it to undefined memory hell.
+
+        const core_data_blob = sqlite.Blob{ .data = &core_data };
+        try self.db.?.exec(
+            "insert into pools (pool_hash, pool_core_data, title) values (?, ?, ?)",
+            .{},
+            .{ core_hash_id, core_data_blob, title },
+        );
+
+        var pool_hash = Hash{ .id = core_hash_id, .hash_data = core_hash_bytes };
+        log.debug("created pool with hash {s}", .{pool_hash});
+        return Pool{
+            .ctx = self,
+            .hash = pool_hash,
+            .title = try self.allocator.dupe(u8, title),
+        };
+    }
+
+    pub fn fetchPool(self: *Self, hash_id: i64) !?Pool {
+        var maybe_pool = try self.db.?.oneAlloc(
+            struct {
+                title: []const u8,
+                hash_data: sqlite.Blob,
+            },
+            self.allocator,
+            \\ select title, hashes.hash_data
+            \\ from pools
+            \\ join hashes
+            \\ 	on pools.pool_hash = hashes.id
+            \\ where pools.pool_hash = ?
+        ,
+            .{},
+            .{hash_id},
+        );
+
+        if (maybe_pool) |*pool| {
+            // string memory is passed to client
+            defer self.allocator.free(pool.hash_data.data);
+
+            const almost_good_hash = HashWithBlob{
+                .id = hash_id,
+                .hash_data = pool.hash_data,
+            };
+            return Pool{
+                .ctx = self,
+                .hash = almost_good_hash.toRealHash(),
+                .title = pool.title,
+            };
+        } else {
+            return null;
         }
     }
 
@@ -1393,12 +1596,119 @@ test "tag parenting" {
     try std.testing.expect(saw_child);
 }
 
+test "file pools" {
+    var ctx = try makeTestContext();
+    defer ctx.deinit();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    var file1 = try tmp.dir.createFile("test_file1", .{});
+    defer file1.close();
+    _ = try file1.write("awooga1");
+
+    var file2 = try tmp.dir.createFile("test_file2", .{});
+    defer file2.close();
+    _ = try file2.write("awooga2");
+
+    var file3 = try tmp.dir.createFile("test_file3", .{});
+    defer file3.close();
+    _ = try file3.write("awooga3");
+
+    var indexed_file1 = try ctx.createFileFromDir(tmp.dir, "test_file1");
+    defer indexed_file1.deinit();
+    var indexed_file2 = try ctx.createFileFromDir(tmp.dir, "test_file2");
+    defer indexed_file2.deinit();
+    var indexed_file3 = try ctx.createFileFromDir(tmp.dir, "test_file3");
+    defer indexed_file3.deinit();
+
+    var child_tag = try ctx.createNamedTag("child_test_tag", "en", null);
+    try indexed_file1.addTag(child_tag.core);
+    try indexed_file2.addTag(child_tag.core);
+    try indexed_file3.addTag(child_tag.core);
+
+    // create pool
+    var pool = try ctx.createPool("this is my test pool title!");
+    defer pool.deinit();
+
+    {
+        var fetched_pool = (try ctx.fetchPool(pool.hash.id)).?;
+        defer fetched_pool.deinit();
+        try std.testing.expectEqual(pool.hash.id, fetched_pool.hash.id);
+    }
+
+    // add them all, assert its in order
+    {
+        try pool.addFile(indexed_file3.hash.id);
+        try pool.addFile(indexed_file1.hash.id);
+        try pool.addFile(indexed_file2.hash.id);
+
+        var file_hashes = try pool.fetchFiles(ctx.allocator);
+        defer ctx.allocator.free(file_hashes);
+
+        try std.testing.expectEqual(@as(usize, 3), file_hashes.len);
+        try std.testing.expect(file_hashes[0].id == indexed_file3.hash.id);
+        try std.testing.expect(file_hashes[1].id == indexed_file1.hash.id);
+        try std.testing.expect(file_hashes[2].id == indexed_file2.hash.id);
+    }
+
+    // remove one, assert it remains in order
+    {
+        try pool.removeFile(indexed_file1.hash.id);
+
+        var file_hashes = try pool.fetchFiles(ctx.allocator);
+        defer ctx.allocator.free(file_hashes);
+
+        try std.testing.expectEqual(@as(usize, 2), file_hashes.len);
+        try std.testing.expect(file_hashes[0].id == indexed_file3.hash.id);
+        try std.testing.expect(file_hashes[1].id == indexed_file2.hash.id);
+    }
+
+    // add it again, see it at end
+    {
+        try pool.addFile(indexed_file1.hash.id);
+
+        var file_hashes = try pool.fetchFiles(ctx.allocator);
+        defer ctx.allocator.free(file_hashes);
+
+        try std.testing.expectEqual(@as(usize, 3), file_hashes.len);
+        try std.testing.expect(file_hashes[0].id == indexed_file3.hash.id);
+        try std.testing.expect(file_hashes[1].id == indexed_file2.hash.id);
+        try std.testing.expect(file_hashes[2].id == indexed_file1.hash.id);
+    }
+
+    // remove one, assert it remains in order
+    {
+        try pool.removeFile(indexed_file1.hash.id);
+
+        var file_hashes = try pool.fetchFiles(ctx.allocator);
+        defer ctx.allocator.free(file_hashes);
+
+        try std.testing.expectEqual(@as(usize, 2), file_hashes.len);
+        try std.testing.expect(file_hashes[0].id == indexed_file3.hash.id);
+        try std.testing.expect(file_hashes[1].id == indexed_file2.hash.id);
+    }
+
+    // add it IN A SPECIFIED INDEX, see it at end
+    {
+        try pool.addFileAtIndex(indexed_file1.hash.id, 0);
+
+        var file_hashes = try pool.fetchFiles(ctx.allocator);
+        defer ctx.allocator.free(file_hashes);
+
+        try std.testing.expectEqual(@as(usize, 2), file_hashes.len);
+        try std.testing.expect(file_hashes[0].id == indexed_file1.hash.id);
+        try std.testing.expect(file_hashes[1].id == indexed_file3.hash.id);
+        try std.testing.expect(file_hashes[2].id == indexed_file2.hash.id);
+    }
+}
+
 test "everyone else" {
-    std.testing.refAllDecls(@import("./include_main.zig"));
-    std.testing.refAllDecls(@import("./rename_watcher_main.zig"));
-    std.testing.refAllDecls(@import("./find_main.zig"));
-    std.testing.refAllDecls(@import("./ls_main.zig"));
-    std.testing.refAllDecls(@import("./rm_main.zig"));
-    std.testing.refAllDecls(@import("./hydrus_api_main.zig"));
-    std.testing.refAllDecls(@import("./tags_main.zig"));
+    //std.testing.refAllDecls(@import("./include_main.zig"));
+    //std.testing.refAllDecls(@import("./rename_watcher_main.zig"));
+    //std.testing.refAllDecls(@import("./find_main.zig"));
+    //std.testing.refAllDecls(@import("./ls_main.zig"));
+    //std.testing.refAllDecls(@import("./rm_main.zig"));
+    //std.testing.refAllDecls(@import("./hydrus_api_main.zig"));
+    //std.testing.refAllDecls(@import("./tags_main.zig"));
 }
