@@ -198,7 +198,7 @@ const hzzp = @import("hzzp");
 test "index test" {
     if (@import("builtin").single_threaded) return error.SkipZigTest;
 
-    const address = try std.net.Address.parseIp("0.0.0.0", 8080);
+    const address = try std.net.Address.parseIp("0.0.0.0", 8089);
     var server = http.Server.init();
 
     var manage_ctx = try manage_main.makeTestContext();
