@@ -1050,11 +1050,43 @@ pub const Context = struct {
             );
         }
 
-        pub fn addFileAtIndex(self: PoolSelf, file_id: i64, index: usize) !void {
-            _ = self;
-            _ = file_id;
-            _ = index;
-            std.debug.todo("impl");
+        pub fn addFileAtIndex(
+            self: PoolSelf,
+            new_file_id: i64,
+            index: usize,
+        ) !void {
+            var all_file_hashes = try self.fetchFiles(self.ctx.allocator);
+            defer self.ctx.allocator.free(all_file_hashes);
+
+            var all_hash_ids = std.ArrayList(i64).init(self.ctx.allocator);
+            defer all_hash_ids.deinit();
+            for (all_file_hashes) |hash| try all_hash_ids.append(hash.id);
+
+            try all_hash_ids.insert(index, new_file_id);
+
+            // now we need to insert this *somewhere* in the table
+            //
+            // the "safest" way (in terms of DB consistency) to do so is to
+            // delete all pool_entries then reinsert them with the newly
+            // calculated indexes
+            //
+            // it's expensive, but the preffered API will always be
+            // addFile/removeFile which should be "blazing-fast"
+
+            {
+                var savepoint = try self.ctx.db.?.savepoint("pool_add_at_index");
+                errdefer savepoint.rollback();
+                defer savepoint.commit();
+
+                try self.ctx.db.?.exec("delete from pool_entries where pool_hash = ?", .{}, .{self.hash.id});
+                for (all_hash_ids.items) |pool_file_id, pool_index| {
+                    try self.ctx.db.?.exec(
+                        "insert into pool_entries (file_hash, pool_hash, entry_index) values (?, ?, ?)",
+                        .{},
+                        .{ pool_file_id, self.hash.id, pool_index },
+                    );
+                }
+            }
         }
 
         pub fn fetchFiles(self: PoolSelf, allocator: std.mem.Allocator) ![]Hash {
@@ -1696,7 +1728,7 @@ test "file pools" {
         var file_hashes = try pool.fetchFiles(ctx.allocator);
         defer ctx.allocator.free(file_hashes);
 
-        try std.testing.expectEqual(@as(usize, 2), file_hashes.len);
+        try std.testing.expectEqual(@as(usize, 3), file_hashes.len);
         try std.testing.expect(file_hashes[0].id == indexed_file1.hash.id);
         try std.testing.expect(file_hashes[1].id == indexed_file3.hash.id);
         try std.testing.expect(file_hashes[2].id == indexed_file2.hash.id);
@@ -1704,11 +1736,11 @@ test "file pools" {
 }
 
 test "everyone else" {
-    //std.testing.refAllDecls(@import("./include_main.zig"));
-    //std.testing.refAllDecls(@import("./rename_watcher_main.zig"));
-    //std.testing.refAllDecls(@import("./find_main.zig"));
-    //std.testing.refAllDecls(@import("./ls_main.zig"));
-    //std.testing.refAllDecls(@import("./rm_main.zig"));
-    //std.testing.refAllDecls(@import("./hydrus_api_main.zig"));
-    //std.testing.refAllDecls(@import("./tags_main.zig"));
+    std.testing.refAllDecls(@import("./include_main.zig"));
+    std.testing.refAllDecls(@import("./rename_watcher_main.zig"));
+    std.testing.refAllDecls(@import("./find_main.zig"));
+    std.testing.refAllDecls(@import("./ls_main.zig"));
+    std.testing.refAllDecls(@import("./rm_main.zig"));
+    std.testing.refAllDecls(@import("./hydrus_api_main.zig"));
+    std.testing.refAllDecls(@import("./tags_main.zig"));
 }
