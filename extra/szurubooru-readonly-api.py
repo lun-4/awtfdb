@@ -191,7 +191,7 @@ async def info():
                 "pools:edit:category": "power",
                 "pools:edit:description": "power",
                 "pools:edit:posts": "power",
-                "pools:list": "regular",
+                "pools:list": "anonymous",
                 "pools:view": "anonymous",
                 "pools:merge": "moderator",
                 "pools:delete": "moderator",
@@ -553,13 +553,23 @@ async def thumbnail(file_id: int):
 
 @app.get("/posts/")
 async def posts_fetch():
-    # GET /posts/?offset=<initial-pos>&limit=<page-size>&query=<query>
-    # GET /tags/?offset=<initial-pos>&limit=<page-size>&query=<query>
-    print(request.args)
     query = request.args.get("query", "")
     offset = int(request.args.get("offset", 0))
     limit = int(request.args.get("limit", 15))
     query = query.replace("\\:", ":")
+
+    if "pool:" in query:
+        # switch logic to fetching stuff from pool only in order lol
+        _, pool_id = query.split(":")
+        pool = await fetch_pool_entity(int(pool_id))
+        return {
+            "query": query,
+            "offset": offset,
+            "limit": limit,
+            "total": len(pool["posts"]),
+            "results": pool["posts"],
+        }
+
     result = compile_query(query)
     mapped_tag_args = []
     for tag_name in result.tags:
@@ -794,6 +804,81 @@ async def single_post_fetch_around(file_id: int):
         "prev": await fetch_file_entity(prev_id) if prev_id else None,
         "next": await fetch_file_entity(next_id) if next_id else None,
     }
+
+
+async def fetch_pool_entity(pool_hash: int):
+    pool_rows = await app.db.execute_fetchall(
+        "select title from pools where pool_hash = ?", [pool_hash]
+    )
+    if not pool_rows:
+        return None
+    pool_title = pool_rows[0][0]
+    count_rows = await app.db.execute_fetchall(
+        "select count(*) from pool_entries where pool_hash = ?", [pool_hash]
+    )
+    post_count = int(count_rows[0][0])
+
+    post_rows = await app.db.execute_fetchall(
+        "select file_hash from pool_entries where pool_hash = ? order by entry_index asc",
+        [pool_hash],
+    )
+    pool_posts = [await fetch_file_entity(row[0]) for row in post_rows]
+
+    return {
+        "version": 1,
+        "id": pool_hash,
+        "names": [pool_title],
+        "category": "default",
+        "posts": pool_posts,
+        "creationTime": "1900-01-01T00:00:00Z",
+        "lastEditTime": "1900-01-01T00:00:00Z",
+        "postCount": post_count,
+        "description": "",
+    }
+
+
+@app.get("/pools/")
+async def pools_fetch():
+    # GET /pools/?offset=<initial-pos>&limit=<page-size>&query=<query>
+    query = request.args.get("query", "")
+    offset = int(request.args.get("offset", 0))
+    limit = int(request.args.get("limit", 15))
+    query = query.replace("\\:", ":")
+
+    count_rows = await app.db.execute_fetchall(
+        f"""
+        select count(pool_hash)
+        from pools
+        where pools.title LIKE '%' || ? || '%'
+        """,
+        [query],
+    )
+    result_rows = await app.db.execute_fetchall(
+        f"""
+    select pool_hash
+    from pools
+    where pools.title LIKE '%' || ? || '%'
+    limit {limit}
+    offset {offset}
+    """,
+        [query],
+    )
+
+    pools = [await fetch_pool_entity(row[0]) for row in result_rows]
+    assert all(p is not None for p in pools)
+
+    return {
+        "query": query,
+        "offset": offset,
+        "limit": limit,
+        "total": count_rows[0][0],
+        "results": pools,
+    }
+
+
+@app.get("/pool/<int:pool_id>")
+async def single_pool_fetch(pool_id: int):
+    return await fetch_pool_entity(pool_id)
 
 
 @app.route("/tag-categories")
