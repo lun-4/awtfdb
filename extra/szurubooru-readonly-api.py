@@ -415,6 +415,7 @@ async def thumbnail_given_path(path: Path, thumbnail_path: Path, size=(350, 350)
 
 MIME_EXTENSION_MAPPING = {
     "video/x-matroska": ".mkv",
+    "video/mkv": ".mkv",
     "audio/x-m4a": ".m4a",
     "video/x-m4v": ".m4v",
     "video/3gpp": ".3gpp",
@@ -431,7 +432,7 @@ def get_extension(mimetype):
     return MIME_EXTENSION_MAPPING[mimetype]
 
 
-MIME_REMAPPING = {"video/x-matroska": "video/webm"}
+MIME_REMAPPING = {"video/x-matroska": "video/mkv"}
 
 
 def fetch_mimetype(file_path: str):
