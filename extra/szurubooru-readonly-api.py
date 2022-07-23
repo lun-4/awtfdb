@@ -735,6 +735,12 @@ async def fetch_file_entity(file_id: int, micro=False) -> dict:
     app.file_cache.canvas_size[file_id] = canvas_size
     app.file_cache.file_type[file_id] = file_type
 
+    pool_rows = await app.db.execute_fetchall(
+        "select pool_hash from pool_entries where file_hash = ?",
+        [file_id],
+    )
+    pools = [await fetch_pool_entity(row[0], micro=True) for row in pool_rows]
+
     return {
         "version": 1,
         "version": 1,
@@ -751,7 +757,15 @@ async def fetch_file_entity(file_id: int, micro=False) -> dict:
         "contentUrl": f"api/_awtfdb_content/{file_id}",
         "thumbnailUrl": f"api/_awtfdb_thumbnails/{file_id}",
         "flags": ["loop"],
-        "tags": file_tags,
+        "tags": file_tags
+        + [
+            {
+                "category": "default",
+                "names": [f'pool:{pool["id"]}'],
+                "usages": pool["postCount"],
+            }
+            for pool in pools
+        ],
         "relations": [],
         "notes": [],
         "user": {"name": "root", "avatarUrl": None},
@@ -769,7 +783,7 @@ async def fetch_file_entity(file_id: int, micro=False) -> dict:
         "hasCustomThumbnail": True,
         "mimeType": file_mime,
         "comments": [],
-        "pools": [],
+        "pools": pools,
     }
 
 
