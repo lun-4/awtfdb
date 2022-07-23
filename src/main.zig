@@ -434,7 +434,7 @@ pub const Context = struct {
             _ = options;
             _ = fmt;
 
-            return std.fmt.format(writer, "{s}", .{&self.toHex()});
+            return std.fmt.format(writer, "{d} {s}", .{ self.id, &self.toHex() });
         }
     };
 

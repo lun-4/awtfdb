@@ -19,15 +19,23 @@ const HELPTEXT =
     \\ 	--no-confirm			do not ask for confirmation on remove
     \\ 					commands.
     \\
-    \\ examples:
+    \\ examples of tag operations::
     \\ 	atags create tag
     \\ 	atags create --core lkdjfalskjg tag
     \\ 	atags search tag
     \\ 	atags remove --tag tag
     \\ 	atags remove --core dslkjfsldkjf
+    \\
+    \\ tag parent operations:
     \\ 	atags parent create child_tag parent_tag
     \\ 	atags parent list
     \\ 	atags parent remove id
+    \\
+    \\ pool operations:
+    \\ 	atags pool create "my pool title"
+    \\ 	atags pool search "my"
+    \\ 	atags pool fetch id
+    \\ 	atags pool remove id
 ;
 
 const ActionConfig = union(enum) {
@@ -38,6 +46,11 @@ const ActionConfig = union(enum) {
     CreateParent: CreateParent.Config,
     ListParent: void,
     RemoveParent: RemoveParent.Config,
+
+    CreatePool: CreatePool.Config,
+    FetchPool: FetchPool.Config,
+    SearchPool: SearchPool.Config,
+    RemovePool: RemovePool.Config,
 };
 
 const CreateAction = struct {
@@ -754,6 +767,203 @@ const RemoveParent = struct {
     }
 };
 
+const CreatePool = struct {
+    pub const Config = struct {
+        title: []const u8,
+    };
+
+    pub fn processArgs(args_it: *std.process.ArgIterator, given_args: *Args) !ActionConfig {
+        _ = given_args;
+        var config = Config{
+            .title = args_it.next() orelse return error.ExpectedPoolTitle,
+        };
+        return ActionConfig{ .CreatePool = config };
+    }
+
+    ctx: *Context,
+    config: Config,
+
+    const Self = @This();
+
+    pub fn init(ctx: *Context, config: Config) !Self {
+        return Self{ .ctx = ctx, .config = config };
+    }
+
+    pub fn deinit(self: *Self) void {
+        _ = self;
+    }
+
+    pub fn run(self: *Self) !void {
+        var stdout = std.io.getStdOut().writer();
+
+        var pool = try self.ctx.createPool(self.config.title);
+        defer pool.deinit();
+
+        try stdout.print(
+            "pool created with id {d}",
+            .{pool.hash},
+        );
+    }
+};
+
+const FetchPool = struct {
+    pub const Config = struct {
+        pool_id: i64,
+    };
+
+    pub fn processArgs(args_it: *std.process.ArgIterator, given_args: *Args) !ActionConfig {
+        _ = given_args;
+
+        const pool_id_str = args_it.next() orelse return error.ExpectedPoolTitle;
+        var config = Config{
+            .pool_id = try std.fmt.parseInt(i64, pool_id_str, 10),
+        };
+        return ActionConfig{ .FetchPool = config };
+    }
+
+    ctx: *Context,
+    config: Config,
+
+    const Self = @This();
+
+    pub fn init(ctx: *Context, config: Config) !Self {
+        return Self{ .ctx = ctx, .config = config };
+    }
+
+    pub fn deinit(self: *Self) void {
+        _ = self;
+    }
+
+    pub fn run(self: *Self) !void {
+        var stdout = std.io.getStdOut().writer();
+
+        var pool = (try self.ctx.fetchPool(self.config.pool_id)) orelse return error.PoolNotFound;
+        defer pool.deinit();
+
+        var file_hashes = try pool.fetchFiles(self.ctx.allocator);
+        defer self.ctx.allocator.free(file_hashes);
+
+        try stdout.print(
+            "pool '{s}' {s}\n",
+            .{ pool.title, pool.hash },
+        );
+
+        for (file_hashes) |file_hash| {
+            var file = (try self.ctx.fetchFile(file_hash.id)).?;
+            defer file.deinit();
+
+            try stdout.print("- {s}", .{file.local_path});
+            try file.printTagsTo(self.ctx.allocator, stdout);
+            try stdout.print("\n", .{});
+        }
+    }
+};
+
+const SearchPool = struct {
+    pub const Config = struct {
+        search_term: ?[]const u8 = null,
+    };
+
+    pub fn processArgs(args_it: *std.process.ArgIterator, given_args: *Args) !ActionConfig {
+        _ = given_args;
+        var config = Config{
+            .search_term = args_it.next() orelse return error.ExpectedSearchTerm,
+        };
+        return ActionConfig{ .SearchPool = config };
+    }
+
+    ctx: *Context,
+    config: Config,
+
+    const Self = @This();
+
+    pub fn init(ctx: *Context, config: Config) !Self {
+        return Self{ .ctx = ctx, .config = config };
+    }
+
+    pub fn deinit(self: *Self) void {
+        _ = self;
+    }
+
+    pub fn run(self: *Self) !void {
+        var stdout = std.io.getStdOut().writer();
+
+        var stmt = try self.ctx.db.?.prepare(
+            \\ select pool_hash
+            \\ from pools
+            \\ where pools.title LIKE '%' || ? || '%'
+        );
+        defer stmt.deinit();
+
+        var pool_hashes = try stmt.all(
+            i64,
+            self.ctx.allocator,
+            .{},
+            .{self.config.search_term.?},
+        );
+        defer self.ctx.allocator.free(pool_hashes);
+
+        for (pool_hashes) |pool_hash| {
+            var pool = (try self.ctx.fetchPool(pool_hash)).?;
+            defer pool.deinit();
+
+            try stdout.print(
+                "pool '{s}' {s}\n",
+                .{ pool.title, pool.hash },
+            );
+        }
+    }
+};
+
+const RemovePool = struct {
+    pub const Config = struct {
+        given_args: *Args,
+        pool_id: i64,
+    };
+
+    pub fn processArgs(args_it: *std.process.ArgIterator, given_args: *Args) !ActionConfig {
+        const fetch_config = try FetchPool.processArgs(args_it, given_args);
+        return ActionConfig{
+            .RemovePool = Config{ .given_args = given_args, .pool_id = fetch_config.FetchPool.pool_id },
+        };
+    }
+
+    ctx: *Context,
+    config: Config,
+
+    const Self = @This();
+
+    pub fn init(ctx: *Context, config: Config) !Self {
+        return Self{ .ctx = ctx, .config = config };
+    }
+
+    pub fn deinit(self: *Self) void {
+        _ = self;
+    }
+
+    pub fn run(self: *Self) !void {
+        var stdout = std.io.getStdOut().writer();
+
+        var pool = (try self.ctx.fetchPool(self.config.pool_id)) orelse return error.PoolNotFound;
+        defer pool.deinit();
+
+        try stdout.print(
+            "pool '{s}' {s} will be removed\n",
+            .{ pool.title, pool.hash },
+        );
+
+        var stdin = std.io.getStdIn();
+        if (self.config.given_args.ask_confirmation) {
+            var outcome: [1]u8 = undefined;
+            try stdout.print("do you want to remove the pool (y/n)? ", .{});
+            _ = try stdin.read(&outcome);
+            if (!std.mem.eql(u8, &outcome, "y")) return error.NotConfirmed;
+        }
+
+        try pool.delete();
+    }
+};
+
 const Args = struct {
     help: bool = false,
     version: bool = false,
@@ -779,7 +989,7 @@ pub fn main() anyerror!void {
     _ = args_it.skip();
 
     var given_args = Args{};
-    var arg_state: enum { None, Parent } = .None;
+    var arg_state: enum { None, Parent, Pool } = .None;
 
     while (args_it.next()) |arg| {
         switch (arg_state) {
@@ -797,6 +1007,24 @@ pub fn main() anyerror!void {
                 arg_state = .None;
                 continue;
             },
+
+            .Pool => {
+                if (std.mem.eql(u8, arg, "create")) {
+                    given_args.action_config = try CreatePool.processArgs(&args_it, &given_args);
+                } else if (std.mem.eql(u8, arg, "fetch")) {
+                    given_args.action_config = try FetchPool.processArgs(&args_it, &given_args);
+                } else if (std.mem.eql(u8, arg, "search")) {
+                    given_args.action_config = try SearchPool.processArgs(&args_it, &given_args);
+                } else if (std.mem.eql(u8, arg, "remove")) {
+                    given_args.action_config = try RemovePool.processArgs(&args_it, &given_args);
+                } else {
+                    log.err("{s} is an invalid pool action", .{arg});
+                    return error.InvalidPoolAction;
+                }
+                arg_state = .None;
+                continue;
+            },
+
             .None => {},
         }
 
@@ -816,6 +1044,8 @@ pub fn main() anyerror!void {
             given_args.action_config = try RemoveAction.processArgs(&args_it, &given_args);
         } else if (std.mem.eql(u8, arg, "parent")) {
             arg_state = .Parent;
+        } else if (std.mem.eql(u8, arg, "pool")) {
+            arg_state = .Pool;
         } else {
             log.err("{s} is an invalid action", .{arg});
             return error.InvalidAction;
@@ -876,6 +1106,28 @@ pub fn main() anyerror!void {
         },
         .RemoveParent => |config| {
             var self = try RemoveParent.init(&ctx, config);
+            defer self.deinit();
+            try self.run();
+        },
+
+        .CreatePool => |config| {
+            var self = try CreatePool.init(&ctx, config);
+            defer self.deinit();
+            try self.run();
+        },
+
+        .FetchPool => |config| {
+            var self = try FetchPool.init(&ctx, config);
+            defer self.deinit();
+            try self.run();
+        },
+        .SearchPool => |config| {
+            var self = try SearchPool.init(&ctx, config);
+            defer self.deinit();
+            try self.run();
+        },
+        .RemovePool => |config| {
+            var self = try RemovePool.init(&ctx, config);
             defer self.deinit();
             try self.run();
         },
