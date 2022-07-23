@@ -32,6 +32,9 @@ const HELPTEXT =
     \\ 					and they're not catched by the
     \\ 					rename watcher)
     \\ --dry-run			do not do any index file modifications
+    \\ -p pool_id			add given arguments in order into a pool
+    \\ 					(recommended to do it with files only,
+    \\ 					never folders)
     \\
     \\ example, adding a single file:
     \\  ainclude --tag format:mp4 --tag "meme:what the dog doing" /downloads/funny_meme.mp4
@@ -773,6 +776,7 @@ pub const Args = struct {
     default_tags: StringList,
     wanted_inferrers: ConfigList,
     include_paths: StringList,
+    pool: ?i64 = null,
 
     pub fn deinit(self: *@This()) void {
         self.default_tags.deinit();
@@ -814,7 +818,7 @@ pub fn main() anyerror!void {
     var args_it = std.process.args();
     _ = args_it.skip();
 
-    const ArgState = enum { None, FetchTag, InferMoreTags };
+    const ArgState = enum { None, FetchTag, InferMoreTags, FetchPool };
 
     var state: ArgState = .None;
 
@@ -832,6 +836,11 @@ pub fn main() anyerror!void {
         switch (state) {
             .FetchTag => {
                 try given_args.default_tags.append(arg);
+                state = .None;
+                continue;
+            },
+            .FetchPool => {
+                given_args.pool = try std.fmt.parseInt(i64, arg, 10);
                 state = .None;
                 continue;
             },
@@ -873,6 +882,8 @@ pub fn main() anyerror!void {
             // TODO check if this is supposed to be an argument or an
             // actual option by peeking over args_it. paths can have --
             // after all.
+        } else if (std.mem.eql(u8, arg, "-p") or std.mem.eql(u8, arg, "--pool")) {
+            state = .FetchPool;
         } else if (std.mem.startsWith(u8, arg, "--")) {
             return error.InvalidArgument;
         } else {
@@ -933,6 +944,12 @@ pub fn main() anyerror!void {
         }
     }
 
+    var maybe_pool: ?Context.Pool = null;
+    if (given_args.pool) |pool_id| {
+        maybe_pool = (try ctx.fetchPool(pool_id)) orelse return error.PoolNotFound;
+    }
+    defer if (maybe_pool) |pool| pool.deinit();
+
     var contexts = std.ArrayList(TagInferrerContext).init(allocator);
     defer contexts.deinit();
     for (given_args.wanted_inferrers.items) |inferrer_config| {
@@ -992,6 +1009,8 @@ pub fn main() anyerror!void {
             }
 
             try addTagList(&ctx, &file, tags_to_add);
+
+            if (maybe_pool) |pool| try pool.addFile(file.hash.id);
         } else {
             var walker = try dir.?.walk(allocator);
             defer walker.deinit();
@@ -1055,6 +1074,7 @@ pub fn main() anyerror!void {
                             }
 
                             try addTagList(&ctx, &file, tags_to_add);
+                            if (maybe_pool) |pool| try pool.addFile(file.hash.id);
                         }
                     },
                     else => {},

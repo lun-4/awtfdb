@@ -20,12 +20,16 @@ const HELPTEXT =
     \\ 					(TODO support folder paths)
     \\ 	-r				remove files recursively (in a folder)
     \\ 	-t tag				remove a tag from a file
+    \\ 					(does not delete the file)
+    \\ 	-p pool_id			remove a file from a pool
+    \\ 					(does not delete the file)
     \\ 	--dry-run			don't edit the index database
     \\
     \\ examples:
     \\  arm path/to/file
     \\  arm -r path/to/folder
     \\  arm -t mytag path/to/file
+    \\  arm -p 1234 file/in/pool
 ;
 
 const StringList = std.ArrayList([]const u8);
@@ -39,6 +43,8 @@ const Args = struct {
     dry_run: bool = false,
     paths: StringList,
     tags: CoreList,
+    pool: ?i64 = null,
+    pool: ?Context.Pool = null,
 };
 
 fn processFile(given_args: Args, file: *Context.File) !usize {
@@ -47,6 +53,9 @@ fn processFile(given_args: Args, file: *Context.File) !usize {
             try file.removeTag(tag_core);
         }
 
+        return 0;
+    } else if (given_args.pool) |pool| {
+        try pool.removeFile(file.hash.id);
         return 0;
     } else {
         try file.delete();
@@ -77,7 +86,7 @@ pub fn main() anyerror!void {
     defer given_args.paths.deinit();
     defer given_args.tags.deinit();
 
-    var state: enum { FetchTag, None } = .None;
+    var state: enum { FetchTag, None, FetchPool } = .None;
 
     var ctx = Context{
         .home_path = null,
@@ -101,6 +110,14 @@ pub fn main() anyerror!void {
                 state = .None;
                 continue;
             },
+
+            .FetchPool => {
+                const pool_id = try std.fmt.parseInt(i64, arg, 10);
+                given_args.pool = (try ctx.fetchPool(pool_id)) orelse return error.PoolNotFound;
+                state = .None;
+                continue;
+            },
+
             .None => {},
         }
 
@@ -116,6 +133,8 @@ pub fn main() anyerror!void {
             given_args.dry_run = true;
         } else if (std.mem.eql(u8, arg, "-t")) {
             state = .FetchTag;
+        } else if (std.mem.eql(u8, arg, "-p")) {
+            state = .FetchPool;
         } else {
             try given_args.paths.append(arg);
         }
@@ -134,6 +153,8 @@ pub fn main() anyerror!void {
         return error.MissingPath;
     }
     if (given_args.dry_run) try ctx.turnIntoMemoryDb();
+
+    defer if (given_args.pool) |pool| pool.deinit();
 
     var savepoint = try ctx.db.?.savepoint("remove_files");
     errdefer savepoint.rollback();
