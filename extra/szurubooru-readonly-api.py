@@ -562,12 +562,13 @@ async def posts_fetch():
         # switch logic to fetching stuff from pool only in order lol
         _, pool_id = query.split(":")
         pool = await fetch_pool_entity(int(pool_id))
+        posts = pool["posts"][offset:]
         return {
             "query": query,
             "offset": offset,
             "limit": limit,
-            "total": len(pool["posts"]),
-            "results": pool["posts"],
+            "total": len(posts),
+            "results": posts,
         }
 
     result = compile_query(query)
