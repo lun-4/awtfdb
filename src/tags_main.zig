@@ -799,10 +799,8 @@ const CreatePool = struct {
         var pool = try self.ctx.createPool(self.config.title);
         defer pool.deinit();
 
-        try stdout.print(
-            "pool created with id {d}",
-            .{pool.hash},
-        );
+        std.debug.print("pool created with id ", .{});
+        try stdout.print("{d}\n", .{pool.hash});
     }
 };
 
