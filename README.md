@@ -26,7 +26,7 @@ BY ME. I WORK ON THIS PART TIME. BEWARE OF BUGS.**
   - this was not tested as part of the v0.1 effort.
 - get [zig](https://github.com/ziglang/zig) (using recent unstable master)
   - yes that means things break from time to time
-- get [zigmod](https://github.com/nektro/zigmod) (tested with r77)
+- get [zigmod](https://github.com/nektro/zigmod) (tested with r80)
 - get libmagic
 - get libz
 - get graphicsmagick
