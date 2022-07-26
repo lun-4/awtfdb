@@ -13,8 +13,8 @@ jobs:
       - uses: actions/checkout@v3
       - uses: goto-bus-stop/setup-zig@v1.3.0
         with:
-          version: 0.10.0-dev.1902+42ed34d1f
-      - run: curl -L -w "%{http_code}" -o /usr/local/bin/zigmod https://github.com/nektro/zigmod/releases/download/r78/zigmod-x86_64-linux
+          version: 0.10.0-dev.3315+1a16b7214
+      - run: curl -L -w "%{http_code}" -o /usr/local/bin/zigmod https://github.com/nektro/zigmod/releases/download/r80/zigmod-x86_64-linux
       - run: chmod +x /usr/local/bin/zigmod
       - run: zigmod ci
       - run: sudo apt install -y libgraphicsmagick-q16-3 libgraphicsmagick1-dev zlib1g zlib1g-dev libmagic1
