@@ -677,7 +677,7 @@ fn fileThumbnail(
         };
     }
 
-    log.debug("id? {s} hash? {s}", .{ maybe_file_id, maybe_file_hash });
+    log.debug("id? {?s} hash? {?s}", .{ maybe_file_id, maybe_file_hash });
 
     var maybe_file: ?ManageContext.File = if (maybe_file_id != null)
         try ctx.manage.fetchFile(hash_id_parsed.?)
@@ -844,7 +844,7 @@ fn fileContents(
         };
     }
 
-    log.debug("id? {s} hash? {s}", .{ maybe_file_id, maybe_file_hash });
+    log.debug("id? {?s} hash? {?s}", .{ maybe_file_id, maybe_file_hash });
 
     var maybe_file: ?ManageContext.File = if (maybe_file_id != null)
         try ctx.manage.fetchFile(hash_id_parsed.?)

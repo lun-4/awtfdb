@@ -538,21 +538,23 @@ pub fn main() anyerror!void {
 
     const bpftrace_program = @embedFile("./rename_trace.bt");
 
-    var proc = try std.ChildProcess.init(
+    var proc = std.ChildProcess.init(
         &[_][]const u8{ "bpftrace", "-e", bpftrace_program },
         allocator,
     );
 
-    var envmap = std.BufMap.init(allocator);
+    var envmap = std.process.EnvMap.init(allocator);
     defer envmap.deinit();
     try envmap.put("BPFTRACE_STRLEN", "200");
     proc.env_map = &envmap;
 
-    defer proc.deinit();
-
     proc.stdout_behavior = .Pipe;
     proc.stderr_behavior = .Pipe;
     try proc.spawn();
+    defer {
+        // TODO make this look better? how to deinit a proc now?
+        _ = proc.kill() catch unreachable;
+    }
 
     var wait_pipe = try std.os.pipe();
     defer std.os.close(wait_pipe[0]);

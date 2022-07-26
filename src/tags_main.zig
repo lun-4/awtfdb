@@ -390,12 +390,12 @@ const RemoveAction = struct {
         }
 
         {
-            const referenced_files = try self.ctx.db.?.one(
+            const referenced_files = (try self.ctx.db.?.one(
                 i64,
                 "select count(*) from tag_files where core_hash = ?",
                 .{},
                 .{core_hash_id},
-            );
+            )) orelse 0;
             try stdout.print("{d} files reference this tag.\n", .{referenced_files});
         }
 
@@ -627,11 +627,11 @@ const CreateParent = struct {
     pub fn run(self: *Self) !void {
         var stdout = std.io.getStdOut().writer();
         const child_tag = (try self.ctx.fetchNamedTag(self.config.child_tag.?, "en")) orelse {
-            log.err("expected '{s}' to be a named tag", .{self.config.child_tag});
+            log.err("expected '{s}' to be a named tag", .{self.config.child_tag.?});
             return error.ChildTagNotFound;
         };
         const parent_tag = (try self.ctx.fetchNamedTag(self.config.parent_tag.?, "en")) orelse {
-            log.err("expected '{s}' to be a named tag", .{self.config.parent_tag});
+            log.err("expected '{s}' to be a named tag", .{self.config.parent_tag.?});
             return error.ParentTagNotFound;
         };
 

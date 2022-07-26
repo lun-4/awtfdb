@@ -204,7 +204,7 @@ pub const Context = struct {
         // ensure our database functions work
         var result = try self.db.?.one(i32, "select 123;", .{}, .{});
         if (result == null or result.? != 123) {
-            log.err("error on test statement: expected 123, got {d}", .{result});
+            log.err("error on test statement: expected 123, got {any}", .{result});
             return error.TestStatementFailed;
         }
 
@@ -1283,7 +1283,7 @@ pub const Context = struct {
             }
         }
 
-        const val = try self.db.?.one(i64, "PRAGMA integrity_check", .{}, .{});
+        const val = (try self.db.?.one(i64, "PRAGMA integrity_check", .{}, .{})) orelse return error.PossiblyFailedIntegrityCheck;
         log.debug("integrity check returned {d}", .{val});
         try self.db.?.exec("PRAGMA foreign_key_check", .{}, .{});
     }
@@ -1298,7 +1298,7 @@ pub const Context = struct {
 };
 
 pub export fn sqliteLog(_: ?*anyopaque, level: c_int, message: ?[*:0]const u8) callconv(.C) void {
-    log.info("sqlite logged level={d} msg={s}", .{ level, message });
+    log.info("sqlite logged level={d} msg={?*}", .{ level, message });
 }
 
 pub fn main() anyerror!void {
