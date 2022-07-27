@@ -943,7 +943,9 @@ async def pool_categories():
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO)
+    logging.basicConfig(
+        level=logging.DEBUG if os.environ.get("DEBUG") else logging.INFO
+    )
     uvloop.install()
     config = Config()
     config.bind = ["0.0.0.0:6666"]
