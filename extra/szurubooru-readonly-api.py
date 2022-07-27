@@ -279,6 +279,12 @@ class CompiledSearch:
 
 
 def compile_query(search_query: str) -> CompiledSearch:
+    forced_query = os.environ.get("AWTFDB_FORCED_QUERY")
+    if forced_query:
+        if not search_query:
+            search_query = forced_query
+        else:
+            search_query = f"{forced_query} {search_query}"
     or_operator = re.compile("( +)?\\|( +)?")
     not_operator = re.compile("( +)?-( +)?")
     and_operator = re.compile(" +")
