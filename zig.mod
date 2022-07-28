@@ -12,6 +12,7 @@ root_dependencies:
   - src: system_lib z
   - src: system_lib GraphicsMagick
   - src: system_lib GraphicsMagickWand
+  - src: git https://github.com/lun-4/expiring-hash-map.zig
   - src: git https://github.com/haze/tunez
     name: tunez
     main: src/main.zig

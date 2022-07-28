@@ -2,6 +2,7 @@ const std = @import("std");
 const sqlite = @import("sqlite");
 const manage_main = @import("main.zig");
 const Context = manage_main.Context;
+const ExpiringHashMap = @import("expiring-hash-map").ExpiringHashMap;
 
 const log = std.log.scoped(.awtfdb_watcher);
 
@@ -25,8 +26,8 @@ const HELPTEXT =
 const PidTid = struct { pid: std.os.pid_t, tid: std.os.pid_t };
 const StringAsList = std.ArrayList(u8);
 const ChunkedName = struct { state: enum { NeedMore, Complete }, data: StringAsList };
-const ChunkedNameMap = std.AutoHashMap(PidTid, ChunkedName);
-const NameMap = std.AutoHashMap(PidTid, []const u8);
+const ChunkedNameMap = ExpiringHashMap(30 * std.time.ns_per_s, 1024, PidTid, ChunkedName);
+const NameMap = ExpiringHashMap(30 * std.time.ns_per_s, 1024, PidTid, []const u8);
 
 const RenameContext = struct {
     allocator: std.mem.Allocator,
