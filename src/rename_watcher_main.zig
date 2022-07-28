@@ -45,7 +45,7 @@ const RenameContext = struct {
         self.newnames.deinit();
     }
 
-    pub fn processLine(self: *Self, line: []const u8) !void {
+    pub fn processLine(self: *Self, line: []const u8) anyerror!void {
         var line_it = std.mem.split(u8, line, ":");
 
         const version_string = line_it.next().?;
@@ -75,19 +75,25 @@ const RenameContext = struct {
                 else => return err,
             };
 
-            try self.cwds.put(pid_tid_key, cwd_path);
+            var to_remove = try self.cwds.put(pid_tid_key, cwd_path);
+            defer self.allocator.free(to_remove);
+            for (to_remove) |removed_value| self.allocator.free(removed_value);
         } else if (std.mem.eql(u8, message_type, "exit_execve")) {
             const return_value_as_string = line_it.next().?;
 
             // if unsuccessful execve, remove cwd
             if (!std.mem.eql(u8, return_value_as_string, "0")) {
-                const cwd_path = self.cwds.get(pid_tid_key);
-                defer if (cwd_path) |unpacked| self.allocator.free(unpacked);
+                const maybe_cwd_path = self.cwds.get(pid_tid_key);
+                defer if (maybe_cwd_path) |cwd_entry| switch (cwd_entry) {
+                    .expired, .has_value => |unpacked| self.allocator.free(unpacked),
+                };
                 _ = self.cwds.remove(pid_tid_key);
             }
         } else if (std.mem.eql(u8, message_type, "exit_process")) {
-            const cwd_path = self.cwds.get(pid_tid_key);
-            defer if (cwd_path) |unpacked| self.allocator.free(unpacked);
+            const maybe_cwd_path = self.cwds.get(pid_tid_key);
+            defer if (maybe_cwd_path) |cwd_entry| switch (cwd_entry) {
+                .expired, .has_value => |unpacked| self.allocator.free(unpacked),
+            };
             _ = self.cwds.remove(pid_tid_key);
         } else if (is_oldname_message or is_newname_message) {
             // i do this to account for paths that have the : character
@@ -98,16 +104,26 @@ const RenameContext = struct {
 
             var maybe_chunk = map_to_put_in.getPtr(pid_tid_key);
 
-            if (maybe_chunk) |chunk| {
-                switch (chunk.state) {
-                    .NeedMore => {
-                        const written_bytes = try chunk.data.writer().write(chunk_data);
-                        std.debug.assert(written_bytes == chunk_data.len);
-                        if (chunk_data.len < 200) {
-                            chunk.state = .Complete;
-                        }
+            if (maybe_chunk) |maybe_expired_chunk| {
+                switch (maybe_expired_chunk) {
+                    .expired => |chunk| {
+                        // if the chunk is expired, deinitialize it properly,
+                        // remove it from the global map
+                        // and reprocess the line so a new chunk is created
+                        chunk.data.deinit();
+                        _ = map_to_put_in.remove(pid_tid_key);
+                        return try self.processLine(line);
                     },
-                    .Complete => {},
+                    .has_value => |chunk| switch (chunk.state) {
+                        .NeedMore => {
+                            const written_bytes = try chunk.data.writer().write(chunk_data);
+                            std.debug.assert(written_bytes == chunk_data.len);
+                            if (chunk_data.len < 200) {
+                                chunk.state = .Complete;
+                            }
+                        },
+                        .Complete => {},
+                    },
                 }
             } else {
                 var chunk = ChunkedName{
@@ -121,10 +137,12 @@ const RenameContext = struct {
                     chunk.state = .Complete;
                 }
 
-                try map_to_put_in.put(
+                var removed_values = try map_to_put_in.put(
                     pid_tid_key,
                     chunk,
                 );
+                defer self.allocator.free(removed_values);
+                for (removed_values) |removed_value| removed_value.data.deinit();
             }
             std.debug.assert(map_to_put_in.count() > 0);
         } else if (std.mem.eql(u8, message_type, "exit_rename")) {
@@ -139,16 +157,34 @@ const RenameContext = struct {
             std.debug.assert(self.oldnames.count() > 0);
             std.debug.assert(self.newnames.count() > 0);
 
+            defer {
+                const maybe_oldname = self.oldnames.get(pid_tid_key);
+                if (maybe_oldname) |maybe_expired_oldname| switch (maybe_expired_oldname) {
+                    .has_value, .expired => |oldname| oldname.data.deinit(),
+                };
+                _ = self.oldnames.remove(pid_tid_key);
+            }
+            defer {
+                const maybe_newname = self.newnames.get(pid_tid_key);
+                if (maybe_newname) |maybe_expired_newname| switch (maybe_expired_newname) {
+                    .has_value, .expired => |newname| newname.data.deinit(),
+                };
+                _ = self.newnames.remove(pid_tid_key);
+            }
+            defer {
+                if (maybe_cwd) |maybe_expired_cwd| switch (maybe_expired_cwd) {
+                    .has_value, .expired => |cwd| self.allocator.free(cwd),
+                };
+                _ = self.cwds.remove(pid_tid_key);
+            }
+
             if (std.mem.eql(u8, return_value_as_string, "0")) {
-                defer _ = self.oldnames.remove(pid_tid_key);
-                defer _ = self.newnames.remove(pid_tid_key);
-                defer _ = self.cwds.remove(pid_tid_key);
-
-                defer old_name.?.data.deinit();
-                defer new_name.?.data.deinit();
-                defer if (maybe_cwd) |cwd| self.allocator.free(cwd);
-
-                try self.handleSucessfulRename(pid_tid_key, old_name.?.data.items, new_name.?.data.items, maybe_cwd);
+                try self.handleSucessfulRename(
+                    pid_tid_key,
+                    old_name.?.has_value.data.items,
+                    new_name.?.has_value.data.items,
+                    if (maybe_cwd) |cwd| cwd.has_value else null,
+                );
             }
         }
     }
