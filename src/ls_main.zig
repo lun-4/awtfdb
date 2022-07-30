@@ -47,6 +47,7 @@ pub fn main() anyerror!void {
     const Args = struct {
         help: bool = false,
         version: bool = false,
+        force: bool = false,
         paths: StringList,
     };
 
@@ -58,6 +59,8 @@ pub fn main() anyerror!void {
             given_args.help = true;
         } else if (std.mem.eql(u8, arg, "-V")) {
             given_args.version = true;
+        } else if (std.mem.eql(u8, arg, "-f")) {
+            given_args.force = true;
         } else {
             try given_args.paths.append(arg);
         }
@@ -104,6 +107,17 @@ pub fn main() anyerror!void {
                 try file.printTagsTo(allocator, stdout);
                 try stdout.print("\n", .{});
             }
+            continue;
+        }
+
+        if (given_args.force) {
+            var maybe_inner_file = try ctx.fetchFileByPath(query);
+            try stdout.print("- {s}", .{query});
+            if (maybe_inner_file) |*file| {
+                defer file.deinit();
+                try file.printTagsTo(allocator, stdout);
+            }
+
             continue;
         }
 
