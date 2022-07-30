@@ -137,18 +137,18 @@ fn mainHandler(
     @setEvalBranchQuota(1000000);
 
     const router = comptime http.router.Router(*Context, &.{
-        builder.get("/", null, index),
-        builder.get("/api_version", null, apiVersion),
-        builder.options("/verify_access_key", null, corsHandler),
-        builder.get("/verify_access_key", null, verifyAccessKey),
-        builder.options("/get_files/search_files", null, corsHandler),
-        builder.get("/get_files/search_files", null, searchFiles),
-        builder.options("/get_files/file_metadata", null, corsHandler),
-        builder.get("/get_files/file_metadata", null, fileMetadata),
-        builder.options("/get_files/thumbnail", null, corsHandler),
-        builder.get("/get_files/thumbnail", null, fileThumbnail),
-        builder.options("/get_files/file", null, corsHandler),
-        builder.get("/get_files/file", null, fileContents),
+        builder.get("/", index),
+        builder.get("/api_version", apiVersion),
+        builder.options("/verify_access_key", corsHandler),
+        builder.get("/verify_access_key", verifyAccessKey),
+        builder.options("/get_files/search_files", corsHandler),
+        builder.get("/get_files/search_files", searchFiles),
+        builder.options("/get_files/file_metadata", corsHandler),
+        builder.get("/get_files/file_metadata", fileMetadata),
+        builder.options("/get_files/thumbnail", corsHandler),
+        builder.get("/get_files/thumbnail", fileThumbnail),
+        builder.options("/get_files/file", corsHandler),
+        builder.get("/get_files/file", fileContents),
     });
 
     try writeCors(response);
@@ -172,10 +172,8 @@ fn corsHandler(
     ctx: *Context,
     response: *http.Response,
     request: http.Request,
-    captures: ?*const anyopaque,
 ) !void {
     if (!wantMethod(request, response, .{.options})) return;
-    std.debug.assert(captures == null);
     _ = request;
     _ = ctx;
     try writeCors(response);
@@ -185,9 +183,7 @@ fn index(
     ctx: *Context,
     response: *http.Response,
     request: http.Request,
-    captures: ?*const anyopaque,
 ) !void {
-    std.debug.assert(captures == null);
     _ = request;
     _ = ctx;
     try response.writer().writeAll("Hello Zig!\n");
@@ -258,9 +254,7 @@ fn apiVersion(
     ctx: *Context,
     response: *http.Response,
     request: http.Request,
-    captures: ?*const anyopaque,
 ) !void {
-    std.debug.assert(captures == null);
     _ = request;
     _ = ctx;
 
@@ -389,10 +383,8 @@ fn verifyAccessKey(
     ctx: *Context,
     response: *http.Response,
     request: http.Request,
-    captures: ?*const anyopaque,
 ) !void {
     if (!wantMethod(request, response, .{.get})) return;
-    std.debug.assert(captures == null);
     _ = request;
     _ = ctx;
 
@@ -435,10 +427,8 @@ fn searchFiles(
     ctx: *Context,
     response: *http.Response,
     request: http.Request,
-    captures: ?*const anyopaque,
 ) !void {
     if (!wantMethod(request, response, .{.get})) return;
-    std.debug.assert(captures == null);
     _ = ctx;
 
     if (!wantAuth(ctx, response, request)) return;
@@ -516,9 +506,7 @@ fn fileMetadata(
     ctx: *Context,
     response: *http.Response,
     request: http.Request,
-    captures: ?*const anyopaque,
 ) !void {
-    _ = captures;
     if (!wantMethod(request, response, .{.get})) return;
     if (!wantAuth(ctx, response, request)) return;
 
@@ -638,9 +626,7 @@ fn fileThumbnail(
     ctx: *Context,
     response: *http.Response,
     request: http.Request,
-    captures: ?*const anyopaque,
 ) !void {
-    _ = captures;
     if (!wantMethod(request, response, .{.get})) return;
     if (!wantAuth(ctx, response, request)) return;
 
@@ -803,9 +789,7 @@ fn fileContents(
     ctx: *Context,
     response: *http.Response,
     request: http.Request,
-    captures: ?*const anyopaque,
 ) !void {
-    _ = captures;
     if (!wantMethod(request, response, .{.get})) return;
     if (!wantAuth(ctx, response, request)) return;
 
