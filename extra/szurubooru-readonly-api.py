@@ -414,7 +414,7 @@ def blocking_thumbnail_image(path, thumbnail_path, size):
 
 
 async def thumbnail_given_path(path: Path, thumbnail_path: Path, size=(350, 350)):
-    await app.loop.run_in_executor(
+    return await app.loop.run_in_executor(
         None, blocking_thumbnail_image, path, thumbnail_path, size
     )
 
@@ -460,7 +460,11 @@ async def thumbnail_given_video(file_local_path, thumbnail_path):
     out, err = await proc.communicate()
     out, err = out.strip().decode(), err.decode()
     log.info("out: %r, err: %r", out, err)
-    assert proc.returncode == 0
+    if proc.returncode != 0:
+        log.warn(
+            "ffmpeg (time calculator) returned non-zero exit code %d", proc.returncode
+        )
+        return False
 
     total_seconds = int(float(out))
     total_5percent_seconds = total_seconds // 15
@@ -476,9 +480,11 @@ async def thumbnail_given_video(file_local_path, thumbnail_path):
     out, err = await proc.communicate()
     out, err = out.decode(), err.decode()
     log.info("out: %r, err: %r", out, err)
-    assert proc.returncode == 0
+    if proc.returncode != 0:
+        log.warn("ffmpeg (thumbnailer) returned non-zero exit code %d", proc.returncode)
+        return False
 
-    await thumbnail_given_path(str(thumbnail_path), str(thumbnail_path))
+    return await thumbnail_given_path(str(thumbnail_path), str(thumbnail_path))
 
 
 async def thumbnail_given_pdf(file_local_path, thumbnail_path):
@@ -492,12 +498,14 @@ async def thumbnail_given_pdf(file_local_path, thumbnail_path):
     log.info("out: %r, err: %r", out, err)
     assert proc.returncode == 0
 
-    await thumbnail_given_path(str(thumbnail_path), str(thumbnail_path), (600, 600))
+    return await thumbnail_given_path(
+        str(thumbnail_path), str(thumbnail_path), (600, 600)
+    )
 
 
 async def _thumbnail_wrapper(semaphore, function, local_path, thumb_path):
     async with semaphore:
-        await function(local_path, thumb_path)
+        return await function(local_path, thumb_path)
 
 
 async def submit_thumbnail(file_id, mimetype, file_local_path, thumbnail_path):
@@ -527,6 +535,9 @@ async def submit_thumbnail(file_id, mimetype, file_local_path, thumbnail_path):
         app.thumbnailing_tasks[file_id] = task
 
     await asyncio.gather(task)
+    result = task.result()
+    if result is False:
+        return None
     try:
         app.thumbnailing_tasks.pop(file_id)
     except KeyError:
@@ -546,7 +557,6 @@ async def thumbnail(file_id: int):
     assert extension is not None
 
     thumbnail_path = THUMBNAIL_FOLDER / f"{file_id}{extension}"
-
     thumbnail_path = await submit_thumbnail(
         file_id, mimetype, file_local_path, thumbnail_path
     )
@@ -733,9 +743,14 @@ async def fetch_file_entity(file_id: int, micro=False) -> dict:
         out, err = out.decode().strip(), err.decode()
         log.info("out: %r, err: %r", out, err)
         canvas_size = out.split("x")
+        if not out:
+            canvas_size = (None, None)
+
     elif canvas_size is None:
         canvas_size = (None, None)
         file_type = "image"
+
+    log.info("canvas size: %r", canvas_size)
 
     assert len(canvas_size) == 2
     assert file_type in ("image", "animation", "video", "flash")
