@@ -162,7 +162,7 @@ const CreateAction = struct {
             const sql_result = switch (wrapped_sql_result) {
                 .Ok => |ok_body| ok_body,
                 .Error => |error_body| {
-                    log.err("parse error at character {d}: {s}", .{ error_body.character, error_body.error_type });
+                    log.err("parse error at character {d}: {}", .{ error_body.character, error_body.error_type });
                     return error.ParseErrorHappened;
                 },
             };

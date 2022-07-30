@@ -1101,7 +1101,7 @@ pub const Context = struct {
                 \\ where pool_entries.pool_hash = ?
                 \\ order by pool_entries.entry_index asc
             , .{ .diags = &diags }) catch |err| {
-                log.err("unable to prepare statement, got error {s}. diagnostics: {s}", .{ err, diags });
+                log.err("unable to prepare statement, got error {}. diagnostics: {s}", .{ err, diags });
                 return err;
             };
             defer stmt.deinit();
@@ -1266,7 +1266,7 @@ pub const Context = struct {
                     log.info("running migration {d}", .{decl_version});
                     var diags = sqlite.Diagnostics{};
                     self.db.?.execMulti(decl_sql, .{ .diags = &diags }) catch |err| {
-                        log.err("unable to prepare statement, got error {s}. diagnostics: {s}", .{ err, diags });
+                        log.err("unable to prepare statement, got error {s}. diagnostics: {s}", .{ @errorName(err), diags });
                         return err;
                     };
 

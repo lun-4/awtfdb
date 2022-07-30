@@ -130,7 +130,7 @@ pub fn main() anyerror!void {
     const result = switch (wrapped_result) {
         .Ok => |ok_body| ok_body,
         .Error => |error_body| {
-            log.err("error at character {d}: {s}", .{ error_body.character, error_body.error_type });
+            log.err("error at character {d}: {}", .{ error_body.character, error_body.error_type });
             return error.ParseErrorHappened;
         },
     };

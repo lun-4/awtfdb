@@ -468,7 +468,7 @@ fn searchFiles(
             try writeError(
                 response,
                 .bad_request,
-                "query has error at character {d}: {s}",
+                "query has error at character {d}: {}",
                 .{ error_body.character, error_body.error_type },
             );
             return;

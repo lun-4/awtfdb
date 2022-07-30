@@ -238,7 +238,7 @@ const RegexTagInferrer = struct {
                 arg = args_it.next() orelse break;
                 arg_state = .None;
             }
-            log.debug("(regex tag inferrer, main loop) state: {s} arg: {s}", .{ arg_state, arg });
+            log.debug("(regex tag inferrer, main loop) state: {} arg: {s}", .{ arg_state, arg });
 
             if (std.mem.eql(u8, arg, "--regex")) {
                 arg_state = .Text;
@@ -377,7 +377,7 @@ const AudioMetadataTagInferrer = struct {
                 arg = args_it.next() orelse break;
                 arg_state = .None;
             }
-            log.debug("(audio tag inferrer, main loop) state: {s} arg: {s}", .{ arg_state, arg });
+            log.debug("(audio tag inferrer, main loop) state: {} arg: {s}", .{ arg_state, arg });
 
             if (std.mem.eql(u8, arg, "--artist-tag-scope")) {
                 arg_state = .ArtistTagScope;
@@ -645,7 +645,7 @@ const MimeTagInferrer = struct {
                 arg = args_it.next() orelse break;
                 arg_state = .None;
             }
-            log.debug("(mime tag inferrer, main loop) state: {s} arg: {s}", .{ arg_state, arg });
+            log.debug("(mime tag inferrer, main loop) state: {} arg: {s}", .{ arg_state, arg });
 
             if (std.mem.eql(u8, arg, "--mime-tag-scope")) {
                 arg_state = .TagScopeMimetype;
@@ -832,7 +832,7 @@ pub fn main() anyerror!void {
     var arg: []const u8 = undefined;
     while (args_it.next()) |arg_from_loop| {
         arg = arg_from_loop;
-        log.debug("state: {s} arg: {s}", .{ state, arg });
+        log.debug("state: {} arg: {s}", .{ state, arg });
         switch (state) {
             .FetchTag => {
                 try given_args.default_tags.append(arg);
@@ -859,7 +859,7 @@ pub fn main() anyerror!void {
             },
             .None => {},
         }
-        log.debug("(possible transition) state: {s} arg: {s}", .{ state, arg });
+        log.debug("(possible transition) state: {} arg: {s}", .{ state, arg });
 
         if (std.mem.eql(u8, arg, "-h")) {
             given_args.help = true;
