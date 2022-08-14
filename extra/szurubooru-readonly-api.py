@@ -404,7 +404,8 @@ async def content(file_id: int):
     if not file_local_path:
         return "", 404
 
-    return await send_file(file_local_path)
+    mimetype = fetch_mimetype(file_local_path)
+    return await send_file(file_local_path, mimetype=mimetype)
 
 
 def blocking_thumbnail_image(path, thumbnail_path, size):
