@@ -7,6 +7,7 @@ import re
 import logging
 import mimetypes
 import uvloop
+import textwrap
 from pathlib import Path
 from typing import Optional, List
 from dataclasses import dataclass
@@ -17,7 +18,7 @@ import magic
 import aiosqlite
 from quart import Quart, request, send_file as quart_send_file
 from quart.ctx import copy_current_app_context
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont
 
 
 log = logging.getLogger(__name__)
@@ -420,6 +421,34 @@ async def thumbnail_given_path(path: Path, thumbnail_path: Path, size=(350, 350)
     )
 
 
+font = ImageFont.truetype("Arial", size=35)
+
+
+def blocking_thumbnail_filepath(file_path, thumbnail_path, size):
+    thumbnail_image = Image.new("RGB", (500, 500), (255, 255, 255))
+
+    # draw file_path's name
+    draw = ImageDraw.Draw(thumbnail_image)
+
+    offset_y = 10
+    for line in textwrap.wrap(Path(file_path).name, width=25):
+        draw.text((15, offset_y), line, fill=(0, 0, 0), font=font)
+        bbox = font.getbbox(line)
+        offset_y = offset_y + (bbox[3] - bbox[1]) + 2
+
+    thumbnail_image.save(thumbnail_path)
+
+
+async def thumbnail_given_path_only_filename(
+    path: Path, thumbnail_path: Path, size=(350, 350)
+):
+    """Fallback for mime types that only want to spit out their filename
+    as a thumbnail"""
+    return await app.loop.run_in_executor(
+        None, blocking_thumbnail_filepath, path, thumbnail_path, size
+    )
+
+
 MIME_EXTENSION_MAPPING = {
     "video/x-matroska": ".mkv",
     "video/mkv": ".mkv",
@@ -521,6 +550,10 @@ async def submit_thumbnail(file_id, mimetype, file_local_path, thumbnail_path):
         thumbnail_path = thumbnail_path.parent / f"{file_id}.png"
         thumbnailing_function = thumbnail_given_video
         semaphore = app.expensive_thumbnail_semaphore
+    elif mimetype.startswith("audio/"):
+        thumbnail_path = thumbnail_path.parent / f"{file_id}.png"
+        thumbnailing_function = thumbnail_given_path_only_filename
+        semaphore = app.image_thumbnail_semaphore
     else:
         return None
 
@@ -753,7 +786,7 @@ async def fetch_file_entity(file_id: int, micro=False) -> dict:
         canvas_size = (None, None)
         file_type = "image"
 
-    log.info("canvas size: %r", canvas_size)
+    log.info("file %d canvas size: %r", file_id, canvas_size)
 
     assert len(canvas_size) == 2
     assert file_type in ("image", "animation", "video", "flash", "audio")
