@@ -746,7 +746,9 @@ async def fetch_file_entity(file_id: int, micro=False) -> dict:
         canvas_size = out.split("x")
         if not out:
             canvas_size = (None, None)
-
+    elif canvas_size is None and file_mime.startswith("audio/"):
+        canvas_size = (None, None)
+        file_type = "audio"
     elif canvas_size is None:
         canvas_size = (None, None)
         file_type = "image"
@@ -754,7 +756,7 @@ async def fetch_file_entity(file_id: int, micro=False) -> dict:
     log.info("canvas size: %r", canvas_size)
 
     assert len(canvas_size) == 2
-    assert file_type in ("image", "animation", "video", "flash")
+    assert file_type in ("image", "animation", "video", "flash", "audio")
     app.file_cache.canvas_size[file_id] = canvas_size
     app.file_cache.file_type[file_id] = file_type
 
