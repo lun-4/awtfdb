@@ -669,39 +669,50 @@ const ListParent = struct {
     }
 
     pub fn run(self: *Self) !void {
-        var stdout = std.io.getStdOut().writer();
+        var raw_stdout = std.io.getStdOut().writer();
 
         var stmt = try self.ctx.db.?.prepare(
-            "select rowid,child_tag,parent_tag from tag_implications",
+            \\ select rowid,
+            \\  parent_tag,
+            \\ 	(select tag_text from tag_names where core_hash = parent_tag),
+            \\ 	child_tag,
+            \\ 	(select tag_text from tag_names where core_hash = child_tag)
+            \\ from tag_implications
         );
         defer stmt.deinit();
-        var iter = try stmt.iterator(struct {
+        var entries = try stmt.all(struct {
             rowid: i64,
-            child_tag: i64,
-            parent_tag: i64,
-        }, .{});
-        while (try iter.next(.{})) |tree_row| {
-            const child_tags = try self.ctx.fetchTagsFromCore(
-                self.ctx.allocator,
-                .{ .id = tree_row.child_tag, .hash_data = undefined },
-            );
-            try stdout.print("{d}: ", .{tree_row.rowid});
-            defer child_tags.deinit();
-            for (child_tags.items) |child_tag| {
-                try stdout.print("{s} ", .{child_tag});
+            parent_tag_id: i64,
+            parent_tag: []const u8,
+            child_tag_id: i64,
+            child_tag: []const u8,
+        }, self.ctx.allocator, .{}, .{});
+        defer {
+            for (entries) |entry| {
+                self.ctx.allocator.free(entry.child_tag);
+                self.ctx.allocator.free(entry.parent_tag);
             }
-            try stdout.print("-> ", .{});
-
-            const parent_tags = try self.ctx.fetchTagsFromCore(
-                self.ctx.allocator,
-                .{ .id = tree_row.parent_tag, .hash_data = undefined },
-            );
-            defer parent_tags.deinit();
-            for (parent_tags.items) |parent_tag| {
-                try stdout.print("{s} ", .{parent_tag});
-            }
-            try stdout.print("\n", .{});
+            self.ctx.allocator.free(entries);
         }
+
+        const BufferedFileWriter = std.io.BufferedWriter(4096, std.fs.File.Writer);
+        var buffered_stdout = BufferedFileWriter{ .unbuffered_writer = raw_stdout };
+        var stdout = buffered_stdout.writer();
+
+        for (entries) |tree_row| {
+            try stdout.print(
+                "{d}: {d} {s} -> {d} {s}\n",
+                .{
+                    tree_row.rowid,
+                    tree_row.child_tag_id,
+                    tree_row.child_tag,
+                    tree_row.parent_tag_id,
+                    tree_row.parent_tag,
+                },
+            );
+        }
+
+        try buffered_stdout.flush();
     }
 };
 
