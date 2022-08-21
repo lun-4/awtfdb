@@ -424,19 +424,31 @@ async def thumbnail_given_path(path: Path, thumbnail_path: Path, size=(350, 350)
 font = ImageFont.truetype("Arial", size=35)
 
 
-def blocking_thumbnail_filepath(file_path, thumbnail_path, size):
+def blocking_thumbnail_any_text(file_path, thumbnail_path, size, text):
     thumbnail_image = Image.new("RGB", (500, 500), (255, 255, 255))
 
     # draw file_path's name
     draw = ImageDraw.Draw(thumbnail_image)
 
     offset_y = 10
-    for line in textwrap.wrap(Path(file_path).name, width=25):
+    for line in textwrap.wrap(text, width=25):
         draw.text((15, offset_y), line, fill=(0, 0, 0), font=font)
         bbox = font.getbbox(line)
         offset_y = offset_y + (bbox[3] - bbox[1]) + 2
 
     thumbnail_image.save(thumbnail_path)
+
+
+def blocking_thumbnail_filepath(file_path, thumbnail_path, size):
+    blocking_thumbnail_any_text(file_path, thumbnail_path, size, Path(file_path).name)
+
+
+def blocking_thumbnail_file_contents(file_path, thumbnail_path, size):
+    file_path = Path(file_path)
+    with file_path.open(mode="r") as fd:
+        first_256_bytes = fd.read(256)
+
+    blocking_thumbnail_any_text(file_path, thumbnail_path, size, first_256_bytes)
 
 
 async def thumbnail_given_path_only_filename(
@@ -446,6 +458,16 @@ async def thumbnail_given_path_only_filename(
     as a thumbnail"""
     return await app.loop.run_in_executor(
         None, blocking_thumbnail_filepath, path, thumbnail_path, size
+    )
+
+
+async def thumbnail_given_path_file_contents(
+    path: Path, thumbnail_path: Path, size=(350, 350)
+):
+    """Fallback for mime types that only want to spit out their filename
+    as a thumbnail"""
+    return await app.loop.run_in_executor(
+        None, blocking_thumbnail_file_contents, path, thumbnail_path, size
     )
 
 
@@ -553,6 +575,10 @@ async def submit_thumbnail(file_id, mimetype, file_local_path, thumbnail_path):
     elif mimetype.startswith("audio/"):
         thumbnail_path = thumbnail_path.parent / f"{file_id}.png"
         thumbnailing_function = thumbnail_given_path_only_filename
+        semaphore = app.image_thumbnail_semaphore
+    elif mimetype.startswith("text/"):
+        thumbnail_path = thumbnail_path.parent / f"{file_id}.png"
+        thumbnailing_function = thumbnail_given_path_file_contents
         semaphore = app.image_thumbnail_semaphore
     else:
         return None
