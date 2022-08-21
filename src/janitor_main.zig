@@ -357,9 +357,9 @@ pub fn main() anyerror!u8 {
     defer savepoint.commit();
 
     // calculate hashes for tag_cores
-    //try janitorCheckFiles(&ctx, &counters, given_args);
-    //try janitorCheckCores(&ctx, &counters, given_args);
-    //try janitorCheckUnusedHashes(&ctx, &counters, given_args);
+    try janitorCheckFiles(&ctx, &counters, given_args);
+    try janitorCheckCores(&ctx, &counters, given_args);
+    try janitorCheckUnusedHashes(&ctx, &counters, given_args);
 
     // garbage collect unused entires in hashes table
 
