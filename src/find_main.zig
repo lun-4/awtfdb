@@ -171,9 +171,11 @@ pub fn main() anyerror!void {
         // file entity anymore.
         try returned_files.append(file);
 
-        try stdout.writer().print("{s}", .{file.local_path});
-        try file.printTagsTo(allocator, stderr.writer());
-        try stdout.writer().print("\n", .{});
+        if (!given_args.link) {
+            try stdout.writer().print("{s}", .{file.local_path});
+            try file.printTagsTo(allocator, stderr.writer());
+            try stdout.writer().print("\n", .{});
+        }
     }
 
     log.info("found {d} files", .{returned_files.items.len});
