@@ -256,22 +256,48 @@ pub fn janitorCheckFiles(
                 counters.incorrect_hash_files.total += 1;
 
                 log.err(
-                    "hashes are incorrect for file {d}",
-                    .{row.file_hash},
+                    "hashes are incorrect for file {d} (wanted '{s}', got '{s}')",
+                    .{ row.file_hash, calculated_hash, indexed_file.hash },
                 );
 
                 if (given_args.repair) {
-                    log.warn("repair: forcefully setting hash for file {d}", .{row.file_hash});
-
+                    log.warn("repair: forcefully setting hash for file {d} '{s}'", .{ row.file_hash, calculated_hash.toHex() });
                     const hash_blob = sqlite.Blob{ .data = &calculated_hash.hash_data };
-                    try ctx.db.?.exec(
-                        \\ update hashes
-                        \\ set hash_data = ?
-                        \\ where id = ?
-                    ,
+
+                    const maybe_preexisting_hash_id = try ctx.db.?.one(
+                        i64,
+                        "select id from hashes where hash_data = ?",
                         .{},
-                        .{ hash_blob, row.file_hash },
+                        .{hash_blob},
                     );
+                    if (maybe_preexisting_hash_id) |preexisting_hash_id| {
+                        // we already have calculated_hash in the table, and so,
+                        // running an update would cause issues with UNIQUE
+                        // constraint.
+                        //
+                        // the fix here is to repoint file hash to the existing
+                        // one, then garbage collect the old one in a separate
+                        // janitor run
+                        log.info("target hash already exists {d}, setting file to it", .{preexisting_hash_id});
+
+                        try ctx.db.?.exec(
+                            \\ update files
+                            \\ set file_hash = ?
+                            \\ where file_hash = ?
+                        ,
+                            .{},
+                            .{ preexisting_hash_id, row.file_hash },
+                        );
+                    } else {
+                        try ctx.db.?.exec(
+                            \\ update hashes
+                            \\ set hash_data = ?
+                            \\ where id = ?
+                        ,
+                            .{},
+                            .{ hash_blob, row.file_hash },
+                        );
+                    }
                 }
                 continue;
             }
