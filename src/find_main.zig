@@ -155,8 +155,16 @@ pub fn main() anyerror!void {
     log.debug("found tag cores: {any}", .{resolved_tag_cores.items});
 
     var it = try stmt.iterator(i64, resolved_tag_cores.items);
-    var stdout = std.io.getStdOut();
-    var stderr = std.io.getStdErr();
+
+    const BufferedFileWriter = std.io.BufferedWriter(4096, std.fs.File.Writer);
+
+    var raw_stdout = std.io.getStdOut();
+    var buffered_stdout = BufferedFileWriter{ .unbuffered_writer = raw_stdout.writer() };
+    var stdout = buffered_stdout.writer();
+
+    var raw_stderr = std.io.getStdErr();
+    var buffered_stderr = BufferedFileWriter{ .unbuffered_writer = raw_stderr.writer() };
+    var stderr = buffered_stderr.writer();
 
     var returned_files = std.ArrayList(Context.File).init(allocator);
     defer {
@@ -171,10 +179,14 @@ pub fn main() anyerror!void {
         // file entity anymore.
         try returned_files.append(file);
 
+        // TODO how to make this stdout/stderr writing faster?
         if (!given_args.link) {
-            try stdout.writer().print("{s}", .{file.local_path});
-            try file.printTagsTo(allocator, stderr.writer());
-            try stdout.writer().print("\n", .{});
+            try stdout.print("{s}", .{file.local_path});
+            try buffered_stdout.flush();
+            try file.printTagsTo(allocator, stderr);
+            try buffered_stderr.flush();
+            try stdout.print("\n", .{});
+            try buffered_stdout.flush();
         }
     }
 
@@ -221,7 +233,7 @@ pub fn main() anyerror!void {
         }
 
         log.info("successfully created symlinked folder at", .{});
-        try stdout.writer().print("{s}\n", .{tmp_path});
+        try stdout.print("{s}\n", .{tmp_path});
 
         const self_pipe_fds = try std.os.pipe();
         maybe_self_pipe = .{
