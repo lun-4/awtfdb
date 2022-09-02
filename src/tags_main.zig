@@ -25,6 +25,7 @@ const HELPTEXT =
     \\ 	atags search tag
     \\ 	atags remove --tag tag
     \\ 	atags remove --core dslkjfsldkjf
+    \\ 	atags remove --only-tag-name mytag --> only deleted name, no actual tag cores deleted
     \\
     \\ tag parent operations:
     \\ 	atags parent create child_tag parent_tag
