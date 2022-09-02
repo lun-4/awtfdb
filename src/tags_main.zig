@@ -290,6 +290,7 @@ const RemoveAction = struct {
     pub const Config = struct {
         tag_core: ?[]const u8 = null,
         tag: ?[]const u8 = null,
+        only_tag_name: ?[]const u8 = null,
         given_args: *const Args,
     };
 
@@ -297,7 +298,7 @@ const RemoveAction = struct {
         _ = given_args;
         var config = Config{ .given_args = given_args };
 
-        const ArgState = enum { None, NeedTagCore, NeedTag };
+        const ArgState = enum { None, NeedTagCore, NeedTag, NeedTagName };
         var state: ArgState = .None;
         while (args_it.next()) |arg| {
             if (state == .NeedTagCore) {
@@ -306,10 +307,15 @@ const RemoveAction = struct {
             } else if (state == .NeedTag) {
                 config.tag = arg;
                 state = .None;
+            } else if (state == .NeedTagName) {
+                config.only_tag_name = arg;
+                state = .None;
             } else if (std.mem.eql(u8, arg, "--core")) {
                 state = .NeedTagCore;
             } else if (std.mem.eql(u8, arg, "--tag")) {
                 state = .NeedTag;
+            } else if (std.mem.eql(u8, arg, "--only-tag-name")) {
+                state = .NeedTagName;
             } else {
                 return error.InvalidArgument;
             }
@@ -385,6 +391,40 @@ const RemoveAction = struct {
                 return error.NamedTagNotFound;
             }
             try stdout.print("\n", .{});
+        } else if (self.config.only_tag_name) |only_tag_name| {
+            // only delete a singular tag name. do not delete any files.
+            // tag core will be garbage collected in a janitor run
+
+            _ = (try self.ctx.fetchNamedTag(only_tag_name, "en")) orelse {
+                log.err("named tag not found '{s}'", .{only_tag_name});
+                return error.NamedTagNotFound;
+            };
+
+            if (self.config.given_args.ask_confirmation) {
+                var outcome: [1]u8 = undefined;
+                try stdout.print("do you want to remove this tag? no files will have relationships removed (y/n)? ", .{});
+                _ = try stdin.read(&outcome);
+
+                if (!std.mem.eql(u8, &outcome, "y")) return error.NotConfirmed;
+            }
+
+            const deleted_name_count = (try self.ctx.db.?.one(
+                i64,
+                \\ delete from tag_names
+                \\ where tag_text = ?
+                \\ and tag_language = ?
+                \\ returning (
+                \\ 	select count(*)
+                \\ 	from tag_names
+                \\ 	where tag_text = ? and tag_language = ?
+                \\ ) as deleted_count
+            ,
+                .{},
+                .{ only_tag_name, "en", only_tag_name, "en" },
+            )).?;
+
+            log.info("deleted {} tag names", .{deleted_name_count});
+            return;
         } else {
             unreachable;
         }
