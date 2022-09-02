@@ -573,6 +573,7 @@ const SearchAction = struct {
             \\ join hashes
             \\  on hashes.id = tag_names.core_hash
             \\ where tag_text LIKE '%' || ? || '%'
+            \\ order by hashes.id asc
         );
         defer stmt.deinit();
 
