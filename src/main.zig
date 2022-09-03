@@ -150,20 +150,40 @@ const MIGRATIONS = .{
         \\ create table metrics_count_tag_cores (
         \\     timestamp integer primary key,
         \\     value integer,
-        \\     check(value >= 0)
+        \\     constraint value_not_negative check(value >= 0)
         \\ ) strict;
         \\
         \\ create table metrics_count_tag_names (
         \\     timestamp integer primary key,
         \\     value integer,
-        \\     check(value >= 0)
+        \\     constraint value_not_negative check(value >= 0)
         \\ ) strict;
         \\
         \\ create table metrics_count_tag_files (
         \\     timestamp integer primary key,
         \\     value integer,
-        \\     check(value >= 0)
+        \\     constraint value_not_negative check(value >= 0)
         \\ ) strict;
+        \\
+        // create graphs of tag usage over time
+        // we do this through two tables
+        //  - one of them contains the timestamps (x axis)
+        //  - the other contains y axis for every tag for that timestamp
+        \\ create table metrics_tag_usage_timestamps (
+        \\     timestamp integer primary key
+        \\ ) strict;
+        \\
+        // we use foreign key AND hash id as a composite primary key,
+        // removing the need to have rowid in this table
+        //
+        // see https://stackoverflow.com/questions/65422890/how-to-use-time-series-with-sqlite-with-fast-time-range-queries
+        \\ create table metrics_tag_usage_values (
+        \\     timestamp integer,
+        \\     core_hash int not null,
+        \\     relationship_count int not null,
+        \\     constraint relationship_count_not_negative check (relationship_count >= 0),
+        \\     constraint metrics_tag_usage_values_pk primary key (timestamp, core_hash)
+        \\ ) without rowid, strict;
     },
 };
 

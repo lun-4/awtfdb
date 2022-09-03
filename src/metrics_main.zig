@@ -29,22 +29,6 @@ const Args = struct {
 
 const METRICS_COUNT_TABLES = .{ "metrics_count_files", "metrics_count_tag_cores", "metrics_count_tag_names" };
 
-fn maybeInsertFirstRow(ctx: *Context) !void {
-    const db_creation_timestamp =
-        (try ctx.db.?.one(i64, "select applied_at from migration_logs where version=1", .{}, .{})).?;
-
-    inline for (METRICS_COUNT_TABLES) |count_table| {
-        const count_rows = (try ctx.db.?.one(i64, "select count(*) from " ++ count_table, .{}, .{})).?;
-        if (count_rows == 0) {
-            try ctx.db.?.exec(
-                "insert into " ++ count_table ++ " (timestamp, value) values (?, ?)",
-                .{},
-                .{ db_creation_timestamp, 0 },
-            );
-        }
-    }
-}
-
 fn runMetricsCounter(
     ctx: *Context,
     metrics_timestamp: i64,
@@ -121,11 +105,45 @@ pub fn main() anyerror!u8 {
         errdefer savepoint.rollback();
         defer savepoint.commit();
 
-        try maybeInsertFirstRow(&ctx);
         try runAllMetricsCounters(&ctx, metrics_timestamp);
     }
 
     return 0;
+}
+
+fn runMetricsTagUsage(ctx: *Context, metrics_timestamp: i64) !void {
+    try ctx.db.?.exec(
+        "insert into metrics_tag_usage_timestamps (timestamp) values (?)",
+        .{},
+        .{metrics_timestamp},
+    );
+
+    // for every tag core, run count(*) over tag_files
+
+    var stmt = try ctx.db.?.prepare(
+        \\ select distinct core_hash
+        \\ from tag_names
+        \\ order by core_hash asc
+    );
+    defer stmt.deinit();
+
+    var it = try stmt.iterator(struct { core_hash: i64 }, .{});
+    while (try it.next(.{})) |row| {
+        const tag_files_count = (try ctx.db.?.one(
+            i64,
+            "select count(*) from tag_files where core_hash = ?",
+            .{},
+            .{row.core_hash},
+        )).?;
+
+        log.info("tag core {d} has {d} relationships", .{ row.core_hash, tag_files_count });
+
+        try ctx.db.?.exec(
+            "insert into metrics_tag_usage_values (timestamp, core_hash, relationship_count) values (?, ?, ?)",
+            .{},
+            .{ metrics_timestamp, row.core_hash, tag_files_count },
+        );
+    }
 }
 
 fn runAllMetricsCounters(ctx: *Context, metrics_timestamp: i64) !void {
@@ -133,6 +151,7 @@ fn runAllMetricsCounters(ctx: *Context, metrics_timestamp: i64) !void {
     try runMetricsCounter(ctx, metrics_timestamp, "tag_cores", "metrics_count_tag_cores");
     try runMetricsCounter(ctx, metrics_timestamp, "tag_names", "metrics_count_tag_names");
     try runMetricsCounter(ctx, metrics_timestamp, "tag_files", "metrics_count_tag_files");
+    try runMetricsTagUsage(ctx, metrics_timestamp);
 }
 
 test "metrics (tags)" {
@@ -148,7 +167,7 @@ test "metrics (tags)" {
     _ = tag_named1;
 
     // run metrics code
-    try runAllMetricsCounters(&ctx, 0);
+    try runAllMetricsCounters(&ctx, std.time.timestamp());
 
     // fact on this test: names > cores
 
@@ -204,7 +223,7 @@ test "metrics (tags and files)" {
     try indexed_file3.addTag(tag3.core);
 
     // run metrics code
-    try runAllMetricsCounters(&ctx, 0);
+    try runAllMetricsCounters(&ctx, std.time.timestamp());
 
     // fact on this test: there are 6 file<->tag relations
     const last_metrics_tag_file = (try ctx.db.?.one(i64, "select value from metrics_count_tag_files", .{}, .{})).?;
@@ -213,4 +232,39 @@ test "metrics (tags and files)" {
     // fact on this test: there are 3 files
     const last_metrics_file = (try ctx.db.?.one(i64, "select value from metrics_count_files", .{}, .{})).?;
     try std.testing.expectEqual(@as(i64, 3), last_metrics_file);
+
+    // fact on this test:
+    // 	tag1 has 3 relationships,
+    // 	tag2 has 1 relationship,
+    // 	tag3 has 2 relationships
+
+    const last_metrics_tag_usage_timestamp = (try ctx.db.?.one(i64, "select timestamp from metrics_tag_usage_timestamps", .{}, .{})).?;
+
+    var metrics_tag_usage_values_stmt = try ctx.db.?.prepare(
+        \\ select core_hash, relationship_count
+        \\ from metrics_tag_usage_values
+        \\ where timestamp = ?
+    );
+    defer metrics_tag_usage_values_stmt.deinit();
+
+    var it = try metrics_tag_usage_values_stmt.iterator(
+        struct { core_hash: i64, relationship_count: usize },
+        .{last_metrics_tag_usage_timestamp},
+    );
+
+    var checked_count: usize = 0;
+
+    while (try it.next(.{})) |row| {
+        checked_count += 1;
+        if (row.core_hash == tag1.core.id)
+            try std.testing.expectEqual(@as(usize, 3), row.relationship_count)
+        else if (row.core_hash == tag2.core.id)
+            try std.testing.expectEqual(@as(usize, 1), row.relationship_count)
+        else if (row.core_hash == tag3.core.id)
+            try std.testing.expectEqual(@as(usize, 2), row.relationship_count)
+        else
+            return error.InvalidCoreHashFound;
+    }
+
+    try std.testing.expectEqual(@as(usize, 3), checked_count);
 }
