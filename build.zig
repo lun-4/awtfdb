@@ -24,55 +24,60 @@ pub fn build(b: *std.build.Builder) void {
     manage_exe.setTarget(target);
     manage_exe.setBuildMode(mode);
     manage_exe.install();
+    manage_exe.use_stage1 = true;
     deps.addAllTo(manage_exe);
 
     const watcher_exe = b.addExecutable("awtfdb-watcher", "src/rename_watcher_main.zig");
     watcher_exe.setTarget(target);
     watcher_exe.setBuildMode(mode);
     watcher_exe.install();
+
+    watcher_exe.use_stage1 = true;
     deps.addAllTo(watcher_exe);
 
     const include_exe = b.addExecutable("ainclude", "src/include_main.zig");
     include_exe.setTarget(target);
     include_exe.setBuildMode(mode);
     include_exe.install();
+
+    include_exe.use_stage1 = true;
     deps.addAllTo(include_exe);
 
     const find_exe = b.addExecutable("afind", "src/find_main.zig");
     find_exe.setTarget(target);
     find_exe.setBuildMode(mode);
     find_exe.install();
+
+    find_exe.use_stage1 = true;
     deps.addAllTo(find_exe);
 
     const ls_exe = b.addExecutable("als", "src/ls_main.zig");
     ls_exe.setTarget(target);
     ls_exe.setBuildMode(mode);
     ls_exe.install();
+
+    ls_exe.use_stage1 = true;
     deps.addAllTo(ls_exe);
 
     const tags_exe = b.addExecutable("atags", "src/tags_main.zig");
     tags_exe.setTarget(target);
     tags_exe.setBuildMode(mode);
     tags_exe.install();
+    tags_exe.use_stage1 = true;
     deps.addAllTo(tags_exe);
 
     const rm_exe = b.addExecutable("arm", "src/rm_main.zig");
     rm_exe.setTarget(target);
     rm_exe.setBuildMode(mode);
     rm_exe.install();
+    rm_exe.use_stage1 = true;
     deps.addAllTo(rm_exe);
-
-    const hydrus_api_exe = b.addExecutable("ahydrus-api", "src/hydrus_api_main.zig");
-    hydrus_api_exe.setTarget(target);
-    hydrus_api_exe.setBuildMode(mode);
-    hydrus_api_exe.install();
-    hydrus_api_exe.addIncludeDir("/usr/include");
-    hydrus_api_exe.addLibPath("/usr/lib");
-    deps.addAllTo(hydrus_api_exe);
 
     const janitor_exe = b.addExecutable("awtfdb-janitor", "src/janitor_main.zig");
     janitor_exe.setTarget(target);
     janitor_exe.setBuildMode(mode);
     janitor_exe.install();
+
+    janitor_exe.use_stage1 = true;
     deps.addAllTo(janitor_exe);
 }
