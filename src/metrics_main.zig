@@ -27,6 +27,40 @@ const Args = struct {
     version: bool = false,
 };
 
+const METRICS_COUNT_TABLES = .{ "metrics_count_files", "metrics_count_tag_cores", "metrics_count_tag_names" };
+
+fn maybeInsertFirstRow(ctx: *Context) !void {
+    const db_creation_timestamp =
+        (try ctx.db.?.one(i64, "select applied_at from migration_logs where version=1", .{}, .{})).?;
+
+    inline for (METRICS_COUNT_TABLES) |count_table| {
+        const count_rows = (try ctx.db.?.one(i64, "select count(*) from " ++ count_table, .{}, .{})).?;
+        if (count_rows == 0) {
+            try ctx.db.?.exec(
+                "insert into " ++ count_table ++ " (timestamp, value) values (?, ?)",
+                .{},
+                .{ db_creation_timestamp, 0 },
+            );
+        }
+    }
+}
+
+fn runMetricsCounter(
+    ctx: *Context,
+    metrics_timestamp: i64,
+    comptime input_table: []const u8,
+    comptime output_metrics_table: []const u8,
+) !void {
+    const row_count = (try ctx.db.?.one(i64, "select count(*) from " ++ input_table, .{}, .{})).?;
+    log.info("{d} rows in table '{s}'", .{ row_count, input_table });
+
+    try ctx.db.?.exec(
+        "insert into " ++ output_metrics_table ++ " (timestamp, value) values (?, ?)",
+        .{},
+        .{ metrics_timestamp, row_count },
+    );
+}
+
 pub fn main() anyerror!u8 {
     const rc = sqlite.c.sqlite3_config(sqlite.c.SQLITE_CONFIG_LOG, manage_main.sqliteLog, @as(?*anyopaque, null));
     if (rc != sqlite.c.SQLITE_OK) {
@@ -75,15 +109,47 @@ pub fn main() anyerror!u8 {
 
     try ctx.loadDatabase(.{});
 
+    // if metrics tables are count 0, insert first row:
+    // timestamp = db creation (migration 0), count 0
+
     const metrics_timestamp = std.time.timestamp();
     log.info("running metrics queries at timestamp {d}", .{metrics_timestamp});
 
-    const file_count = (try ctx.db.?.one(i64, "select count(*) from files", .{}, .{})).?;
-    log.info("{d} files", .{file_count});
-    const tag_core_count = (try ctx.db.?.one(i64, "select count(*) from tag_cores", .{}, .{})).?;
-    log.info("{d} tag_cores", .{tag_core_count});
-    const tag_name_count = (try ctx.db.?.one(i64, "select count(*) from tag_names", .{}, .{})).?;
-    log.info("{d} tag_names", .{tag_name_count});
+    // execute inserts here
+    {
+        var savepoint = try ctx.db.?.savepoint("metrics");
+        errdefer savepoint.rollback();
+        defer savepoint.commit();
+
+        try maybeInsertFirstRow(&ctx);
+        try runMetricsCounter(&ctx, metrics_timestamp, "files", "metrics_count_files");
+        try runMetricsCounter(&ctx, metrics_timestamp, "tag_cores", "metrics_count_tag_cores");
+        try runMetricsCounter(&ctx, metrics_timestamp, "tag_names", "metrics_count_tag_names");
+    }
 
     return 0;
+}
+
+test "metrics" {
+    var ctx = try manage_main.makeTestContext();
+    defer ctx.deinit();
+
+    var tag1 = try ctx.createNamedTag("test_tag1", "en", null);
+    var tag2 = try ctx.createNamedTag("test_tag2", "en", null);
+    _ = tag2;
+    var tag3 = try ctx.createNamedTag("test_tag3", "en", null);
+    _ = tag3;
+    var tag_named1 = try ctx.createNamedTag("test_tag1_samecore", "en", tag1.core);
+    _ = tag_named1;
+
+    // run metrics code
+    try runMetricsCounter(&ctx, 0, "tag_cores", "metrics_count_tag_cores");
+    try runMetricsCounter(&ctx, 0, "tag_names", "metrics_count_tag_names");
+
+    // fact on this test: names > cores
+
+    const last_metrics_tag_core = (try ctx.db.?.one(i64, "select value from metrics_count_tag_cores", .{}, .{})).?;
+    const last_metrics_tag_name = (try ctx.db.?.one(i64, "select value from metrics_count_tag_names", .{}, .{})).?;
+
+    try std.testing.expect(last_metrics_tag_name > last_metrics_tag_core);
 }

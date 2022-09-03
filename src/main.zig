@@ -138,6 +138,27 @@ const MIGRATIONS = .{
         \\     constraint pool_unique_index unique (pool_hash, entry_index)
         \\ ) strict;
     },
+
+    .{
+        5, "add metrics count tables",
+        \\ create table metrics_count_files (
+        \\     timestamp integer primary key,
+        \\     value integer,
+        \\     check(value >= 0)
+        \\ ) strict;
+        \\
+        \\ create table metrics_count_tag_cores (
+        \\     timestamp integer primary key,
+        \\     value integer,
+        \\     check(value >= 0)
+        \\ ) strict;
+        \\
+        \\ create table metrics_count_tag_names (
+        \\     timestamp integer primary key,
+        \\     value integer,
+        \\     check(value >= 0)
+        \\ ) strict;
+    },
 };
 
 const MIGRATION_LOG_TABLE =
