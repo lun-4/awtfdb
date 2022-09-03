@@ -1,7 +1,6 @@
 const std = @import("std");
 const sqlite = @import("sqlite");
 const manage_main = @import("main.zig");
-const libpcre = @import("libpcre");
 const Context = manage_main.Context;
 
 const log = std.log.scoped(.awtfdb_janitor);
