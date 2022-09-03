@@ -122,15 +122,20 @@ pub fn main() anyerror!u8 {
         defer savepoint.commit();
 
         try maybeInsertFirstRow(&ctx);
-        try runMetricsCounter(&ctx, metrics_timestamp, "files", "metrics_count_files");
-        try runMetricsCounter(&ctx, metrics_timestamp, "tag_cores", "metrics_count_tag_cores");
-        try runMetricsCounter(&ctx, metrics_timestamp, "tag_names", "metrics_count_tag_names");
+        try runAllMetricsCounters(&ctx, metrics_timestamp);
     }
 
     return 0;
 }
 
-test "metrics" {
+fn runAllMetricsCounters(ctx: *Context, metrics_timestamp: i64) !void {
+    try runMetricsCounter(ctx, metrics_timestamp, "files", "metrics_count_files");
+    try runMetricsCounter(ctx, metrics_timestamp, "tag_cores", "metrics_count_tag_cores");
+    try runMetricsCounter(ctx, metrics_timestamp, "tag_names", "metrics_count_tag_names");
+    try runMetricsCounter(ctx, metrics_timestamp, "tag_files", "metrics_count_tag_files");
+}
+
+test "metrics (tags)" {
     var ctx = try manage_main.makeTestContext();
     defer ctx.deinit();
 
@@ -143,8 +148,7 @@ test "metrics" {
     _ = tag_named1;
 
     // run metrics code
-    try runMetricsCounter(&ctx, 0, "tag_cores", "metrics_count_tag_cores");
-    try runMetricsCounter(&ctx, 0, "tag_names", "metrics_count_tag_names");
+    try runAllMetricsCounters(&ctx, 0);
 
     // fact on this test: names > cores
 
@@ -152,4 +156,61 @@ test "metrics" {
     const last_metrics_tag_name = (try ctx.db.?.one(i64, "select value from metrics_count_tag_names", .{}, .{})).?;
 
     try std.testing.expect(last_metrics_tag_name > last_metrics_tag_core);
+}
+
+test "metrics (tags and files)" {
+    var ctx = try manage_main.makeTestContext();
+    defer ctx.deinit();
+
+    // setup tags
+
+    var tag1 = try ctx.createNamedTag("test_tag1", "en", null);
+    var tag2 = try ctx.createNamedTag("test_tag2", "en", null);
+    var tag3 = try ctx.createNamedTag("test_tag3", "en", null);
+    var tag_named1 = try ctx.createNamedTag("test_tag1_samecore", "en", tag1.core);
+
+    // setup files
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    var file1 = try tmp.dir.createFile("test_file1", .{});
+    defer file1.close();
+    _ = try file1.write("awooga1");
+
+    var file2 = try tmp.dir.createFile("test_file2", .{});
+    defer file2.close();
+    _ = try file2.write("awooga2");
+
+    var file3 = try tmp.dir.createFile("test_file3", .{});
+    defer file3.close();
+    _ = try file3.write("awooga3");
+
+    var indexed_file1 = try ctx.createFileFromDir(tmp.dir, "test_file1");
+    defer indexed_file1.deinit();
+    var indexed_file2 = try ctx.createFileFromDir(tmp.dir, "test_file2");
+    defer indexed_file2.deinit();
+    var indexed_file3 = try ctx.createFileFromDir(tmp.dir, "test_file3");
+    defer indexed_file3.deinit();
+
+    // setup tag links
+
+    try indexed_file1.addTag(tag1.core);
+    try indexed_file1.addTag(tag_named1.core); // should be a noop in db terms
+    try indexed_file2.addTag(tag1.core);
+    try indexed_file3.addTag(tag1.core);
+    try indexed_file2.addTag(tag2.core);
+    try indexed_file2.addTag(tag3.core);
+    try indexed_file3.addTag(tag3.core);
+
+    // run metrics code
+    try runAllMetricsCounters(&ctx, 0);
+
+    // fact on this test: there are 6 file<->tag relations
+    const last_metrics_tag_file = (try ctx.db.?.one(i64, "select value from metrics_count_tag_files", .{}, .{})).?;
+    try std.testing.expectEqual(@as(i64, 6), last_metrics_tag_file);
+
+    // fact on this test: there are 3 files
+    const last_metrics_file = (try ctx.db.?.one(i64, "select value from metrics_count_files", .{}, .{})).?;
+    try std.testing.expectEqual(@as(i64, 3), last_metrics_file);
 }

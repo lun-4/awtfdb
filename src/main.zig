@@ -158,6 +158,12 @@ const MIGRATIONS = .{
         \\     value integer,
         \\     check(value >= 0)
         \\ ) strict;
+        \\
+        \\ create table metrics_count_tag_files (
+        \\     timestamp integer primary key,
+        \\     value integer,
+        \\     check(value >= 0)
+        \\ ) strict;
     },
 };
 
