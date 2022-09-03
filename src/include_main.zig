@@ -35,6 +35,8 @@ const HELPTEXT =
     \\ -p pool_id			add given arguments in order into a pool
     \\ 					(recommended to do it with files only,
     \\ 					never folders)
+    \\ --strict				do not implicitly add any tags, fail
+    \\ 					on unknown tags.
     \\
     \\ example, adding a single file:
     \\  ainclude --tag format:mp4 --tag "meme:what the dog doing" /downloads/funny_meme.mp4
@@ -777,6 +779,7 @@ pub const Args = struct {
     wanted_inferrers: ConfigList,
     include_paths: StringList,
     pool: ?i64 = null,
+    strict: bool = false,
 
     pub fn deinit(self: *@This()) void {
         self.default_tags.deinit();
@@ -884,6 +887,8 @@ pub fn main() anyerror!void {
             // after all.
         } else if (std.mem.eql(u8, arg, "-p") or std.mem.eql(u8, arg, "--pool")) {
             state = .FetchPool;
+        } else if (std.mem.eql(u8, arg, "--strict")) {
+            given_args.strict = true;
         } else if (std.mem.startsWith(u8, arg, "--")) {
             return error.InvalidArgument;
         } else {
@@ -925,6 +930,7 @@ pub fn main() anyerror!void {
     // map tag names to their relevant cores in db
     var default_tag_cores = Context.HashList.init(allocator);
     defer default_tag_cores.deinit();
+    var had_unknown_tags: bool = false;
     for (given_args.default_tags.items) |named_tag_text| {
         const maybe_tag = try ctx.fetchNamedTag(named_tag_text, "en");
         if (maybe_tag) |tag| {
@@ -934,14 +940,24 @@ pub fn main() anyerror!void {
             );
             try default_tag_cores.append(tag.core);
         } else {
-            // TODO support ISO 639-2
-            var new_tag = try ctx.createNamedTag(named_tag_text, "en", null);
-            log.debug(
-                "(created!) tag '{s}' with core {s}",
-                .{ named_tag_text, new_tag.core },
-            );
-            try default_tag_cores.append(new_tag.core);
+            had_unknown_tags = true;
+            if (given_args.strict) {
+                log.err("strict mode is on. '{s}' is an unknown tag", .{named_tag_text});
+            } else {
+                // TODO support ISO 639-1 for language codes
+                var new_tag = try ctx.createNamedTag(named_tag_text, "en", null);
+                log.debug(
+                    "(created!) tag '{s}' with core {s}",
+                    .{ named_tag_text, new_tag.core },
+                );
+                try default_tag_cores.append(new_tag.core);
+            }
         }
+    }
+
+    if (given_args.strict and had_unknown_tags) {
+        log.err("strict mode is on. had unknown tags. exiting", .{});
+        return error.UnknownTag;
     }
 
     var maybe_pool: ?Context.Pool = null;
