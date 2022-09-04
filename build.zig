@@ -86,5 +86,8 @@ pub fn build(b: *std.build.Builder) void {
     metrics_exe.setBuildMode(mode);
     metrics_exe.install();
     metrics_exe.use_stage1 = true;
+
+    // this is required for metrics so that the queries don't take too long
+    metrics_exe.build_mode = .ReleaseSafe;
     deps.addAllTo(metrics_exe);
 }
