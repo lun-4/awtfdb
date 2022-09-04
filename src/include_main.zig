@@ -905,7 +905,7 @@ pub fn main() anyerror!void {
     }
 
     if (given_args.verbose) {
-        std.debug.todo("aa");
+        @panic("TODO runtime logging");
     }
 
     if (given_args.include_paths.items.len == 0) {
@@ -993,8 +993,9 @@ pub fn main() anyerror!void {
         defer if (dir) |*unpacked_dir| unpacked_dir.close();
 
         if (dir == null) {
-            if (given_args.filter_indexed_files_only)
-                std.debug.todo("TODO support filter_indexed_files_only on file paths");
+            if (given_args.filter_indexed_files_only) {
+                @panic("TODO support filter_indexed_files_only on file paths");
+            }
             var file = try ctx.createFileFromPath(path_to_include);
             try file_ids_for_tagtree.append(file.hash.id);
             defer file.deinit();
