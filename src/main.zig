@@ -1310,7 +1310,7 @@ pub const Context = struct {
                 const decl_sql = migration_decl.@"2";
 
                 if (current_version < decl_version) {
-                    log.info("running migration {d}", .{decl_version});
+                    log.info("running migration {d} '{s}'", .{ decl_version, decl_name });
                     var diags = sqlite.Diagnostics{};
                     self.db.?.execMulti(decl_sql, .{ .diags = &diags }) catch |err| {
                         log.err("unable to prepare statement, got error {s}. diagnostics: {s}", .{ @errorName(err), diags });
