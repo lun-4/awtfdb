@@ -78,7 +78,16 @@ pub fn build(b: *std.build.Builder) void {
     janitor_exe.setTarget(target);
     janitor_exe.setBuildMode(mode);
     janitor_exe.install();
-
     janitor_exe.use_stage1 = true;
     deps.addAllTo(janitor_exe);
+
+    const metrics_exe = b.addExecutable("awtfdb-metrics", "src/metrics_main.zig");
+    metrics_exe.setTarget(target);
+    metrics_exe.setBuildMode(mode);
+    metrics_exe.install();
+    metrics_exe.use_stage1 = true;
+
+    // this is required for metrics so that the queries don't take too long
+    metrics_exe.build_mode = .ReleaseSafe;
+    deps.addAllTo(metrics_exe);
 }

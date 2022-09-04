@@ -138,6 +138,53 @@ const MIGRATIONS = .{
         \\     constraint pool_unique_index unique (pool_hash, entry_index)
         \\ ) strict;
     },
+
+    .{
+        5, "add metrics count tables",
+        \\ create table metrics_count_files (
+        \\     timestamp integer primary key,
+        \\     value integer,
+        \\     check(value >= 0)
+        \\ ) strict;
+        \\
+        \\ create table metrics_count_tag_cores (
+        \\     timestamp integer primary key,
+        \\     value integer,
+        \\     constraint value_not_negative check(value >= 0)
+        \\ ) strict;
+        \\
+        \\ create table metrics_count_tag_names (
+        \\     timestamp integer primary key,
+        \\     value integer,
+        \\     constraint value_not_negative check(value >= 0)
+        \\ ) strict;
+        \\
+        \\ create table metrics_count_tag_files (
+        \\     timestamp integer primary key,
+        \\     value integer,
+        \\     constraint value_not_negative check(value >= 0)
+        \\ ) strict;
+        \\
+        // create graphs of tag usage over time
+        // we do this through two tables
+        //  - one of them contains the timestamps (x axis)
+        //  - the other contains y axis for every tag for that timestamp
+        \\ create table metrics_tag_usage_timestamps (
+        \\     timestamp integer primary key
+        \\ ) strict;
+        \\
+        // we use foreign key AND hash id as a composite primary key,
+        // removing the need to have rowid in this table
+        //
+        // see https://stackoverflow.com/questions/65422890/how-to-use-time-series-with-sqlite-with-fast-time-range-queries
+        \\ create table metrics_tag_usage_values (
+        \\     timestamp integer,
+        \\     core_hash int not null,
+        \\     relationship_count int not null,
+        \\     constraint relationship_count_not_negative check (relationship_count >= 0),
+        \\     constraint metrics_tag_usage_values_pk primary key (timestamp, core_hash)
+        \\ ) without rowid, strict;
+    },
 };
 
 const MIGRATION_LOG_TABLE =
@@ -202,9 +249,10 @@ pub const Context = struct {
         });
 
         // ensure our database functions work
-        var result = try self.db.?.one(i32, "select 123;", .{}, .{});
+        const result = try self.db.?.one(i32, "select 123;", .{}, .{});
         if (result == null or result.? != 123) {
-            log.err("error on test statement: expected 123, got {any}", .{result});
+            const result_packed = result orelse 0;
+            log.err("error on test statement: expected 123, got {?d} {d} ({})", .{ result, result_packed, (result orelse 0) == 123 });
             return error.TestStatementFailed;
         }
 
@@ -1263,7 +1311,7 @@ pub const Context = struct {
                 const decl_sql = migration_decl.@"2";
 
                 if (current_version < decl_version) {
-                    log.info("running migration {d}", .{decl_version});
+                    log.info("running migration {d} '{s}'", .{ decl_version, decl_name });
                     var diags = sqlite.Diagnostics{};
                     self.db.?.execMulti(decl_sql, .{ .diags = &diags }) catch |err| {
                         log.err("unable to prepare statement, got error {s}. diagnostics: {s}", .{ @errorName(err), diags });
@@ -1743,4 +1791,5 @@ test "everyone else" {
     std.testing.refAllDecls(@import("./rm_main.zig"));
     //std.testing.refAllDecls(@import("./hydrus_api_main.zig"));
     std.testing.refAllDecls(@import("./tags_main.zig"));
+    std.testing.refAllDecls(@import("./metrics_main.zig"));
 }
