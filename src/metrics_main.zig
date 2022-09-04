@@ -142,11 +142,11 @@ fn runMetricsTagUsageSingleCore(
 
 fn runMetricsTagUsage(ctx: *Context, metrics_timestamp: i64) !void {
     _ = metrics_timestamp;
-    //try ctx.db.?.exec(
-    //"insert into metrics_tag_usage_timestamps (timestamp) values (?)",
-    //.{},
-    //.{metrics_timestamp},
-    //);
+    try ctx.db.?.exec(
+        "insert into metrics_tag_usage_timestamps (timestamp) values (?)",
+        .{},
+        .{metrics_timestamp},
+    );
 
     // for every tag core, run count(*) over tag_files
 
@@ -161,14 +161,13 @@ fn runMetricsTagUsage(ctx: *Context, metrics_timestamp: i64) !void {
     var timer = try std.time.Timer.start();
     while (try it.next(.{})) |row| {
         const exec_time_ns = timer.lap();
-        log.info("{} time ns: {:.2}ms", .{ row, exec_time_ns / std.time.ns_per_ms });
+        log.info("{} took {:.2}ms to fetch", .{ row, exec_time_ns / std.time.ns_per_ms });
 
-        //try ctx.db.?.exec(
-        //    "insert into metrics_tag_usage_values (timestamp, core_hash, relationship_count) values (?, ?, ?)",
-        //    .{},
-        //    .{ metrics_timestamp, core_hash, tag_files_count },
-        //);
-        _ = timer.lap();
+        try ctx.db.?.exec(
+            "insert into metrics_tag_usage_values (timestamp, core_hash, relationship_count) values (?, ?, ?)",
+            .{},
+            .{ metrics_timestamp, row.core_hash, row.relationship_count },
+        );
     }
 }
 
