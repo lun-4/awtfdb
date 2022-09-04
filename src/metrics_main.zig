@@ -3,6 +3,8 @@ const sqlite = @import("sqlite");
 const manage_main = @import("main.zig");
 const Context = manage_main.Context;
 
+pub const io_mode = .evented;
+
 const log = std.log.scoped(.awtfdb_janitor);
 
 const VERSION = "0.0.1";
@@ -110,7 +112,36 @@ pub fn main() anyerror!u8 {
     return 0;
 }
 
+const TagUsageResult = struct {
+    core_hash: i64,
+    relationship_count: i64,
+};
+
+const TagUsageInputChannel = std.event.Channel(i64);
+const TagUsageResultChannel = std.event.Channel(TagUsageResult);
+
+fn runMetricsTagUsageSingleCore(
+    tag_files_stmt: *sqlite.DynamicStatement,
+    core_hash: i64,
+) callconv(.Async) anyerror!i64 {
+    suspend {}
+
+    var timer = try std.time.Timer.start();
+
+    const tag_files_count = (try tag_files_stmt.one(i64, .{}, .{core_hash})).?;
+    tag_files_stmt.reset();
+
+    const core_count_time_taken_ns = timer.lap();
+    log.info(
+        "core {d} has {d} files (took {:.2}ms)",
+        .{ core_hash, tag_files_count, core_count_time_taken_ns / std.time.ns_per_ms },
+    );
+
+    return tag_files_count;
+}
+
 fn runMetricsTagUsage(ctx: *Context, metrics_timestamp: i64) !void {
+    _ = metrics_timestamp;
     //try ctx.db.?.exec(
     //"insert into metrics_tag_usage_timestamps (timestamp) values (?)",
     //.{},
@@ -120,61 +151,24 @@ fn runMetricsTagUsage(ctx: *Context, metrics_timestamp: i64) !void {
     // for every tag core, run count(*) over tag_files
 
     var stmt = try ctx.db.?.prepare(
-        \\ select distinct core_hash
-        \\ from tag_names
-        \\ order by core_hash asc
+        \\ select distinct tag_names.core_hash,
+        \\   (select count(*) from tag_files where core_hash = tag_names.core_hash) AS relationship_count
+        \\ from tag_names;
     );
     defer stmt.deinit();
 
-    var tag_files_stmt = try ctx.db.?.prepare(
-        "select count(*) from tag_files where core_hash = ?",
-    );
-    defer tag_files_stmt.deinit();
-
-    const CoreList = std.ArrayList(i64);
-
-    const PER_BATCH = 10;
-    var core_hashes = try CoreList.initCapacity(ctx.allocator, PER_BATCH);
-    defer core_hashes.deinit();
-
-    var it = try stmt.iterator(i64, .{});
-    while (true) {
-        var timer = try std.time.Timer.start();
-        // consume 100 rows
-        var index: usize = 0;
-        while (index < PER_BATCH) : (index += 1) {
-            var maybe_core_hash = try it.next(.{});
-            if (maybe_core_hash) |core_hash|
-                core_hashes.appendAssumeCapacity(core_hash);
-        }
-        const read_time_taken_ns = timer.read();
-
-        log.info(
-            "took {:.2}ms to fetch {d} core hash rows",
-            .{ read_time_taken_ns / std.time.ns_per_ms, core_hashes.items.len },
-        );
-
-        for (core_hashes.items) |core_hash| {
-            _ = timer.lap();
-
-            const tag_files_count = (try tag_files_stmt.one(i64, .{}, .{core_hash})).?;
-            tag_files_stmt.reset();
-            const core_count_time_taken_ns = timer.lap();
-            log.info(
-                "core {d} has {d} files (took {:.2}ms)",
-                .{ core_hash, tag_files_count, core_count_time_taken_ns / std.time.ns_per_ms },
-            );
-            _ = metrics_timestamp;
-        }
-
-        core_hashes.clearRetainingCapacity();
+    var it = try stmt.iterator(struct { core_hash: i64, relationship_count: i64 }, .{});
+    var timer = try std.time.Timer.start();
+    while (try it.next(.{})) |row| {
+        const exec_time_ns = timer.lap();
+        log.info("{} time ns: {:.2}ms", .{ row, exec_time_ns / std.time.ns_per_ms });
 
         //try ctx.db.?.exec(
         //    "insert into metrics_tag_usage_values (timestamp, core_hash, relationship_count) values (?, ?, ?)",
         //    .{},
         //    .{ metrics_timestamp, core_hash, tag_files_count },
         //);
-
+        _ = timer.lap();
     }
 }
 

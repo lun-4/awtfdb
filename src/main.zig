@@ -249,9 +249,10 @@ pub const Context = struct {
         });
 
         // ensure our database functions work
-        var result = try self.db.?.one(i32, "select 123;", .{}, .{});
+        const result = try self.db.?.one(i32, "select 123;", .{}, .{});
         if (result == null or result.? != 123) {
-            log.err("error on test statement: expected 123, got {any}", .{result});
+            const result_packed = result orelse 0;
+            log.err("error on test statement: expected 123, got {?d} {d} ({})", .{ result, result_packed, (result orelse 0) == 123 });
             return error.TestStatementFailed;
         }
 
