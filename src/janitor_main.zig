@@ -32,6 +32,26 @@ const ErrorCounters = struct {
     unused_hash: Counter = .{},
 };
 
+fn parseByteAmount(text: []const u8) !usize {
+    const numeric_part_text = text[0 .. text.len - 1];
+    log.debug("numeric part {s}", .{numeric_part_text});
+    const numeric_part = try std.fmt.parseInt(usize, numeric_part_text, 10);
+    const unit = text[text.len - 1];
+    log.debug("unit {s}", .{&[_]u8{unit}});
+    const modifier: usize = switch (unit) {
+        'K' => 1024,
+        'M' => 1024 * 1024,
+        'G' => 1024 * 1024 * 1024,
+        else => {
+            log.err("expected K, M, G, got {s}", .{&[_]u8{unit}});
+            return error.InvalidByteAmount;
+        },
+    };
+    const bytecount = numeric_part * modifier;
+    log.debug("will only hash files smaller than {d} bytes", .{bytecount});
+    return bytecount;
+}
+
 const StringList = std.ArrayList([]const u8);
 const Args = struct {
     help: bool = false,
@@ -39,6 +59,7 @@ const Args = struct {
     repair: bool = false,
     full: bool = false,
     only: StringList,
+    maybe_hash_files_smaller_than: ?usize = null,
 };
 
 pub fn janitorCheckCores(
@@ -246,6 +267,17 @@ pub fn janitorCheckFiles(
                 can_do_full_hash = true;
             }
 
+            if (can_do_full_hash) {
+                // if we're still allowed to check full hash, do a stat
+                // and find out if this is up on the filter
+                if (given_args.maybe_hash_files_smaller_than) |hash_files_smaller_than| {
+                    const file_stat = try file.stat();
+                    if (file_stat.size > hash_files_smaller_than) {
+                        can_do_full_hash = false;
+                    }
+                }
+            }
+
             if (!can_do_full_hash) continue;
 
             var calculated_hash = try ctx.calculateHash(file, .{ .insert_new_hash = false });
@@ -302,7 +334,7 @@ pub fn janitorCheckFiles(
                 continue;
             }
         }
-        //log.info("path {s} ok", .{row.local_path});
+        log.debug("path {s} ok", .{row.local_path});
     }
 }
 
@@ -328,7 +360,7 @@ pub fn main() anyerror!u8 {
         given_args.only.deinit();
     }
 
-    var state: enum { None, Only } = .None;
+    var state: enum { None, Only, HashFilesSmallerThan } = .None;
 
     while (args_it.next()) |arg| {
         switch (state) {
@@ -337,6 +369,11 @@ pub fn main() anyerror!u8 {
                     allocator,
                     &[_][]const u8{arg},
                 ));
+                state = .None;
+                continue;
+            },
+            .HashFilesSmallerThan => {
+                given_args.maybe_hash_files_smaller_than = try parseByteAmount(arg);
                 state = .None;
                 continue;
             },
@@ -352,6 +389,8 @@ pub fn main() anyerror!u8 {
             given_args.full = true;
         } else if (std.mem.eql(u8, arg, "--only")) {
             state = .Only;
+        } else if (std.mem.eql(u8, arg, "--hash-files-smaller-than")) {
+            state = .HashFilesSmallerThan;
         } else {
             return error.InvalidArgument;
         }
