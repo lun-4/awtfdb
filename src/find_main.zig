@@ -229,7 +229,10 @@ pub fn main() anyerror!void {
             });
             defer allocator.free(joined_symlink_path);
             log.info("symlink '{s}' to '{s}'", .{ file.local_path, joined_symlink_path });
-            try tmp.symLink(file.local_path, joined_symlink_path, .{});
+            tmp.symLink(file.local_path, joined_symlink_path, .{}) catch |err| switch (err) {
+                error.PathAlreadyExists => {},
+                else => return err,
+            };
         }
 
         log.info("successfully created symlinked folder at", .{});
