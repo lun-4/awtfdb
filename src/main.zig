@@ -185,6 +185,27 @@ const MIGRATIONS = .{
         \\     constraint metrics_tag_usage_values_pk primary key (timestamp, core_hash)
         \\ ) without rowid, strict;
     },
+
+    .{
+        6, "add tag sources",
+        \\ create table tag_sources () strict;
+        // ADD COLUMN tag_source_type
+        // ADD COLUMN tag_source_id
+        \\ create table tag_files_add_tag_sources (
+        \\     file_hash int not null
+        \\     	constraint tag_files_file_fk references hashes (id) on delete cascade,
+        \\     core_hash int not null
+        \\     	constraint tag_files_core_fk references tag_cores (core_hash) on delete cascade,
+        \\     tag_source_type int default 0
+        \\      constraint tag_files_tag_source_fk references tag_sources,
+        \\     tag_source_id int default 0,
+        \\     constraint tag_files_pk primary key (file_hash, core_hash)
+        \\ ) strict;
+        \\ insert into tag_files_add_tag_sources select * from tag_files;
+        \\ alter table tag_files rename to tag_files_old_without_sources;
+        \\ alter table tag_files_old_without_sources rename to tag_files;
+        ,
+    },
 };
 
 const MIGRATION_LOG_TABLE =
@@ -196,6 +217,26 @@ const MIGRATION_LOG_TABLE =
 ;
 
 const log = std.log.scoped(.awtfdb_main);
+
+pub const TagSourceType = enum(usize) {
+    /// This tag source is a part of the core awtfdb system
+    /// (e.g tag parenting or manual insertion).
+    system = 0,
+
+    /// This tag source is an external tool that uses awtfdb.
+    external = 1,
+};
+
+pub const SystemTagSources = enum(usize) {
+    /// The user manually inserted this tag through a tool like ainclude.
+    manual_insertion = 0,
+
+    /// This tag was inferred through the tag parent tree.
+    ///
+    /// If this value is set, tag_files.parent_source_id will be set
+    /// to the parent tree entry that generated this entry
+    tag_parenting = 1,
+};
 
 pub const Context = struct {
     home_path: ?[]const u8 = null,
