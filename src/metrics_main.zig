@@ -26,6 +26,7 @@ const StringList = std.ArrayList([]const u8);
 const Args = struct {
     help: bool = false,
     version: bool = false,
+    full: bool = false,
 };
 
 const METRICS_COUNT_TABLES = .{ "metrics_count_files", "metrics_count_tag_cores", "metrics_count_tag_names" };
@@ -70,6 +71,8 @@ pub fn main() anyerror!u8 {
             given_args.help = true;
         } else if (std.mem.eql(u8, arg, "-V")) {
             given_args.version = true;
+        } else if (std.mem.eql(u8, arg, "--full")) {
+            given_args.full = true;
         } else {
             return error.InvalidArgument;
         }
@@ -106,7 +109,7 @@ pub fn main() anyerror!u8 {
         errdefer savepoint.rollback();
         defer savepoint.commit();
 
-        try runAllMetricsCounters(&ctx, metrics_timestamp);
+        try runAllMetricsCounters(given_args, &ctx, metrics_timestamp);
     }
 
     return 0;
@@ -171,12 +174,14 @@ fn runMetricsTagUsage(ctx: *Context, metrics_timestamp: i64) !void {
     }
 }
 
-fn runAllMetricsCounters(ctx: *Context, metrics_timestamp: i64) !void {
+fn runAllMetricsCounters(given_args: Args, ctx: *Context, metrics_timestamp: i64) !void {
     try runMetricsCounter(ctx, metrics_timestamp, "files", "metrics_count_files");
     try runMetricsCounter(ctx, metrics_timestamp, "tag_cores", "metrics_count_tag_cores");
     try runMetricsCounter(ctx, metrics_timestamp, "tag_names", "metrics_count_tag_names");
     try runMetricsCounter(ctx, metrics_timestamp, "tag_files", "metrics_count_tag_files");
-    try runMetricsTagUsage(ctx, metrics_timestamp);
+    if (given_args.full) {
+        try runMetricsTagUsage(ctx, metrics_timestamp);
+    }
 }
 
 test "metrics (tags)" {
@@ -192,7 +197,7 @@ test "metrics (tags)" {
     _ = tag_named1;
 
     // run metrics code
-    try runAllMetricsCounters(&ctx, std.time.timestamp());
+    try runAllMetricsCounters(.{}, &ctx, std.time.timestamp());
 
     // fact on this test: names > cores
 
@@ -248,7 +253,7 @@ test "metrics (tags and files)" {
     try indexed_file3.addTag(tag3.core);
 
     // run metrics code
-    try runAllMetricsCounters(&ctx, std.time.timestamp());
+    try runAllMetricsCounters(.{ .full = true }, &ctx, std.time.timestamp());
 
     // fact on this test: there are 6 file<->tag relations
     const last_metrics_tag_file = (try ctx.db.?.one(i64, "select value from metrics_count_tag_files", .{}, .{})).?;
