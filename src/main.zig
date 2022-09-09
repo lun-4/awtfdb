@@ -188,22 +188,42 @@ const MIGRATIONS = .{
 
     .{
         6, "add tag sources",
-        \\ create table tag_sources () strict;
-        // ADD COLUMN tag_source_type
-        // ADD COLUMN tag_source_id
-        \\ create table tag_files_add_tag_sources (
+        \\ create table tag_sources (
+        \\    type int not null,
+        \\    id int not null,
+        \\    name text not null,
+        \\    primary key (type, id)
+        \\ ) strict;
+        // tag_sources with type=0 must have synchronization with the SystemTagSources enum
+        \\ insert into tag_sources values (0, 0, "manual insertion");
+        \\ insert into tag_sources values (0, 1, "tag parenting");
+        \\
+        // ADD COLUMN tag_source_type (int)
+        // ADD COLUMN tag_source_id (int)
+        // ADD COLUMN parent_source_id (default null)
+        // to do all of that, we need to copy into a new table
+        \\ create table tag_files_with_tag_sources (
         \\     file_hash int not null
         \\     	constraint tag_files_file_fk references hashes (id) on delete cascade,
         \\     core_hash int not null
         \\     	constraint tag_files_core_fk references tag_cores (core_hash) on delete cascade,
-        \\     tag_source_type int default 0
-        \\      constraint tag_files_tag_source_fk references tag_sources,
+        \\     tag_source_type int default 0,
         \\     tag_source_id int default 0,
-        \\     constraint tag_files_pk primary key (file_hash, core_hash)
+        \\     parent_source_id int default null,
+        // deleting a source requires manual action from the user if
+        //  the relationships will be mainained or if the relationships
+        //  should be removed, so do this action before removing the tag
+        //  source itself from the table
+        \\      constraint tag_files_tag_source_fk
+        \\       foreign key (tag_source_type, tag_source_id)
+        \\       references tag_sources (type, id) on delete restrict,
+        \\      constraint tag_files_pk primary key (file_hash, core_hash)
         \\ ) strict;
-        \\ insert into tag_files_add_tag_sources select * from tag_files;
+        \\
+        // actually do the migration to the new table
+        \\ insert into tag_files_with_tag_sources select file_hash, core_hash, 0, 0, null from tag_files;
         \\ alter table tag_files rename to tag_files_old_without_sources;
-        \\ alter table tag_files_old_without_sources rename to tag_files;
+        \\ alter table tag_files_with_tag_sources rename to tag_files;
         ,
     },
 };
@@ -629,12 +649,9 @@ pub const Context = struct {
                 .{},
                 .{ self.hash.id, self.local_path },
             );
-            // TODO only delete from hashes if it's going to be unused
-            //try self.ctx.db.?.exec(
-            //    "delete from hashes where id = ?",
-            //    .{},
-            //    .{self.hash.id},
-            //);
+
+            // NOTE how that we don't delete it from hashes table.
+            // awtfdb-janitor will garbage collect the hash entries over time
         }
 
         /// Returns all tag core hashes for the file.
