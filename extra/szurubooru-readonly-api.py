@@ -684,10 +684,11 @@ async def posts_fetch():
     )
     total_files = len(await total_rows_count.fetchall())
 
-    rows = []
+    rows_coroutines = []
     async for file_hash_row in tag_rows:
         file_hash = file_hash_row[0]
-        rows.append(await fetch_file_entity(file_hash))
+        rows_coroutines.append(fetch_file_entity(file_hash))
+    rows = await asyncio.gather(*rows_coroutines)
 
     return {
         "query": query,
@@ -760,6 +761,9 @@ async def fetch_file_entity(file_id: int, micro=False) -> dict:
         tags = await fetch_tag(core_hash[0])
         file_tags.extend(tags)
 
+    # sort tags by name instead of by hash
+    file_tags = sorted(file_tags, key=lambda t: t["names"][0])
+
     file_local_path = app.file_cache.local_path.get(file_id)
     if file_local_path is None:
         file_local_path = (
@@ -827,7 +831,8 @@ async def fetch_file_entity(file_id: int, micro=False) -> dict:
         "select pool_hash from pool_entries where file_hash = ?",
         [file_id],
     )
-    pools = [await fetch_pool_entity(row[0], micro=True) for row in pool_rows]
+    pool_coroutines = [fetch_pool_entity(row[0], micro=True) for row in pool_rows]
+    pool = await asyncio.gather(*pool_coroutines)
 
     return {
         "version": 1,
@@ -931,7 +936,10 @@ async def fetch_pool_entity(pool_hash: int, micro=False):
             "select file_hash from pool_entries where pool_hash = ? order by entry_index asc",
             [pool_hash],
         )
-        pool_posts = [await fetch_file_entity(row[0], micro=True) for row in post_rows]
+        pool_posts_coroutines = [
+            fetch_file_entity(row[0], micro=True) for row in post_rows
+        ]
+        pool_posts = await asyncio.gather(*pool_posts_coroutines)
     else:
         pool_posts = []
 
