@@ -102,6 +102,10 @@ async def thumbnail_cleaner():
 
 @app.after_serving
 async def app_after_serving():
+    log.info("possibly optimizing database")
+    await app.db.execute("PRAGMA analysis_limit=1000")
+    await app.db.execute("PRAGMA optimize")
+    log.info("close db")
     await app.db.close()
 
 
