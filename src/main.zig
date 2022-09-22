@@ -198,6 +198,24 @@ const MIGRATIONS = .{
         \\ insert into tag_sources values (0, 0, "manual insertion");
         \\ insert into tag_sources values (0, 1, "tag parenting");
         \\
+        // ADD tag_source_type to core
+        // ADD tag_source_id to core
+        //
+        // so that we know who first created a tag
+        \\ create table tag_cores_with_tag_sources (
+        \\     core_hash int
+        \\     	constraint tag_cores_hash_fk references hashes (id) on delete restrict
+        \\     	constraint tag_cores_pk primary key,
+        \\     core_data blob not null,
+        \\     tag_source_type int default 0,
+        \\     tag_source_id int default 0,
+        \\      constraint tag_files_tag_source_fk
+        \\       foreign key (tag_source_type, tag_source_id)
+        \\       references tag_sources (type, id) on delete restrict
+        \\ ) strict;
+        \\ insert into tag_cores_with_tag_sources select core_hash, core_data, 0, 0 from tag_cores;
+        \\ alter table tag_cores rename to tag_cores_old_without_sources;
+        \\ alter table tag_cores_with_tag_sources rename to tag_cores;
         // ADD COLUMN tag_source_type (int)
         // ADD COLUMN tag_source_id (int)
         // ADD COLUMN parent_source_id (default null)
@@ -219,7 +237,6 @@ const MIGRATIONS = .{
         \\       references tag_sources (type, id) on delete restrict,
         \\      constraint tag_files_pk primary key (file_hash, core_hash)
         \\ ) strict;
-        \\
         // actually do the migration to the new table
         \\ insert into tag_files_with_tag_sources select file_hash, core_hash, 0, 0, null from tag_files;
         \\ alter table tag_files rename to tag_files_old_without_sources;
@@ -613,6 +630,7 @@ pub const Context = struct {
         }
 
         pub fn addTag(self: *FileSelf, core_hash: Hash) !void {
+            _ = options;
             try self.ctx.db.?.exec(
                 "insert into tag_files (core_hash, file_hash) values (?, ?) on conflict do nothing",
                 .{},
@@ -653,6 +671,25 @@ pub const Context = struct {
             // NOTE how that we don't delete it from hashes table.
             // awtfdb-janitor will garbage collect the hash entries over time
         }
+
+        pub const Source = struct {
+            kind: TagSourceType,
+            id: usize,
+
+            const SourceSelf = @This();
+
+            pub fn fetchName(self: Source, allocator: std.mem.Allocator) []const u8 {
+                _ = self;
+                _ = allocator;
+                std.debug.todo("todo this");
+            }
+        };
+
+        pub const FileTag = struct {
+            file: i32,
+            tag: Tag,
+            source: Source,
+        };
 
         /// Returns all tag core hashes for the file.
         pub fn fetchTags(self: FileSelf, allocator: std.mem.Allocator) ![]Hash {
@@ -709,6 +746,12 @@ pub const Context = struct {
             std.debug.todo("impl");
         }
     };
+
+    pub fn createTagSource(self: *Self, name: []const u8) !File.Source {
+        _ = self;
+        _ = name;
+        std.debug.todo("thing");
+    }
 
     /// Caller owns returned memory.
     pub fn createFileFromPath(self: *Self, local_path: []const u8) !File {
@@ -1840,6 +1883,40 @@ test "file pools" {
         try std.testing.expect(file_hashes[2].id == indexed_file2.hash.id);
     }
 }
+
+// test "tag sources" {
+//     var ctx = try makeTestContext();
+//     defer ctx.deinit();
+
+//     var tmp = std.testing.tmpDir(.{});
+//     defer tmp.cleanup();
+
+//     var file1 = try tmp.dir.createFile("test_file1", .{});
+//     defer file1.close();
+//     _ = try file1.write("awooga1");
+
+//     var indexed_file1 = try ctx.createFileFromDir(tmp.dir, "test_file1");
+//     defer indexed_file1.deinit();
+
+//     var source = try ctx.createTagSource("my test tag source");
+//     var source2 = try ctx.createTagSource("my test tag source 2");
+//     var tag1 = try ctx.createNamedTag("child_test_tag", "en", null, .{});
+//     var tag2 = try ctx.createNamedTag("child_test_tag2", "en", null, .{ .source = source2 });
+
+//     try indexed_file1.addTag(tag1.core, .{ .source = source });
+//     try indexed_file1.addTag(tag2.core, .{ .source = null });
+
+//     {
+//         var tags = try indexed_file1.fetchTags(std.testing.allocator);
+//         defer tags.deinit();
+
+//         var saw_source = false;
+//         for (tags) |file_tag| {
+//             if (file_tag.source.id == source.id) saw_source = true;
+//         }
+//         try std.testing.expect(saw_source);
+//     }
+// }
 
 test "everyone else" {
     std.testing.refAllDecls(@import("./include_main.zig"));
