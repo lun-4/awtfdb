@@ -240,8 +240,21 @@ const MIGRATIONS = .{
         \\       references tag_sources (type, id) on delete restrict
         \\ ) strict;
         \\ insert into tag_cores_with_tag_sources select core_hash, core_data, 0, 0 from tag_cores;
-        \\ alter table tag_cores rename to tag_cores_old_without_sources;
+        \\ alter table tag_cores rename to _old_tag_cores_without_sources;
         \\ alter table tag_cores_with_tag_sources rename to tag_cores;
+        // since tag_names depends on tag_cores, we need to recreate the table.
+        // foreign key constraints get updated to the new table on a rename
+        // (https://www.sqlite.org/lang_altertable.html)
+        \\ create table tag_names_fixed_constraint (
+        \\     tag_text text not null,
+        \\     tag_language text not null,
+        \\     core_hash int not null
+        \\     	constraint tag_names_core_fk references tag_cores (core_hash) on delete cascade,
+        \\     constraint tag_names_pk primary key (tag_text, tag_language, core_hash)
+        \\ ) strict;
+        \\ insert into tag_names_fixed_constraint select * from tag_names;
+        \\ alter table tag_names rename to _old_tag_names_old_constraint;
+        \\ alter table tag_names_fixed_constraint rename to tag_names;
         // ADD COLUMN tag_source_type (int)
         // ADD COLUMN tag_source_id (int)
         // ADD COLUMN parent_source_id (default null)
@@ -265,7 +278,7 @@ const MIGRATIONS = .{
         \\ ) strict;
         // actually do the migration to the new table
         \\ insert into tag_files_with_tag_sources select file_hash, core_hash, 0, 0, null from tag_files;
-        \\ alter table tag_files rename to tag_files_old_without_sources;
+        \\ alter table tag_files rename to _old_tag_files_without_sources;
         \\ alter table tag_files_with_tag_sources rename to tag_files;
         ,
     },
