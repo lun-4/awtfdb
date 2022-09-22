@@ -805,6 +805,8 @@ fn addTagList(
     }
 }
 
+var wanted_log_level: std.log.Level = .info;
+
 pub fn main() anyerror!void {
     const rc = sqlite.c.sqlite3_config(sqlite.c.SQLITE_CONFIG_LOG, manage_main.sqliteLog, @as(?*anyopaque, null));
     if (rc != sqlite.c.SQLITE_OK) {
@@ -905,7 +907,8 @@ pub fn main() anyerror!void {
     }
 
     if (given_args.verbose) {
-        @panic("TODO runtime logging");
+        // TODO
+        wanted_log_level = .debug;
     }
 
     if (given_args.include_paths.items.len == 0) {

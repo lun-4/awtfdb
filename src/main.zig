@@ -630,7 +630,6 @@ pub const Context = struct {
         }
 
         pub fn addTag(self: *FileSelf, core_hash: Hash) !void {
-            _ = options;
             try self.ctx.db.?.exec(
                 "insert into tag_files (core_hash, file_hash) values (?, ?) on conflict do nothing",
                 .{},
@@ -1495,7 +1494,7 @@ pub fn main() anyerror!void {
     }
 
     if (given_args.verbose) {
-        std.debug.todo("lmao help");
+        @panic("TODO make logs runtime");
     }
 
     if (given_args.maybe_action == null) {

@@ -24,6 +24,8 @@ const HELPTEXT =
     \\ 					the index file, only run this manually)
 ;
 
+var wanted_log_level: std.log.Level = .info;
+
 const Counter = struct { total: usize = 0, unrepairable: usize = 0 };
 const ErrorCounters = struct {
     file_not_found: Counter = .{},
@@ -60,6 +62,7 @@ const Args = struct {
     full: bool = false,
     only: StringList,
     maybe_hash_files_smaller_than: ?usize = null,
+    verbose: bool = false,
 };
 
 pub fn janitorCheckCores(
@@ -381,6 +384,8 @@ pub fn main() anyerror!u8 {
         }
         if (std.mem.eql(u8, arg, "-h")) {
             given_args.help = true;
+        } else if (std.mem.eql(u8, arg, "-v")) {
+            given_args.verbose = true;
         } else if (std.mem.eql(u8, arg, "-V")) {
             given_args.version = true;
         } else if (std.mem.eql(u8, arg, "--repair")) {
@@ -402,6 +407,10 @@ pub fn main() anyerror!u8 {
     } else if (given_args.version) {
         std.debug.print("awtfdb-janitor {s}\n", .{VERSION});
         return 1;
+    }
+
+    if (given_args.verbose) {
+        wanted_log_level = .debug;
     }
 
     var ctx = Context{
