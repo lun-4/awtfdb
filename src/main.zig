@@ -27,6 +27,32 @@ const HELPTEXT =
     \\  awtfdb-manage jobs
 ;
 
+const MigrationOptions = struct {};
+
+const Migration = struct {
+    version: usize,
+    name: []const u8,
+    sql: ?[]const u8 = null,
+    options: MigrationOptions,
+
+    const Self = @This();
+
+    pub fn fromTuple(decl: anytype) Self {
+        const self = if (decl.len == 3) Self{
+            .version = decl.@"0",
+            .name = decl.@"1",
+            .sql = decl.@"2",
+            .options = .{},
+        } else Self{
+            .version = decl.@"0",
+            .name = decl.@"1",
+            .options = decl.@"2",
+            .sql = decl.@"3",
+        };
+        return self;
+    }
+};
+
 const MIGRATIONS = .{
     .{
         1, "initial table",
@@ -1406,14 +1432,12 @@ pub const Context = struct {
             defer savepoint.commit();
 
             inline for (MIGRATIONS) |migration_decl| {
-                const decl_version = migration_decl.@"0";
-                const decl_name = migration_decl.@"1";
-                const decl_sql = migration_decl.@"2";
+                const migration = Migration.fromTuple(migration_decl);
 
-                if (current_version < decl_version) {
-                    log.info("running migration {d} '{s}'", .{ decl_version, decl_name });
+                if (current_version < migration.version) {
+                    log.info("running migration {d} '{s}'", .{ migration.version, migration.name });
                     var diags = sqlite.Diagnostics{};
-                    self.db.?.execMulti(decl_sql, .{ .diags = &diags }) catch |err| {
+                    self.db.?.execMulti(migration.sql.?, .{ .diags = &diags }) catch |err| {
                         log.err("unable to prepare statement, got error {s}. diagnostics: {s}", .{ @errorName(err), diags });
                         return err;
                     };
@@ -1422,9 +1446,9 @@ pub const Context = struct {
                         "INSERT INTO migration_logs (version, applied_at, description) values (?, ?, ?);",
                         .{},
                         .{
-                            .version = decl_version,
+                            .version = migration.version,
                             .applied_at = std.time.timestamp(),
-                            .description = decl_name,
+                            .description = migration.name,
                         },
                     );
                 }
@@ -1560,6 +1584,8 @@ pub fn makeTestContextRealFile() !Context {
     var file = try tmp.dir.createFile("test.db", .{});
     defer file.close();
     const dbpath = try tmp.dir.realpath("test.db", test_db_path_buffer[homepath.len..]);
+
+    log.warn("using test context database file '{s}'", .{dbpath});
 
     var ctx = Context{
         .args_it = undefined,
@@ -1894,11 +1920,11 @@ test "file pools" {
 //     defer file1.close();
 //     _ = try file1.write("awooga1");
 
-//     var indexed_file1 = try ctx.createFileFromDir(tmp.dir, "test_file1");
+//     var indexed_file1 = try ctx.createFileFromDir(tmp.dir, "test_file1", .{});
 //     defer indexed_file1.deinit();
 
-//     var source = try ctx.createTagSource("my test tag source");
-//     var source2 = try ctx.createTagSource("my test tag source 2");
+//     var source = try ctx.createTagSource("my test tag source", .{});
+//     var source2 = try ctx.createTagSource("my test tag source 2", .{});
 //     var tag1 = try ctx.createNamedTag("child_test_tag", "en", null, .{});
 //     var tag2 = try ctx.createNamedTag("child_test_tag2", "en", null, .{ .source = source2 });
 
