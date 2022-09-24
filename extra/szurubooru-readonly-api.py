@@ -832,7 +832,7 @@ async def fetch_file_entity(file_id: int, micro=False) -> dict:
         [file_id],
     )
     pool_coroutines = [fetch_pool_entity(row[0], micro=True) for row in pool_rows]
-    pool = await asyncio.gather(*pool_coroutines)
+    pools = await asyncio.gather(*pool_coroutines)
 
     return {
         "version": 1,
