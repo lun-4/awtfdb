@@ -9,7 +9,7 @@ import mimetypes
 import uvloop
 import textwrap
 from pathlib import Path
-from typing import Optional, List
+from typing import Optional, List, Dict, Tuple
 from dataclasses import dataclass
 from expiringdict import ExpiringDict
 from hypercorn.asyncio import serve, Config
@@ -41,10 +41,10 @@ async def send_file(path: str, *, mimetype: Optional[str] = None):
 
 @dataclass
 class FileCache:
-    canvas_size: dict
-    file_type: dict
-    mime_type: dict
-    local_path: dict
+    canvas_size: Dict[int, Tuple[int, int]]
+    file_type: Dict[int, str]
+    mime_type: Dict[int, str]
+    local_path: Dict[int, str]
 
 
 @dataclass
@@ -965,7 +965,7 @@ async def pools_fetch():
     query = query.replace("\\:", ":")
 
     count_rows = await app.db.execute_fetchall(
-        f"""
+        """
         select count(pool_hash)
         from pools
         where pools.title LIKE '%' || ? || '%'
