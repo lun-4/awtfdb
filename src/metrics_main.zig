@@ -244,13 +244,13 @@ test "metrics (tags and files)" {
 
     // setup tag links
 
-    try indexed_file1.addTag(tag1.core);
-    try indexed_file1.addTag(tag_named1.core); // should be a noop in db terms
-    try indexed_file2.addTag(tag1.core);
-    try indexed_file3.addTag(tag1.core);
-    try indexed_file2.addTag(tag2.core);
-    try indexed_file2.addTag(tag3.core);
-    try indexed_file3.addTag(tag3.core);
+    try indexed_file1.addTag(tag1.core, .{});
+    try indexed_file1.addTag(tag_named1.core, .{}); // should be a noop in db terms
+    try indexed_file2.addTag(tag1.core, .{});
+    try indexed_file3.addTag(tag1.core, .{});
+    try indexed_file2.addTag(tag2.core, .{});
+    try indexed_file2.addTag(tag3.core, .{});
+    try indexed_file3.addTag(tag3.core, .{});
 
     // run metrics code
     try runAllMetricsCounters(.{ .full = true }, &ctx, std.time.timestamp());

@@ -668,7 +668,14 @@ pub const Context = struct {
             self.ctx.allocator.free(self.local_path);
         }
 
-        pub fn addTag(self: *FileSelf, core_hash: Hash) !void {
+        const AddTagOptions = struct {
+            source: ?Source = null,
+        };
+
+        // TODO create Source.addTagTo(), as its a safer api overall
+        //  (prevent people from having to audit every addTag call)
+        pub fn addTag(self: *FileSelf, core_hash: Hash, options: AddTagOptions) !void {
+            _ = options;
             try self.ctx.db.?.exec(
                 "insert into tag_files (core_hash, file_hash) values (?, ?) on conflict do nothing",
                 .{},
@@ -712,7 +719,7 @@ pub const Context = struct {
 
         pub const Source = struct {
             kind: TagSourceType,
-            id: usize,
+            id: i64,
 
             const SourceSelf = @This();
 
@@ -785,10 +792,28 @@ pub const Context = struct {
         }
     };
 
-    pub fn createTagSource(self: *Self, name: []const u8) !File.Source {
-        _ = self;
-        _ = name;
-        std.debug.todo("thing");
+    const TagSourceOptions = struct {};
+
+    pub fn createTagSource(self: *Self, name: []const u8, options: TagSourceOptions) !File.Source {
+        _ = options;
+
+        log.debug("create tag source '{s}'", .{name});
+
+        // fetch max id, do max(id) + 1
+        // TODO (before merge) is this a good idea for ids?
+        //   maybe a tag core-ish kind of deal would be better...
+
+        const manual_source_max_id = (try self.db.?.one(i64, "select max(id) from tag_sources where type = 1", .{}, .{})) orelse 0;
+
+        const source_id = manual_source_max_id + 1;
+
+        try self.db.?.exec(
+            "insert into tag_sources (type, id, name) values (?, ?, ?)",
+            .{},
+            .{ @enumToInt(TagSourceType.external), source_id, name },
+        );
+
+        return File.Source{ .kind = .external, .id = source_id };
     }
 
     /// Caller owns returned memory.
@@ -1112,7 +1137,8 @@ pub const Context = struct {
             }
             if (already_has_it) continue;
 
-            try file.addTag(.{ .id = entry.key_ptr.*, .hash_data = undefined });
+            // TODO tag sources with tag parents
+            try file.addTag(.{ .id = entry.key_ptr.*, .hash_data = undefined }, .{});
         }
     }
 
@@ -1718,7 +1744,7 @@ test "file and tags" {
     var tag = try ctx.createNamedTag("test_tag", "en", null);
 
     // add tag
-    try indexed_file.addTag(tag.core);
+    try indexed_file.addTag(tag.core, .{});
 
     var tag_cores = try indexed_file.fetchTags(std.testing.allocator);
     defer std.testing.allocator.free(tag_cores);
@@ -1781,7 +1807,7 @@ test "tag parenting" {
     defer indexed_file.deinit();
 
     var child_tag = try ctx.createNamedTag("child_test_tag", "en", null);
-    try indexed_file.addTag(child_tag.core);
+    try indexed_file.addTag(child_tag.core, .{});
 
     // only add this through inferrence
     var parent_tag = try ctx.createNamedTag("parent_test_tag", "en", null);
@@ -1842,9 +1868,9 @@ test "file pools" {
     defer indexed_file3.deinit();
 
     var child_tag = try ctx.createNamedTag("child_test_tag", "en", null);
-    try indexed_file1.addTag(child_tag.core);
-    try indexed_file2.addTag(child_tag.core);
-    try indexed_file3.addTag(child_tag.core);
+    try indexed_file1.addTag(child_tag.core, .{});
+    try indexed_file2.addTag(child_tag.core, .{});
+    try indexed_file3.addTag(child_tag.core, .{});
 
     // create pool
     var pool = try ctx.createPool("this is my test pool title!");
@@ -1922,39 +1948,45 @@ test "file pools" {
     }
 }
 
-// test "tag sources" {
-//     var ctx = try makeTestContext();
-//     defer ctx.deinit();
+test "tag sources" {
+    var ctx = try makeTestContext();
+    defer ctx.deinit();
 
-//     var tmp = std.testing.tmpDir(.{});
-//     defer tmp.cleanup();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
 
-//     var file1 = try tmp.dir.createFile("test_file1", .{});
-//     defer file1.close();
-//     _ = try file1.write("awooga1");
+    var file1 = try tmp.dir.createFile("test_file1", .{});
+    defer file1.close();
+    _ = try file1.write("awooga1");
 
-//     var indexed_file1 = try ctx.createFileFromDir(tmp.dir, "test_file1", .{});
-//     defer indexed_file1.deinit();
+    // TODO add options to createFile
 
-//     var source = try ctx.createTagSource("my test tag source", .{});
-//     var source2 = try ctx.createTagSource("my test tag source 2", .{});
-//     var tag1 = try ctx.createNamedTag("child_test_tag", "en", null, .{});
-//     var tag2 = try ctx.createNamedTag("child_test_tag2", "en", null, .{ .source = source2 });
+    //var indexed_file1 = try ctx.createFileFromDir(tmp.dir, "test_file1", .{});
+    var indexed_file1 = try ctx.createFileFromDir(tmp.dir, "test_file1");
+    defer indexed_file1.deinit();
 
-//     try indexed_file1.addTag(tag1.core, .{ .source = source });
-//     try indexed_file1.addTag(tag2.core, .{ .source = null });
+    // TODO add sources to tag creation
+    var source = try ctx.createTagSource("my test tag source", .{});
+    //var source2 = try ctx.createTagSource("my test tag source 2", .{});
+    // var tag1 = try ctx.createNamedTag("child_test_tag", "en", null, .{});
+    var tag1 = try ctx.createNamedTag("child_test_tag", "en", null);
+    // var tag2 = try ctx.createNamedTag("child_test_tag2", "en", null, .{ .source = source2 });
+    var tag2 = try ctx.createNamedTag("child_test_tag2", "en", null);
 
-//     {
-//         var tags = try indexed_file1.fetchTags(std.testing.allocator);
-//         defer tags.deinit();
+    try indexed_file1.addTag(tag1.core, .{ .source = source });
+    try indexed_file1.addTag(tag2.core, .{ .source = null });
 
-//         var saw_source = false;
-//         for (tags) |file_tag| {
-//             if (file_tag.source.id == source.id) saw_source = true;
-//         }
-//         try std.testing.expect(saw_source);
-//     }
-// }
+    //{
+    //    var tags = try indexed_file1.fetchTags(std.testing.allocator);
+    //    defer tags.deinit();
+
+    //    var saw_source = false;
+    //    for (tags) |file_tag| {
+    //        if (file_tag.source.id == source.id) saw_source = true;
+    //    }
+    //    try std.testing.expect(saw_source);
+    //}
+}
 
 test "everyone else" {
     std.testing.refAllDecls(@import("./include_main.zig"));

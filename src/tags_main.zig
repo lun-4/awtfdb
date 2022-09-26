@@ -185,7 +185,7 @@ const CreateAction = struct {
             while (try it.next(.{})) |file_hash_id| {
                 var file = (try self.ctx.fetchFile(file_hash_id)).?;
                 defer file.deinit();
-                try file.addTag(tag_to_be_aliased_to);
+                try file.addTag(tag_to_be_aliased_to, .{});
 
                 try stdout.print("relinked {s}", .{file.local_path});
                 try file.printTagsTo(self.ctx.allocator, stdout);
@@ -506,8 +506,8 @@ test "remove action" {
     defer indexed_file.deinit();
 
     // setup file tags to 1, 2, 3
-    try indexed_file.addTag(tag.core);
-    try indexed_file.addTag(tag3.core);
+    try indexed_file.addTag(tag.core, .{});
+    try indexed_file.addTag(tag3.core, .{});
 
     const tag1_core = tag.core.toHex();
     const args = Args{ .ask_confirmation = false };

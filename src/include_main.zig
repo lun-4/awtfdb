@@ -797,10 +797,10 @@ fn addTagList(
         log.info("adding tag {s}", .{named_tag_text});
         var maybe_tag = try ctx.fetchNamedTag(named_tag_text, "en");
         if (maybe_tag) |tag| {
-            try file.addTag(tag.core);
+            try file.addTag(tag.core, .{});
         } else {
             var tag = try ctx.createNamedTag(named_tag_text, "en", null);
-            try file.addTag(tag.core);
+            try file.addTag(tag.core, .{});
         }
     }
 }
@@ -1009,7 +1009,7 @@ pub fn main() anyerror!void {
             defer savepoint.commit();
 
             for (default_tag_cores.items) |tag_core| {
-                try file.addTag(tag_core);
+                try file.addTag(tag_core, .{});
             }
 
             var tags_to_add = std.ArrayList([]const u8).init(allocator);
@@ -1080,7 +1080,7 @@ pub fn main() anyerror!void {
                             }
 
                             for (default_tag_cores.items) |tag_core| {
-                                try file.addTag(tag_core);
+                                try file.addTag(tag_core, .{});
                             }
 
                             for (given_args.wanted_inferrers.items) |inferrer_config, index| {
