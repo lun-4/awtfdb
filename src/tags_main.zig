@@ -532,11 +532,11 @@ test "remove action" {
     try std.testing.expect(maybe_tag3 != null);
 
     // file should only have tag3
-    var tag_cores = try indexed_file.fetchTags(std.testing.allocator);
-    defer std.testing.allocator.free(tag_cores);
+    var file_tags = try indexed_file.fetchTags(std.testing.allocator);
+    defer std.testing.allocator.free(file_tags);
 
-    try std.testing.expectEqual(@as(usize, 1), tag_cores.len);
-    try std.testing.expectEqual(tag3.core.id, tag_cores[0].id);
+    try std.testing.expectEqual(@as(usize, 1), file_tags.len);
+    try std.testing.expectEqual(tag3.core.id, file_tags[0].core.id);
 }
 
 const SearchAction = struct {

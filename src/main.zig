@@ -748,15 +748,14 @@ pub const Context = struct {
         };
 
         pub const FileTag = struct {
-            file: i32,
-            tag: Tag,
+            core: Hash,
             source: Source,
         };
 
         /// Returns all tag core hashes for the file.
-        pub fn fetchTags(self: FileSelf, allocator: std.mem.Allocator) ![]Hash {
+        pub fn fetchTags(self: FileSelf, allocator: std.mem.Allocator) ![]FileTag {
             var stmt = try self.ctx.db.?.prepare(
-                \\ select hashes.id, hashes.hash_data
+                \\ select hashes.id, hashes.hash_data, tag_source_type, tag_source_id
                 \\ from tag_files
                 \\ join hashes
                 \\ 	on tag_files.core_hash = hashes.id
@@ -764,22 +763,37 @@ pub const Context = struct {
             );
             defer stmt.deinit();
 
-            const internal_hashes = try stmt.all(
-                HashWithBlob,
+            const rows = try stmt.all(
+                struct {
+                    id: i64,
+                    hash_data: sqlite.Blob,
+                    tag_source_type: i64,
+                    tag_source_id: i64,
+                },
                 allocator,
                 .{},
                 .{self.hash.id},
             );
             defer {
-                for (internal_hashes) |hash| allocator.free(hash.hash_data.data);
-                allocator.free(internal_hashes);
+                for (rows) |row| allocator.free(row.hash_data.data);
+                allocator.free(rows);
             }
 
-            var list = HashList.init(allocator);
+            var list = std.ArrayList(FileTag).init(allocator);
             defer list.deinit();
 
-            for (internal_hashes) |hash| {
-                try list.append(hash.toRealHash());
+            for (rows) |row| {
+                const hash_with_blob = HashWithBlob{ .id = row.id, .hash_data = row.hash_data };
+
+                const file_tag = FileTag{
+                    .core = hash_with_blob.toRealHash(),
+                    .source = Source{
+                        .kind = @intToEnum(TagSourceType, row.tag_source_type),
+                        .id = row.tag_source_id,
+                    },
+                };
+
+                try list.append(file_tag);
             }
 
             return list.toOwnedSlice();
@@ -790,11 +804,13 @@ pub const Context = struct {
             allocator: std.mem.Allocator,
             writer: anytype,
         ) !void {
-            var tag_cores = try self.fetchTags(allocator);
-            defer allocator.free(tag_cores);
+            var file_tags = try self.fetchTags(allocator);
+            defer allocator.free(file_tags);
 
-            for (tag_cores) |tag_core| {
-                var tags = try self.ctx.fetchTagsFromCore(allocator, tag_core);
+            for (file_tags) |file_tag| {
+                // TODO some kind of stack buffer that lives outside of this
+                // loop so its faster?
+                var tags = try self.ctx.fetchTagsFromCore(allocator, file_tag.core);
                 defer tags.deinit();
                 for (tags.items) |tag| {
                     try writer.print(" '{s}'", .{tag});
@@ -1115,14 +1131,14 @@ pub const Context = struct {
         var tags_to_add = TagSet.init(self.allocator);
         defer tags_to_add.deinit();
 
-        var tag_cores = try file.fetchTags(self.allocator);
-        defer self.allocator.free(tag_cores);
+        var file_tags = try file.fetchTags(self.allocator);
+        defer self.allocator.free(file_tags);
 
         while (true) {
             const old_tags_to_add_len = tags_to_add.count();
 
-            for (tag_cores) |tag_core| {
-                var maybe_parents = treemap.get(tag_core.id);
+            for (file_tags) |file_tag| {
+                var maybe_parents = treemap.get(file_tag.core.id);
                 if (maybe_parents) |parents| {
                     for (parents) |parent| {
                         try tags_to_add.put(parent, {});
@@ -1149,8 +1165,8 @@ pub const Context = struct {
             // don't need to readd tags that are already in
             // (prevent db locking i/o)
             var already_has_it = false;
-            for (tag_cores) |core| {
-                if (entry.key_ptr.* == core.id) already_has_it = true;
+            for (file_tags) |file_tag| {
+                if (entry.key_ptr.* == file_tag.core.id) already_has_it = true;
             }
             if (already_has_it) continue;
 
@@ -1763,23 +1779,24 @@ test "file and tags" {
     // add tag
     try indexed_file.addTag(tag.core, .{});
 
-    var tag_cores = try indexed_file.fetchTags(std.testing.allocator);
-    defer std.testing.allocator.free(tag_cores);
+    var file_tags = try indexed_file.fetchTags(std.testing.allocator);
+    defer std.testing.allocator.free(file_tags);
 
     var saw_correct_tag_core = false;
-    for (tag_cores) |core| {
-        if (std.mem.eql(u8, &tag.core.hash_data, &core.hash_data))
+    for (file_tags) |file_tag| {
+        if (std.mem.eql(u8, &tag.core.hash_data, &file_tag.core.hash_data)) {
             saw_correct_tag_core = true;
+        }
     }
     try std.testing.expect(saw_correct_tag_core);
 
     // remove tag
     try indexed_file.removeTag(tag.core);
 
-    var tag_cores_after_removal = try indexed_file.fetchTags(std.testing.allocator);
-    defer std.testing.allocator.free(tag_cores_after_removal);
-    for (tag_cores_after_removal) |core| {
-        if (std.mem.eql(u8, &tag.core.hash_data, &core.hash_data))
+    var file_tags_after_removal = try indexed_file.fetchTags(std.testing.allocator);
+    defer std.testing.allocator.free(file_tags_after_removal);
+    for (file_tags_after_removal) |file_tag| {
+        if (std.mem.eql(u8, &tag.core.hash_data, &file_tag.core.hash_data))
             return error.TagShouldNotBeThere;
     }
 }
@@ -1837,19 +1854,19 @@ test "tag parenting" {
 
     // assert both now exist
 
-    var tag_cores = try indexed_file.fetchTags(std.testing.allocator);
-    defer std.testing.allocator.free(tag_cores);
+    var file_tags = try indexed_file.fetchTags(std.testing.allocator);
+    defer std.testing.allocator.free(file_tags);
 
     var saw_child = false;
     var saw_parent = false;
     var saw_parent2 = false;
     var saw_parent3 = false;
 
-    for (tag_cores) |core| {
-        if (core.id == parent_tag.core.id) saw_parent = true;
-        if (core.id == parent_tag2.core.id) saw_parent2 = true;
-        if (core.id == parent_tag3.core.id) saw_parent3 = true;
-        if (core.id == child_tag.core.id) saw_child = true;
+    for (file_tags) |file_tag| {
+        if (file_tag.core.id == parent_tag.core.id) saw_parent = true;
+        if (file_tag.core.id == parent_tag2.core.id) saw_parent2 = true;
+        if (file_tag.core.id == parent_tag3.core.id) saw_parent3 = true;
+        if (file_tag.core.id == child_tag.core.id) saw_child = true;
     }
 
     try std.testing.expect(saw_parent);
@@ -1993,16 +2010,16 @@ test "tag sources" {
     try indexed_file1.addTag(tag1.core, .{ .source = source });
     try indexed_file1.addTag(tag2.core, .{ .source = null });
 
-    //{
-    //    var tags = try indexed_file1.fetchTags(std.testing.allocator);
-    //    defer tags.deinit();
+    {
+        var file_tags = try indexed_file1.fetchTags(std.testing.allocator);
+        defer std.testing.allocator.free(file_tags);
 
-    //    var saw_source = false;
-    //    for (tags) |file_tag| {
-    //        if (file_tag.source.id == source.id) saw_source = true;
-    //    }
-    //    try std.testing.expect(saw_source);
-    //}
+        var saw_source = false;
+        for (file_tags) |file_tag| {
+            if (file_tag.source.id == source.id) saw_source = true;
+        }
+        try std.testing.expect(saw_source);
+    }
 }
 
 test "everyone else" {

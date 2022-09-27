@@ -129,9 +129,9 @@ const TestUtil = struct {
         var indexed_file = try ctx.createFileFromDir(tmp.dir, filename);
         defer indexed_file.deinit();
 
-        const hashlist = try indexed_file.fetchTags(allocator);
-        defer allocator.free(hashlist);
-        try std.testing.expectEqual(@as(usize, 0), hashlist.len);
+        const file_tags = try indexed_file.fetchTags(allocator);
+        defer allocator.free(file_tags);
+        try std.testing.expectEqual(@as(usize, 0), file_tags.len);
 
         var tags_to_add = std.ArrayList([]const u8).init(allocator);
         defer {
@@ -144,20 +144,20 @@ const TestUtil = struct {
 
         try addTagList(ctx, &indexed_file, tags_to_add);
 
-        const hashlist_after = try indexed_file.fetchTags(allocator);
-        defer allocator.free(hashlist_after);
+        const file_tags_after = try indexed_file.fetchTags(allocator);
+        defer allocator.free(file_tags_after);
 
         var found_tags: [wanted_tags.len]bool = undefined;
         // initialize
         for (found_tags) |_, idx| found_tags[idx] = false;
 
-        for (hashlist_after) |tag_core| {
-            const tag_list = try ctx.fetchTagsFromCore(allocator, tag_core);
+        for (file_tags_after) |file_tag| {
+            const tag_list = try ctx.fetchTagsFromCore(allocator, file_tag.core);
             defer tag_list.deinit();
 
             try std.testing.expectEqual(@as(usize, 1), tag_list.items.len);
             const tag = tag_list.items[0];
-            try std.testing.expectEqual(tag_core.id, tag.core.id);
+            try std.testing.expectEqual(file_tag.core.id, tag.core.id);
             inline for (wanted_tags) |wanted_tag, index| {
                 if (std.mem.eql(u8, wanted_tag, tag.kind.Named.text)) {
                     found_tags[index] = true;
@@ -177,7 +177,7 @@ const TestUtil = struct {
             }
         }
 
-        try std.testing.expectEqual(@as(usize, wanted_tags.len), hashlist_after.len);
+        try std.testing.expectEqual(@as(usize, wanted_tags.len), file_tags_after.len);
         try std.testing.expectEqual(@as(usize, wanted_tags.len), tags_to_add.items.len);
     }
 };
