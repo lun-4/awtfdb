@@ -238,6 +238,14 @@ async def tags_fetch():
     offset = request.args.get("offset", 0)
     query = query.replace("*", "")
     query = query.replace(" sort:usages", "")
+    if len(query) < 2:
+        return {
+            "query": query,
+            "offset": offset,
+            "limit": 10000,
+            "total": 0,
+            "results": [],
+        }
     tag_rows = await app.db.execute(
         """
     select distinct core_hash core_hash, hashes.hash_data
