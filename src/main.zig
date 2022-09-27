@@ -223,38 +223,6 @@ const MIGRATIONS = .{
         // tag_sources with type=0 must have synchronization with the SystemTagSources enum
         \\ insert into tag_sources values (0, 0, "manual insertion");
         \\ insert into tag_sources values (0, 1, "tag parenting");
-        \\
-        // ADD tag_source_type to core
-        // ADD tag_source_id to core
-        //
-        // so that we know who first created a tag
-        \\ create table tag_cores_with_tag_sources (
-        \\     core_hash int
-        \\     	constraint tag_cores_hash_fk references hashes (id) on delete restrict
-        \\     	constraint tag_cores_pk primary key,
-        \\     core_data blob not null,
-        \\     tag_source_type int default 0,
-        \\     tag_source_id int default 0,
-        \\      constraint tag_files_tag_source_fk
-        \\       foreign key (tag_source_type, tag_source_id)
-        \\       references tag_sources (type, id) on delete restrict
-        \\ ) strict;
-        \\ insert into tag_cores_with_tag_sources select core_hash, core_data, 0, 0 from tag_cores;
-        \\ alter table tag_cores rename to _old_tag_cores_without_sources;
-        \\ alter table tag_cores_with_tag_sources rename to tag_cores;
-        // since tag_names depends on tag_cores, we need to recreate the table.
-        // foreign key constraints get updated to the new table on a rename
-        // (https://www.sqlite.org/lang_altertable.html)
-        \\ create table tag_names_fixed_constraint (
-        \\     tag_text text not null,
-        \\     tag_language text not null,
-        \\     core_hash int not null
-        \\     	constraint tag_names_core_fk references tag_cores (core_hash) on delete cascade,
-        \\     constraint tag_names_pk primary key (tag_text, tag_language, core_hash)
-        \\ ) strict;
-        \\ insert into tag_names_fixed_constraint select * from tag_names;
-        \\ alter table tag_names rename to _old_tag_names_old_constraint;
-        \\ alter table tag_names_fixed_constraint rename to tag_names;
         // ADD COLUMN tag_source_type (int)
         // ADD COLUMN tag_source_id (int)
         // ADD COLUMN parent_source_id (default null)
@@ -603,7 +571,15 @@ pub const Context = struct {
         }
     };
 
-    pub fn createNamedTag(self: *Self, text: []const u8, language: []const u8, maybe_core: ?Hash) !Tag {
+    // TODO add sources to tag cores (needs a new Hash struct dedicated to it
+    // as things like files use Hash but do not have tag sources)
+
+    pub fn createNamedTag(
+        self: *Self,
+        text: []const u8,
+        language: []const u8,
+        maybe_core: ?Hash,
+    ) !Tag {
         var core_hash: Hash = undefined;
         if (maybe_core) |existing_core_hash| {
             core_hash = existing_core_hash;
@@ -1993,18 +1969,14 @@ test "tag sources" {
     defer file1.close();
     _ = try file1.write("awooga1");
 
-    // TODO add options to createFile
-
-    //var indexed_file1 = try ctx.createFileFromDir(tmp.dir, "test_file1", .{});
     var indexed_file1 = try ctx.createFileFromDir(tmp.dir, "test_file1");
     defer indexed_file1.deinit();
 
-    // TODO add sources to tag creation
     var source = try ctx.createTagSource("my test tag source", .{});
-    //var source2 = try ctx.createTagSource("my test tag source 2", .{});
-    // var tag1 = try ctx.createNamedTag("child_test_tag", "en", null, .{});
+    var source2 = try ctx.createTagSource("my test tag source 2", .{});
+    _ = source2;
+
     var tag1 = try ctx.createNamedTag("child_test_tag", "en", null);
-    // var tag2 = try ctx.createNamedTag("child_test_tag2", "en", null, .{ .source = source2 });
     var tag2 = try ctx.createNamedTag("child_test_tag2", "en", null);
 
     try indexed_file1.addTag(tag1.core, .{ .source = source });
