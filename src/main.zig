@@ -670,18 +670,35 @@ pub const Context = struct {
 
         const AddTagOptions = struct {
             source: ?Source = null,
+            parent_source_id: ?i64 = null,
         };
 
         // TODO create Source.addTagTo(), as its a safer api overall
         //  (prevent people from having to audit every addTag call)
         pub fn addTag(self: *FileSelf, core_hash: Hash, options: AddTagOptions) !void {
             _ = options;
-            try self.ctx.db.?.exec(
-                "insert into tag_files (core_hash, file_hash) values (?, ?) on conflict do nothing",
-                .{},
-                .{ core_hash.id, self.hash.id },
-            );
+
             log.debug("link file {s} (hash {s}) with tag core hash {d} {s}", .{ self.local_path, self.hash, core_hash.id, core_hash });
+
+            if (options.source) |source| {
+                // TODO parent_source_id support here
+                try self.ctx.db.?.exec(
+                    \\insert into tag_files (core_hash, file_hash, tag_source_type, tag_source_id)
+                    \\values (?, ?, ?, ?) on conflict do nothing
+                ,
+                    .{},
+                    .{ core_hash.id, self.hash.id, @enumToInt(source.kind), source.id },
+                );
+            } else {
+                // TODO compileError if parent_source_id here but no source
+                // run with defaults
+
+                try self.ctx.db.?.exec(
+                    "insert into tag_files (core_hash, file_hash) values (?, ?) on conflict do nothing",
+                    .{},
+                    .{ core_hash.id, self.hash.id },
+                );
+            }
         }
 
         pub fn removeTag(self: *FileSelf, core_hash: Hash) !void {
