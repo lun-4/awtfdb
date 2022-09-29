@@ -1597,7 +1597,7 @@ pub const Context = struct {
 };
 
 pub export fn sqliteLog(_: ?*anyopaque, level: c_int, message: ?[*:0]const u8) callconv(.C) void {
-    log.info("sqlite logged level={d} msg={?*}", .{ level, message });
+    log.info("sqlite logged level={d} msg={?s}", .{ level, message });
 }
 
 pub fn main() anyerror!void {
