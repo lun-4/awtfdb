@@ -775,6 +775,7 @@ pub const Args = struct {
     filter_indexed_files_only: bool = false,
     dry_run: bool = false,
     cli_v1: bool = true,
+    tag_source: ?Context.File.Source = null,
     default_tags: StringList,
     wanted_inferrers: ConfigList,
     include_paths: StringList,
@@ -823,7 +824,7 @@ pub fn main() anyerror!void {
     var args_it = std.process.args();
     _ = args_it.skip();
 
-    const ArgState = enum { None, FetchTag, InferMoreTags, FetchPool };
+    const ArgState = enum { None, FetchTag, InferMoreTags, FetchPool, FetchSource };
 
     var state: ArgState = .None;
 
@@ -833,6 +834,17 @@ pub fn main() anyerror!void {
         .include_paths = StringList.init(allocator),
     };
     defer given_args.deinit();
+
+    var ctx = Context{
+        .home_path = null,
+        .args_it = undefined,
+        .stdout = undefined,
+        .db = null,
+        .allocator = allocator,
+    };
+    defer ctx.deinit();
+
+    try ctx.loadDatabase(.{});
 
     var arg: []const u8 = undefined;
     while (args_it.next()) |arg_from_loop| {
@@ -846,6 +858,12 @@ pub fn main() anyerror!void {
             },
             .FetchPool => {
                 given_args.pool = try std.fmt.parseInt(i64, arg, 10);
+                state = .None;
+                continue;
+            },
+            .FetchSource => {
+                const arg_as_int = try std.fmt.parseInt(i64, arg, 10);
+                given_args.tag_source = (try ctx.fetchTagSource(.external, arg_as_int)) orelse return error.TagSourceNotFound;
                 state = .None;
                 continue;
             },
@@ -889,6 +907,8 @@ pub fn main() anyerror!void {
             // after all.
         } else if (std.mem.eql(u8, arg, "-p") or std.mem.eql(u8, arg, "--pool")) {
             state = .FetchPool;
+        } else if (std.mem.eql(u8, arg, "-s") or std.mem.eql(u8, arg, "--source")) {
+            state = .FetchSource;
         } else if (std.mem.eql(u8, arg, "--strict")) {
             given_args.strict = true;
         } else if (std.mem.startsWith(u8, arg, "--")) {
@@ -916,16 +936,6 @@ pub fn main() anyerror!void {
         return error.MissingArgument;
     }
 
-    var ctx = Context{
-        .home_path = null,
-        .args_it = undefined,
-        .stdout = undefined,
-        .db = null,
-        .allocator = allocator,
-    };
-    defer ctx.deinit();
-
-    try ctx.loadDatabase(.{});
     if (given_args.dry_run) try ctx.turnIntoMemoryDb();
 
     std.log.info("args: {}", .{given_args});
@@ -1009,7 +1019,7 @@ pub fn main() anyerror!void {
             defer savepoint.commit();
 
             for (default_tag_cores.items) |tag_core| {
-                try file.addTag(tag_core, .{});
+                try file.addTag(tag_core, .{ .source = given_args.tag_source });
             }
 
             var tags_to_add = std.ArrayList([]const u8).init(allocator);
@@ -1080,7 +1090,7 @@ pub fn main() anyerror!void {
                             }
 
                             for (default_tag_cores.items) |tag_core| {
-                                try file.addTag(tag_core, .{});
+                                try file.addTag(tag_core, .{ .source = given_args.tag_source });
                             }
 
                             for (given_args.wanted_inferrers.items) |inferrer_config, index| {
