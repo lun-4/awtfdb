@@ -652,22 +652,36 @@ pub const Context = struct {
         // TODO create Source.addTagTo(), as its a safer api overall
         //  (prevent people from having to audit every addTag call)
         pub fn addTag(self: *FileSelf, core_hash: Hash, options: AddTagOptions) !void {
-            _ = options;
-
             log.debug("link file {s} (hash {s}) with tag core hash {d} {s}", .{ self.local_path, self.hash, core_hash.id, core_hash });
 
             if (options.source) |source| {
-                // TODO parent_source_id support here
-                try self.ctx.db.?.exec(
-                    \\insert into tag_files (core_hash, file_hash, tag_source_type, tag_source_id)
-                    \\values (?, ?, ?, ?) on conflict do nothing
-                ,
-                    .{},
-                    .{ core_hash.id, self.hash.id, @enumToInt(source.kind), source.id },
-                );
+                if (options.parent_source_id) |parent_source_id| {
+                    if (source.kind != TagSourceType.system) return error.InvalidSourceType;
+                    if (source.id != @enumToInt(SystemTagSources.tag_parenting)) {
+                        log.err("expected tag parent source, got {}", .{source});
+                        return error.InvalidSourceID;
+                    }
+
+                    try self.ctx.db.?.exec(
+                        \\insert into tag_files (core_hash, file_hash, tag_source_type, tag_source_id, parent_source_id)
+                        \\values (?, ?, ?, ?, ?) on conflict do nothing
+                    ,
+                        .{},
+                        .{ core_hash.id, self.hash.id, @enumToInt(source.kind), source.id, parent_source_id },
+                    );
+                } else {
+                    try self.ctx.db.?.exec(
+                        \\insert into tag_files (core_hash, file_hash, tag_source_type, tag_source_id)
+                        \\values (?, ?, ?, ?) on conflict do nothing
+                    ,
+                        .{},
+                        .{ core_hash.id, self.hash.id, @enumToInt(source.kind), source.id },
+                    );
+                }
             } else {
                 // TODO compileError if parent_source_id here but no source
-                // run with defaults
+                // provided
+                if (options.parent_source_id != null) unreachable;
 
                 try self.ctx.db.?.exec(
                     "insert into tag_files (core_hash, file_hash) values (?, ?) on conflict do nothing",
@@ -711,27 +725,39 @@ pub const Context = struct {
         }
 
         pub const Source = struct {
+            ctx: *Context,
             kind: TagSourceType,
             id: i64,
 
             const SourceSelf = @This();
 
-            pub fn fetchName(self: Source, allocator: std.mem.Allocator) []const u8 {
+            pub fn fetchName(self: SourceSelf, allocator: std.mem.Allocator) []const u8 {
                 _ = self;
                 _ = allocator;
                 std.debug.todo("todo this");
+            }
+
+            pub fn delete(self: SourceSelf) !void {
+                if (self.kind == .system) unreachable; // invalid api usage (system sources must not be manually deleted)
+
+                try self.ctx.db.?.exec(
+                    "delete from tag_sources where type = ? and id = ?",
+                    .{},
+                    .{ @enumToInt(TagSourceType.external), self.id },
+                );
             }
         };
 
         pub const FileTag = struct {
             core: Hash,
             source: Source,
+            parent_source_id: ?i64,
         };
 
         /// Returns all tag core hashes for the file.
         pub fn fetchTags(self: FileSelf, allocator: std.mem.Allocator) ![]FileTag {
             var stmt = try self.ctx.db.?.prepare(
-                \\ select hashes.id, hashes.hash_data, tag_source_type, tag_source_id
+                \\ select hashes.id, hashes.hash_data, tag_source_type, tag_source_id, parent_source_id
                 \\ from tag_files
                 \\ join hashes
                 \\ 	on tag_files.core_hash = hashes.id
@@ -745,6 +771,7 @@ pub const Context = struct {
                     hash_data: sqlite.Blob,
                     tag_source_type: i64,
                     tag_source_id: i64,
+                    parent_source_id: i64,
                 },
                 allocator,
                 .{},
@@ -764,9 +791,11 @@ pub const Context = struct {
                 const file_tag = FileTag{
                     .core = hash_with_blob.toRealHash(),
                     .source = Source{
+                        .ctx = self.ctx,
                         .kind = @intToEnum(TagSourceType, row.tag_source_type),
                         .id = row.tag_source_id,
                     },
+                    .parent_source_id = row.parent_source_id,
                 };
 
                 try list.append(file_tag);
@@ -822,7 +851,32 @@ pub const Context = struct {
             .{ @enumToInt(TagSourceType.external), source_id, name },
         );
 
-        return File.Source{ .kind = .external, .id = source_id };
+        return File.Source{ .ctx = self, .kind = .external, .id = source_id };
+    }
+
+    pub fn fetchTagSource(self: *Self, kind: TagSourceType, id: i64) !?File.Source {
+        return switch (kind) {
+            .system => {
+                _ = std.meta.intToEnum(SystemTagSources, id) catch |err| switch (err) {
+                    error.InvalidEnumTag => return null,
+                };
+                return File.Source{ .ctx = self, .kind = .system, .id = id };
+            },
+            .external => {
+                const maybe_row = try self.db.?.one(
+                    struct { @"type": i64, id: i64 },
+                    "select type, id from tag_sources where type = ? and id = ?",
+                    .{},
+                    .{ @enumToInt(TagSourceType.external), id },
+                );
+
+                if (maybe_row) |row| {
+                    return File.Source{ .ctx = self, .kind = .external, .id = row.id };
+                } else {
+                    return null;
+                }
+            },
+        };
     }
 
     /// Caller owns returned memory.
@@ -1088,22 +1142,27 @@ pub const Context = struct {
         }
     }
 
-    pub fn createTagParent(self: *Self, child_tag: Tag, parent_tag: Tag) !void {
-        try self.db.?.exec(
-            "insert into tag_implications (child_tag, parent_tag) values (?, ?)",
+    pub fn createTagParent(self: *Self, child_tag: Tag, parent_tag: Tag) !i64 {
+        return (try self.db.?.one(
+            i64,
+            "insert into tag_implications (child_tag, parent_tag) values (?, ?) returning rowid",
             .{},
             .{
                 child_tag.core.id,
                 parent_tag.core.id,
             },
-        );
+        )).?;
     }
 
     fn processSingleFileIntoTagTree(self: *Self, file_hash: i64, treemap: TagTreeMap) !void {
         var file = (try self.fetchFile(file_hash)).?;
         defer file.deinit();
 
-        const TagSet = std.AutoHashMap(i64, void);
+        const TagEntry = struct {
+            tag_id: i64,
+            parent_entry_id: i64,
+        };
+        const TagSet = std.AutoHashMap(TagEntry, void);
         var tags_to_add = TagSet.init(self.allocator);
         defer tags_to_add.deinit();
 
@@ -1117,17 +1176,26 @@ pub const Context = struct {
                 var maybe_parents = treemap.get(file_tag.core.id);
                 if (maybe_parents) |parents| {
                     for (parents) |parent| {
-                        try tags_to_add.put(parent, {});
+                        try tags_to_add.put(.{
+                            .tag_id = parent.tag_id,
+                            .parent_entry_id = parent.row_id,
+                        }, {});
                     }
                 }
             }
 
+            // "recurse" into the tree by running the same loop
+            // until the list doesnt change size
+
             var tags_iter = tags_to_add.iterator();
             while (tags_iter.next()) |entry| {
-                var maybe_parents = treemap.get(entry.key_ptr.*);
+                var maybe_parents = treemap.get(entry.key_ptr.*.tag_id);
                 if (maybe_parents) |parents| {
                     for (parents) |parent| {
-                        try tags_to_add.put(parent, {});
+                        try tags_to_add.put(.{
+                            .tag_id = parent.tag_id,
+                            .parent_entry_id = parent.row_id,
+                        }, {});
                     }
                 }
             }
@@ -1138,16 +1206,19 @@ pub const Context = struct {
 
         var tags_iter = tags_to_add.iterator();
         while (tags_iter.next()) |entry| {
+            const tag_entry = entry.key_ptr.*;
             // don't need to readd tags that are already in
             // (prevent db locking i/o)
             var already_has_it = false;
             for (file_tags) |file_tag| {
-                if (entry.key_ptr.* == file_tag.core.id) already_has_it = true;
+                if (tag_entry.tag_id == file_tag.core.id) already_has_it = true;
             }
             if (already_has_it) continue;
 
-            // TODO tag sources with tag parents
-            try file.addTag(.{ .id = entry.key_ptr.*, .hash_data = undefined }, .{});
+            try file.addTag(.{ .id = tag_entry.tag_id, .hash_data = undefined }, .{
+                .source = try self.fetchTagSource(.system, @enumToInt(SystemTagSources.tag_parenting)),
+                .parent_source_id = tag_entry.parent_entry_id,
+            });
         }
     }
 
@@ -1158,17 +1229,19 @@ pub const Context = struct {
         /// file database.
         files: ?[]const i64 = null,
     };
-    const TagTreeMap = std.AutoHashMap(i64, []i64);
+
+    const TagTreeEntry = struct { tag_id: i64, row_id: i64 };
+    const TagTreeMap = std.AutoHashMap(i64, []TagTreeEntry);
 
     pub fn processTagTree(self: *Self, options: ProcessTagTreeOptions) !void {
         log.info("processing tag tree...", .{});
 
         var tree_stmt = try self.db.?.prepare(
-            "select child_tag, parent_tag from tag_implications",
+            "select rowid, child_tag, parent_tag from tag_implications",
         );
         defer tree_stmt.deinit();
         var tree_rows = try tree_stmt.all(
-            struct { child_tag: i64, parent_tag: i64 },
+            struct { row_id: i64, child_tag: i64, parent_tag: i64 },
             self.allocator,
             .{},
             .{},
@@ -1186,14 +1259,20 @@ pub const Context = struct {
             const maybe_parents = treemap.get(tree_row.child_tag);
             if (maybe_parents) |parents| {
                 // realloc
-                var new_parents = try self.allocator.alloc(i64, parents.len + 1);
-                std.mem.copy(i64, new_parents, parents);
-                new_parents[new_parents.len - 1] = tree_row.parent_tag;
+                var new_parents = try self.allocator.alloc(TagTreeEntry, parents.len + 1);
+                std.mem.copy(TagTreeEntry, new_parents, parents);
+                new_parents[new_parents.len - 1] = .{
+                    .tag_id = tree_row.parent_tag,
+                    .row_id = tree_row.row_id,
+                };
                 self.allocator.free(parents);
                 try treemap.put(tree_row.child_tag, new_parents);
             } else {
-                var new_parents = try self.allocator.alloc(i64, 1);
-                new_parents[0] = tree_row.parent_tag;
+                var new_parents = try self.allocator.alloc(TagTreeEntry, 1);
+                new_parents[0] = .{
+                    .tag_id = tree_row.parent_tag,
+                    .row_id = tree_row.row_id,
+                };
                 try treemap.put(tree_row.child_tag, new_parents);
             }
         }
@@ -1804,7 +1883,7 @@ test "in memory database" {
 }
 
 test "tag parenting" {
-    var ctx = try makeTestContext();
+    var ctx = try makeTestContextRealFile();
     defer ctx.deinit();
 
     var tmp = std.testing.tmpDir(.{});
@@ -1823,9 +1902,9 @@ test "tag parenting" {
     var parent_tag = try ctx.createNamedTag("parent_test_tag", "en", null);
     var parent_tag2 = try ctx.createNamedTag("parent_test_tag2", "en", null);
     var parent_tag3 = try ctx.createNamedTag("parent_test_tag3", "en", null);
-    try ctx.createTagParent(child_tag, parent_tag);
-    try ctx.createTagParent(child_tag, parent_tag2);
-    try ctx.createTagParent(parent_tag2, parent_tag3);
+    const tag_tree_entry_id = try ctx.createTagParent(child_tag, parent_tag);
+    const tag_tree_entry2_id = try ctx.createTagParent(child_tag, parent_tag2);
+    const tag_tree_entry3_id = try ctx.createTagParent(parent_tag2, parent_tag3);
     try ctx.processTagTree(.{});
 
     // assert both now exist
@@ -1839,9 +1918,20 @@ test "tag parenting" {
     var saw_parent3 = false;
 
     for (file_tags) |file_tag| {
-        if (file_tag.core.id == parent_tag.core.id) saw_parent = true;
-        if (file_tag.core.id == parent_tag2.core.id) saw_parent2 = true;
-        if (file_tag.core.id == parent_tag3.core.id) saw_parent3 = true;
+        if (file_tag.core.id == parent_tag.core.id) {
+            try std.testing.expectEqual(TagSourceType.system, file_tag.source.kind);
+            try std.testing.expectEqual(@as(i64, @enumToInt(SystemTagSources.tag_parenting)), file_tag.source.id);
+            try std.testing.expectEqual(tag_tree_entry_id, file_tag.parent_source_id.?);
+            saw_parent = true;
+        }
+        if (file_tag.core.id == parent_tag2.core.id) {
+            try std.testing.expectEqual(tag_tree_entry2_id, file_tag.parent_source_id.?);
+            saw_parent2 = true;
+        }
+        if (file_tag.core.id == parent_tag3.core.id) {
+            try std.testing.expectEqual(tag_tree_entry3_id, file_tag.parent_source_id.?);
+            saw_parent3 = true;
+        }
         if (file_tag.core.id == child_tag.core.id) saw_child = true;
     }
 
@@ -1973,6 +2063,7 @@ test "tag sources" {
     defer indexed_file1.deinit();
 
     var source = try ctx.createTagSource("my test tag source", .{});
+
     var source2 = try ctx.createTagSource("my test tag source 2", .{});
     _ = source2;
 
