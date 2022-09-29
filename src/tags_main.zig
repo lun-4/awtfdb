@@ -1121,7 +1121,7 @@ const ListSource = struct {
 
         var stmt = try self.ctx.db.?.prepare(
             \\ select type, id, name
-            \\ from tag_sourcces
+            \\ from tag_sources
         );
         defer stmt.deinit();
         var entries = try stmt.all(struct { @"type": i64, id: i64, name: []const u8 }, self.ctx.allocator, .{}, .{});
