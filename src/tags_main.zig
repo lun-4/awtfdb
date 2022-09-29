@@ -37,6 +37,11 @@ const HELPTEXT =
     \\ 	atags pool search "my"
     \\ 	atags pool fetch id
     \\ 	atags pool remove id
+    \\
+    \\ source operations:
+    \\  atags source create "deepdanbooru"
+    \\  atags source list
+    \\  atags source remove id
 ;
 
 const ActionConfig = union(enum) {
@@ -52,6 +57,10 @@ const ActionConfig = union(enum) {
     FetchPool: FetchPool.Config,
     SearchPool: SearchPool.Config,
     RemovePool: RemovePool.Config,
+
+    CreateSource: CreateSource.Config,
+    ListSource: void,
+    RemoveSource: RemoveSource.Config,
 };
 
 const CreateAction = struct {
@@ -185,7 +194,7 @@ const CreateAction = struct {
             while (try it.next(.{})) |file_hash_id| {
                 var file = (try self.ctx.fetchFile(file_hash_id)).?;
                 defer file.deinit();
-                try file.addTag(tag_to_be_aliased_to);
+                try file.addTag(tag_to_be_aliased_to, .{});
 
                 try stdout.print("relinked {s}", .{file.local_path});
                 try file.printTagsTo(self.ctx.allocator, stdout);
@@ -506,8 +515,8 @@ test "remove action" {
     defer indexed_file.deinit();
 
     // setup file tags to 1, 2, 3
-    try indexed_file.addTag(tag.core);
-    try indexed_file.addTag(tag3.core);
+    try indexed_file.addTag(tag.core, .{});
+    try indexed_file.addTag(tag3.core, .{});
 
     const tag1_core = tag.core.toHex();
     const args = Args{ .ask_confirmation = false };
@@ -532,11 +541,11 @@ test "remove action" {
     try std.testing.expect(maybe_tag3 != null);
 
     // file should only have tag3
-    var tag_cores = try indexed_file.fetchTags(std.testing.allocator);
-    defer std.testing.allocator.free(tag_cores);
+    var file_tags = try indexed_file.fetchTags(std.testing.allocator);
+    defer std.testing.allocator.free(file_tags);
 
-    try std.testing.expectEqual(@as(usize, 1), tag_cores.len);
-    try std.testing.expectEqual(tag3.core.id, tag_cores[0].id);
+    try std.testing.expectEqual(@as(usize, 1), file_tags.len);
+    try std.testing.expectEqual(tag3.core.id, file_tags[0].core.id);
 }
 
 const SearchAction = struct {
@@ -677,10 +686,10 @@ const CreateParent = struct {
             return error.ParentTagNotFound;
         };
 
-        try self.ctx.createTagParent(child_tag, parent_tag);
+        const tree_id = try self.ctx.createTagParent(child_tag, parent_tag);
         try stdout.print(
-            "created tag parent where every file with '{s}' is also '{s}'\nprocessing new parents...\n",
-            .{ child_tag, parent_tag },
+            "created tag parent where every file with '{s}' is also '{s}' (tree id {d})\nprocessing new parents...\n",
+            .{ child_tag, parent_tag, tree_id },
         );
 
         // now that the relationship is created, we must go through all files
@@ -1015,6 +1024,129 @@ const RemovePool = struct {
     }
 };
 
+const CreateSource = struct {
+    pub const Config = struct {
+        title: []const u8,
+    };
+
+    pub fn processArgs(args_it: *std.process.ArgIterator, given_args: *Args) !ActionConfig {
+        _ = given_args;
+        var config = Config{
+            .title = args_it.next() orelse return error.ExpectedSourceTitle,
+        };
+        return ActionConfig{ .CreateSource = config };
+    }
+
+    ctx: *Context,
+    config: Config,
+
+    const Self = @This();
+
+    pub fn init(ctx: *Context, config: Config) !Self {
+        return Self{ .ctx = ctx, .config = config };
+    }
+
+    pub fn deinit(self: *Self) void {
+        _ = self;
+    }
+
+    pub fn run(self: *Self) !void {
+        var stdout = std.io.getStdOut().writer();
+
+        var source = try self.ctx.createTagSource(self.config.title, .{});
+        std.debug.print("source created with id ", .{});
+        try stdout.print("{d}\n", .{source.id});
+    }
+};
+
+const RemoveSource = struct {
+    pub const Config = struct {
+        id: i64,
+    };
+
+    pub fn processArgs(args_it: *std.process.ArgIterator, given_args: *Args) !ActionConfig {
+        _ = given_args;
+        return ActionConfig{ .RemoveSource = Config{
+            .id = try std.fmt.parseInt(i64, args_it.next() orelse return error.RequiredId, 10),
+        } };
+    }
+
+    ctx: *Context,
+    config: Config,
+
+    const Self = @This();
+
+    pub fn init(ctx: *Context, config: Config) !Self {
+        return Self{ .ctx = ctx, .config = config };
+    }
+
+    pub fn deinit(self: *Self) void {
+        _ = self;
+    }
+
+    pub fn run(self: *Self) !void {
+        var stdout = std.io.getStdOut().writer();
+
+        const source =
+            (try self.ctx.fetchTagSource(.external, self.config.id)) orelse return error.SourceNotFound;
+
+        try source.delete();
+
+        try stdout.print("ok\n", .{});
+    }
+};
+
+const ListSource = struct {
+    pub fn processArgs(args_it: *std.process.ArgIterator, given_args: *Args) !ActionConfig {
+        _ = given_args;
+        _ = args_it;
+        return ActionConfig{ .ListSource = {} };
+    }
+
+    ctx: *Context,
+    config: void,
+
+    const Self = @This();
+
+    pub fn init(ctx: *Context, config: void) !Self {
+        return Self{ .ctx = ctx, .config = config };
+    }
+
+    pub fn deinit(self: *Self) void {
+        _ = self;
+    }
+
+    pub fn run(self: *Self) !void {
+        var raw_stdout = std.io.getStdOut().writer();
+
+        var stmt = try self.ctx.db.?.prepare(
+            \\ select type, id, name
+            \\ from tag_sources
+        );
+        defer stmt.deinit();
+        var entries = try stmt.all(struct { @"type": i64, id: i64, name: []const u8 }, self.ctx.allocator, .{}, .{});
+        defer {
+            for (entries) |entry| {
+                self.ctx.allocator.free(entry.name);
+            }
+            self.ctx.allocator.free(entries);
+        }
+
+        const BufferedFileWriter = std.io.BufferedWriter(4096, std.fs.File.Writer);
+        var buffered_stdout = BufferedFileWriter{ .unbuffered_writer = raw_stdout };
+        var stdout = buffered_stdout.writer();
+
+        for (entries) |row| {
+            try stdout.print(
+                "type={d} id={d}: name={s}\n",
+                .{ row.@"type", row.id, row.name },
+            );
+        }
+
+        try buffered_stdout.flush();
+    }
+};
+
 const Args = struct {
     help: bool = false,
     version: bool = false,
@@ -1040,7 +1172,7 @@ pub fn main() anyerror!void {
     _ = args_it.skip();
 
     var given_args = Args{};
-    var arg_state: enum { None, Parent, Pool } = .None;
+    var arg_state: enum { None, Parent, Pool, Source } = .None;
 
     while (args_it.next()) |arg| {
         switch (arg_state) {
@@ -1076,6 +1208,21 @@ pub fn main() anyerror!void {
                 continue;
             },
 
+            .Source => {
+                if (std.mem.eql(u8, arg, "create")) {
+                    given_args.action_config = try CreateSource.processArgs(&args_it, &given_args);
+                } else if (std.mem.eql(u8, arg, "list")) {
+                    given_args.action_config = try ListSource.processArgs(&args_it, &given_args);
+                } else if (std.mem.eql(u8, arg, "remove")) {
+                    given_args.action_config = try RemoveSource.processArgs(&args_it, &given_args);
+                } else {
+                    log.err("{s} is an invalid source action", .{arg});
+                    return error.InvalidPoolAction;
+                }
+                arg_state = .None;
+                continue;
+            },
+
             .None => {},
         }
 
@@ -1097,6 +1244,8 @@ pub fn main() anyerror!void {
             arg_state = .Parent;
         } else if (std.mem.eql(u8, arg, "pool")) {
             arg_state = .Pool;
+        } else if (std.mem.eql(u8, arg, "source")) {
+            arg_state = .Source;
         } else {
             log.err("{s} is an invalid action", .{arg});
             return error.InvalidAction;
@@ -1166,7 +1315,6 @@ pub fn main() anyerror!void {
             defer self.deinit();
             try self.run();
         },
-
         .FetchPool => |config| {
             var self = try FetchPool.init(&ctx, config);
             defer self.deinit();
@@ -1179,6 +1327,22 @@ pub fn main() anyerror!void {
         },
         .RemovePool => |config| {
             var self = try RemovePool.init(&ctx, config);
+            defer self.deinit();
+            try self.run();
+        },
+
+        .CreateSource => |config| {
+            var self = try CreateSource.init(&ctx, config);
+            defer self.deinit();
+            try self.run();
+        },
+        .ListSource => |config| {
+            var self = try ListSource.init(&ctx, config);
+            defer self.deinit();
+            try self.run();
+        },
+        .RemoveSource => |config| {
+            var self = try RemoveSource.init(&ctx, config);
             defer self.deinit();
             try self.run();
         },

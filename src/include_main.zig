@@ -129,9 +129,9 @@ const TestUtil = struct {
         var indexed_file = try ctx.createFileFromDir(tmp.dir, filename);
         defer indexed_file.deinit();
 
-        const hashlist = try indexed_file.fetchTags(allocator);
-        defer allocator.free(hashlist);
-        try std.testing.expectEqual(@as(usize, 0), hashlist.len);
+        const file_tags = try indexed_file.fetchTags(allocator);
+        defer allocator.free(file_tags);
+        try std.testing.expectEqual(@as(usize, 0), file_tags.len);
 
         var tags_to_add = std.ArrayList([]const u8).init(allocator);
         defer {
@@ -144,20 +144,20 @@ const TestUtil = struct {
 
         try addTagList(ctx, &indexed_file, tags_to_add);
 
-        const hashlist_after = try indexed_file.fetchTags(allocator);
-        defer allocator.free(hashlist_after);
+        const file_tags_after = try indexed_file.fetchTags(allocator);
+        defer allocator.free(file_tags_after);
 
         var found_tags: [wanted_tags.len]bool = undefined;
         // initialize
         for (found_tags) |_, idx| found_tags[idx] = false;
 
-        for (hashlist_after) |tag_core| {
-            const tag_list = try ctx.fetchTagsFromCore(allocator, tag_core);
+        for (file_tags_after) |file_tag| {
+            const tag_list = try ctx.fetchTagsFromCore(allocator, file_tag.core);
             defer tag_list.deinit();
 
             try std.testing.expectEqual(@as(usize, 1), tag_list.items.len);
             const tag = tag_list.items[0];
-            try std.testing.expectEqual(tag_core.id, tag.core.id);
+            try std.testing.expectEqual(file_tag.core.id, tag.core.id);
             inline for (wanted_tags) |wanted_tag, index| {
                 if (std.mem.eql(u8, wanted_tag, tag.kind.Named.text)) {
                     found_tags[index] = true;
@@ -177,7 +177,7 @@ const TestUtil = struct {
             }
         }
 
-        try std.testing.expectEqual(@as(usize, wanted_tags.len), hashlist_after.len);
+        try std.testing.expectEqual(@as(usize, wanted_tags.len), file_tags_after.len);
         try std.testing.expectEqual(@as(usize, wanted_tags.len), tags_to_add.items.len);
     }
 };
@@ -775,6 +775,7 @@ pub const Args = struct {
     filter_indexed_files_only: bool = false,
     dry_run: bool = false,
     cli_v1: bool = true,
+    tag_source: ?Context.File.Source = null,
     default_tags: StringList,
     wanted_inferrers: ConfigList,
     include_paths: StringList,
@@ -797,13 +798,15 @@ fn addTagList(
         log.info("adding tag {s}", .{named_tag_text});
         var maybe_tag = try ctx.fetchNamedTag(named_tag_text, "en");
         if (maybe_tag) |tag| {
-            try file.addTag(tag.core);
+            try file.addTag(tag.core, .{});
         } else {
             var tag = try ctx.createNamedTag(named_tag_text, "en", null);
-            try file.addTag(tag.core);
+            try file.addTag(tag.core, .{});
         }
     }
 }
+
+var wanted_log_level: std.log.Level = .info;
 
 pub fn main() anyerror!void {
     const rc = sqlite.c.sqlite3_config(sqlite.c.SQLITE_CONFIG_LOG, manage_main.sqliteLog, @as(?*anyopaque, null));
@@ -821,7 +824,7 @@ pub fn main() anyerror!void {
     var args_it = std.process.args();
     _ = args_it.skip();
 
-    const ArgState = enum { None, FetchTag, InferMoreTags, FetchPool };
+    const ArgState = enum { None, FetchTag, InferMoreTags, FetchPool, FetchSource };
 
     var state: ArgState = .None;
 
@@ -831,6 +834,17 @@ pub fn main() anyerror!void {
         .include_paths = StringList.init(allocator),
     };
     defer given_args.deinit();
+
+    var ctx = Context{
+        .home_path = null,
+        .args_it = undefined,
+        .stdout = undefined,
+        .db = null,
+        .allocator = allocator,
+    };
+    defer ctx.deinit();
+
+    try ctx.loadDatabase(.{});
 
     var arg: []const u8 = undefined;
     while (args_it.next()) |arg_from_loop| {
@@ -844,6 +858,12 @@ pub fn main() anyerror!void {
             },
             .FetchPool => {
                 given_args.pool = try std.fmt.parseInt(i64, arg, 10);
+                state = .None;
+                continue;
+            },
+            .FetchSource => {
+                const arg_as_int = try std.fmt.parseInt(i64, arg, 10);
+                given_args.tag_source = (try ctx.fetchTagSource(.external, arg_as_int)) orelse return error.TagSourceNotFound;
                 state = .None;
                 continue;
             },
@@ -887,6 +907,8 @@ pub fn main() anyerror!void {
             // after all.
         } else if (std.mem.eql(u8, arg, "-p") or std.mem.eql(u8, arg, "--pool")) {
             state = .FetchPool;
+        } else if (std.mem.eql(u8, arg, "-s") or std.mem.eql(u8, arg, "--source")) {
+            state = .FetchSource;
         } else if (std.mem.eql(u8, arg, "--strict")) {
             given_args.strict = true;
         } else if (std.mem.startsWith(u8, arg, "--")) {
@@ -905,7 +927,8 @@ pub fn main() anyerror!void {
     }
 
     if (given_args.verbose) {
-        @panic("TODO runtime logging");
+        // TODO
+        wanted_log_level = .debug;
     }
 
     if (given_args.include_paths.items.len == 0) {
@@ -913,16 +936,6 @@ pub fn main() anyerror!void {
         return error.MissingArgument;
     }
 
-    var ctx = Context{
-        .home_path = null,
-        .args_it = undefined,
-        .stdout = undefined,
-        .db = null,
-        .allocator = allocator,
-    };
-    defer ctx.deinit();
-
-    try ctx.loadDatabase(.{});
     if (given_args.dry_run) try ctx.turnIntoMemoryDb();
 
     std.log.info("args: {}", .{given_args});
@@ -1006,7 +1019,7 @@ pub fn main() anyerror!void {
             defer savepoint.commit();
 
             for (default_tag_cores.items) |tag_core| {
-                try file.addTag(tag_core);
+                try file.addTag(tag_core, .{ .source = given_args.tag_source });
             }
 
             var tags_to_add = std.ArrayList([]const u8).init(allocator);
@@ -1077,7 +1090,7 @@ pub fn main() anyerror!void {
                             }
 
                             for (default_tag_cores.items) |tag_core| {
-                                try file.addTag(tag_core);
+                                try file.addTag(tag_core, .{ .source = given_args.tag_source });
                             }
 
                             for (given_args.wanted_inferrers.items) |inferrer_config, index| {
