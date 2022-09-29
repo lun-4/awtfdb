@@ -2048,6 +2048,21 @@ test "file pools" {
     }
 }
 
+test "tag source basic" {
+    var ctx = try makeTestContext();
+    defer ctx.deinit();
+
+    var source = try ctx.createTagSource("my test tag source", .{});
+
+    var source_fetched_from_id = try ctx.fetchTagSource(.external, source.id);
+    try std.testing.expect(source_fetched_from_id != null);
+
+    try source.delete();
+
+    var source_after_delete = try ctx.fetchTagSource(.external, source.id);
+    try std.testing.expect(source_after_delete == null);
+}
+
 test "tag sources" {
     var ctx = try makeTestContext();
     defer ctx.deinit();
