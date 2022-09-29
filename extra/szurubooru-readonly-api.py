@@ -111,8 +111,10 @@ async def app_after_serving():
 
 @app.route("/info")
 async def info():
+    post_count = (await app.db.execute_fetchall("select count(*) from files"))[0][0]
+
     return {
-        "postCount": 0,
+        "postCount": post_count,
         "diskUsage": 0,
         "featuredPost": None,
         "featuringTime": None,
