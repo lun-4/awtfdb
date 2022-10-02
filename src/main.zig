@@ -771,7 +771,7 @@ pub const Context = struct {
                     hash_data: sqlite.Blob,
                     tag_source_type: i64,
                     tag_source_id: i64,
-                    parent_source_id: i64,
+                    parent_source_id: ?i64,
                 },
                 allocator,
                 .{},
