@@ -31,6 +31,9 @@ const HELPTEXT =
     \\ 	atags parent create child_tag parent_tag
     \\ 	atags parent list
     \\ 	atags parent remove id
+    \\ 	atags parent remove --delete-tag-file-entries id
+    \\ 		remove the parent entry and clean up the files that had tags
+    \\ 		added by this parent relationship
     \\
     \\ pool operations:
     \\ 	atags pool create "my pool title"
@@ -771,15 +774,23 @@ const RemoveParent = struct {
     pub const Config = struct {
         given_args: *Args,
         rowid: ?i64 = null,
+        delete_file_entries: bool = false,
     };
 
     pub fn processArgs(args_it: *std.process.ArgIterator, given_args: *Args) !ActionConfig {
         _ = given_args;
-        var config = Config{
-            .given_args = given_args,
-            .rowid = try std.fmt.parseInt(i64, args_it.next() orelse return error.NeedParentId, 10),
-        };
+        var config = Config{ .given_args = given_args };
 
+        while (args_it.next()) |arg| {
+            if (std.mem.eql(u8, arg, "--delete-tag-file-entries")) {
+                config.delete_file_entries = true;
+            } else {
+                config.rowid = try std.fmt.parseInt(i64, arg, 10);
+                break;
+            }
+        }
+
+        if (config.rowid == null) return error.NeedParentId;
         return ActionConfig{ .RemoveParent = config };
     }
 
@@ -800,7 +811,7 @@ const RemoveParent = struct {
         var stdout = std.io.getStdOut().writer();
         var stdin = std.io.getStdIn().reader();
 
-        var parent_relationship = (try self.ctx.db.?.one(
+        const parent_relationship = (try self.ctx.db.?.one(
             struct { child_tag: i64, parent_tag: i64 },
             "select child_tag, parent_tag from tag_implications where rowid = ?",
             .{},
@@ -812,6 +823,19 @@ const RemoveParent = struct {
             .{ parent_relationship.parent_tag, parent_relationship.child_tag },
         );
 
+        const tag_file_count = (try self.ctx.db.?.one(
+            i64,
+            "select count(*) from tag_files where parent_source_id = ?",
+            .{},
+            .{self.config.rowid.?},
+        )).?;
+
+        if (self.config.delete_file_entries) {
+            try stdout.print("tag entries in files that were made by this relationship will be removed ({d} entries)\n", .{tag_file_count});
+        } else {
+            try stdout.print("tag entries in files that were made by this relationship will be retained but their relationship metadata will be removed. ({d} entries)\n", .{tag_file_count});
+        }
+
         if (self.config.given_args.ask_confirmation) {
             try stdout.print("do you wish to remove it? (press y) ", .{});
             var outcome: [1]u8 = undefined;
@@ -819,15 +843,165 @@ const RemoveParent = struct {
             if (!std.mem.eql(u8, &outcome, "y")) return error.NotConfirmed;
         }
 
-        try self.ctx.db.?.exec(
-            "delete from tag_implications where rowid = ?",
-            .{},
-            .{self.config.rowid.?},
-        );
+        {
+            var savepoint = try self.ctx.db.?.savepoint("parent_removal");
+            errdefer savepoint.rollback();
+            defer savepoint.commit();
+
+            try self.ctx.db.?.exec(
+                "delete from tag_implications where rowid = ?",
+                .{},
+                .{self.config.rowid.?},
+            );
+
+            const rowid = self.config.rowid.?;
+
+            if (self.config.delete_file_entries) {
+                log.info("REMOVING all tag file entries that were made by this parent...", .{});
+                const deleted_tag_file_count = (try self.ctx.db.?.one(
+                    i64,
+                    \\ delete from tag_files
+                    \\ where
+                    \\ 	parent_source_id = ?
+                    \\  and tag_source_type = 0
+                    \\  and tag_source_id = 1
+                    \\ returning (
+                    \\ 	select count(*)
+                    \\ 	from tag_files
+                    \\	where
+                    \\	 parent_source_id = ?
+                    \\	 and tag_source_type = 0
+                    \\	 and tag_source_id = 1
+                    \\ ) as updated_count
+                ,
+                    .{},
+                    .{ rowid, rowid },
+                )).?;
+
+                log.info("deleted {d} tag_files entries", .{deleted_tag_file_count});
+            } else {
+                log.info("UPDATING all tag file entries that were made by this parent and setting to null...", .{});
+                const updated_tag_file_count = (try self.ctx.db.?.one(
+                    i64,
+                    \\ update tag_files
+                    \\ set
+                    \\ 	parent_source_id = null,
+                    \\  tag_source_type = 0,
+                    \\  tag_source_id = 0
+                    \\ where
+                    \\ 	parent_source_id = ?
+                    \\  and tag_source_type = 0
+                    \\  and tag_source_id = 1
+                    \\ returning (
+                    \\ 	select count(*)
+                    \\ 	from tag_files
+                    \\	where
+                    \\	 parent_source_id = ?
+                    \\	 and tag_source_type = 0
+                    \\	 and tag_source_id = 1
+                    \\ ) as updated_count
+                ,
+                    .{},
+                    .{ rowid, rowid },
+                )).?;
+
+                log.info("updated {d} tag_files entries", .{updated_tag_file_count});
+            }
+        }
 
         try stdout.print("deleted parent id {d}\n", .{self.config.rowid.?});
     }
 };
+
+test "remove parent (no entry deletion)" {
+    var ctx = try manage_main.makeTestContext();
+    defer ctx.deinit();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var file = try tmp.dir.createFile("test_file", .{});
+    defer file.close();
+    _ = try file.write("awooga");
+
+    var indexed_file = try ctx.createFileFromDir(tmp.dir, "test_file");
+    defer indexed_file.deinit();
+
+    var child_tag = try ctx.createNamedTag("child_test_tag", "en", null);
+    try indexed_file.addTag(child_tag.core, .{});
+
+    // only add this through inferrence
+    var parent_tag = try ctx.createNamedTag("parent_test_tag", "en", null);
+    var parent_tag2 = try ctx.createNamedTag("parent_test_tag2", "en", null);
+    var parent_tag3 = try ctx.createNamedTag("parent_test_tag3", "en", null);
+    const tag_tree_entry_id = try ctx.createTagParent(child_tag, parent_tag);
+    _ = try ctx.createTagParent(child_tag, parent_tag2);
+    _ = try ctx.createTagParent(parent_tag2, parent_tag3);
+    try ctx.processTagTree(.{});
+
+    // attempt to run command with delete_file_entries = false, then
+    // set it to true and see what happens
+
+    var args = Args{ .ask_confirmation = false };
+    var config = RemoveParent.Config{
+        .given_args = &args,
+        .rowid = tag_tree_entry_id,
+        .delete_file_entries = false,
+    };
+
+    var action = try RemoveParent.init(&ctx, config);
+    defer action.deinit();
+
+    try action.run();
+
+    var file_tags = try indexed_file.fetchTags(std.testing.allocator);
+    defer std.testing.allocator.free(file_tags);
+    try std.testing.expectEqual(@as(usize, 4), file_tags.len);
+}
+
+test "remove parent (with entry deletion)" {
+    var ctx = try manage_main.makeTestContext();
+    defer ctx.deinit();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var file = try tmp.dir.createFile("test_file", .{});
+    defer file.close();
+    _ = try file.write("awooga");
+
+    var indexed_file = try ctx.createFileFromDir(tmp.dir, "test_file");
+    defer indexed_file.deinit();
+
+    var child_tag = try ctx.createNamedTag("child_test_tag", "en", null);
+    try indexed_file.addTag(child_tag.core, .{});
+
+    // only add this through inferrence
+    var parent_tag = try ctx.createNamedTag("parent_test_tag", "en", null);
+    var parent_tag2 = try ctx.createNamedTag("parent_test_tag2", "en", null);
+    var parent_tag3 = try ctx.createNamedTag("parent_test_tag3", "en", null);
+    const tag_tree_entry_id = try ctx.createTagParent(child_tag, parent_tag);
+    _ = try ctx.createTagParent(child_tag, parent_tag2);
+    _ = try ctx.createTagParent(parent_tag2, parent_tag3);
+    try ctx.processTagTree(.{});
+
+    // attempt to run command with delete_file_entries = false, then
+    // set it to true and see what happens
+
+    var args = Args{ .ask_confirmation = false };
+    var config = RemoveParent.Config{
+        .given_args = &args,
+        .rowid = tag_tree_entry_id,
+        .delete_file_entries = true,
+    };
+
+    var action = try RemoveParent.init(&ctx, config);
+    defer action.deinit();
+
+    try action.run();
+
+    var file_tags = try indexed_file.fetchTags(std.testing.allocator);
+    defer std.testing.allocator.free(file_tags);
+    try std.testing.expectEqual(@as(usize, 3), file_tags.len);
+}
 
 const CreatePool = struct {
     pub const Config = struct {
