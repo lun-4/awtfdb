@@ -914,7 +914,7 @@ const RemoveParent = struct {
 };
 
 test "remove parent (no entry deletion)" {
-    var ctx = try manage_main.makeTestContextRealFile();
+    var ctx = try manage_main.makeTestContext();
     defer ctx.deinit();
 
     var tmp = std.testing.tmpDir(.{});
@@ -1027,6 +1027,12 @@ test "remove parent (with entry deletion)" {
     var file_tags = try indexed_file.fetchTags(std.testing.allocator);
     defer std.testing.allocator.free(file_tags);
     try std.testing.expectEqual(@as(usize, 3), file_tags.len);
+
+    for (file_tags) |file_tag| {
+        if (file_tag.core.id == ids.parent_tag_core_id) {
+            return error.ShouldNotFindOriginalParentIdHere;
+        }
+    }
 }
 
 const CreatePool = struct {
