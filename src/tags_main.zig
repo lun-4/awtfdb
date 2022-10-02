@@ -914,7 +914,7 @@ const RemoveParent = struct {
 };
 
 test "remove parent (no entry deletion)" {
-    var ctx = try manage_main.makeTestContext();
+    var ctx = try manage_main.makeTestContextRealFile();
     defer ctx.deinit();
 
     var tmp = std.testing.tmpDir(.{});
@@ -926,25 +926,15 @@ test "remove parent (no entry deletion)" {
     var indexed_file = try ctx.createFileFromDir(tmp.dir, "test_file");
     defer indexed_file.deinit();
 
-    var child_tag = try ctx.createNamedTag("child_test_tag", "en", null);
-    try indexed_file.addTag(child_tag.core, .{});
+    const ids = try parentTestSetup(&ctx, &indexed_file);
 
-    // only add this through inferrence
-    var parent_tag = try ctx.createNamedTag("parent_test_tag", "en", null);
-    var parent_tag2 = try ctx.createNamedTag("parent_test_tag2", "en", null);
-    var parent_tag3 = try ctx.createNamedTag("parent_test_tag3", "en", null);
-    const tag_tree_entry_id = try ctx.createTagParent(child_tag, parent_tag);
-    _ = try ctx.createTagParent(child_tag, parent_tag2);
-    _ = try ctx.createTagParent(parent_tag2, parent_tag3);
-    try ctx.processTagTree(.{});
-
-    // attempt to run command with delete_file_entries = false, then
-    // set it to true and see what happens
+    // attempt to run command with delete_file_entries = false
 
     var args = Args{ .ask_confirmation = false };
     var config = RemoveParent.Config{
         .given_args = &args,
-        .rowid = tag_tree_entry_id,
+        // remove relationship child_tag -> parent_tag
+        .rowid = ids.tag_tree_entry_id,
         .delete_file_entries = false,
     };
 
@@ -956,6 +946,54 @@ test "remove parent (no entry deletion)" {
     var file_tags = try indexed_file.fetchTags(std.testing.allocator);
     defer std.testing.allocator.free(file_tags);
     try std.testing.expectEqual(@as(usize, 4), file_tags.len);
+
+    var saw_parent_tag_without_source = false;
+
+    for (file_tags) |file_tag| {
+        if (file_tag.core.id == ids.parent_tag_core_id) {
+            try std.testing.expectEqual(manage_main.TagSourceType.system, file_tag.source.kind);
+            try std.testing.expectEqual(@as(i64, @enumToInt(manage_main.SystemTagSources.manual_insertion)), file_tag.source.id);
+            try std.testing.expectEqual(@as(?i64, null), file_tag.parent_source_id);
+            saw_parent_tag_without_source = true;
+        }
+    }
+    try std.testing.expect(saw_parent_tag_without_source);
+}
+
+const ParentTestSetupResult = struct {
+    tag_tree_entry_id: i64,
+    tag_tree_entry2_id: i64,
+    tag_tree_entry3_id: i64,
+    parent_tag_core_id: i64,
+    parent_tag2_core_id: i64,
+    parent_tag3_core_id: i64,
+};
+
+fn parentTestSetup(
+    ctx: *Context,
+    indexed_file: *Context.File,
+) !ParentTestSetupResult {
+    var child_tag = try ctx.createNamedTag("child_test_tag", "en", null);
+    try indexed_file.addTag(child_tag.core, .{});
+
+    // only add this through inferrence
+    // child_tag -> parent_tag, parent_tag2
+    // parent_tag2 -> parent_tag3
+    var parent_tag = try ctx.createNamedTag("parent_test_tag", "en", null);
+    var parent_tag2 = try ctx.createNamedTag("parent_test_tag2", "en", null);
+    var parent_tag3 = try ctx.createNamedTag("parent_test_tag3", "en", null);
+    const tag_tree_entry_id = try ctx.createTagParent(child_tag, parent_tag);
+    const tag_tree_entry2_id = try ctx.createTagParent(child_tag, parent_tag2);
+    const tag_tree_entry3_id = try ctx.createTagParent(parent_tag2, parent_tag3);
+    try ctx.processTagTree(.{});
+    return ParentTestSetupResult{
+        .tag_tree_entry_id = tag_tree_entry_id,
+        .tag_tree_entry2_id = tag_tree_entry2_id,
+        .tag_tree_entry3_id = tag_tree_entry3_id,
+        .parent_tag_core_id = parent_tag.core.id,
+        .parent_tag2_core_id = parent_tag2.core.id,
+        .parent_tag3_core_id = parent_tag3.core.id,
+    };
 }
 
 test "remove parent (with entry deletion)" {
@@ -971,25 +1009,13 @@ test "remove parent (with entry deletion)" {
     var indexed_file = try ctx.createFileFromDir(tmp.dir, "test_file");
     defer indexed_file.deinit();
 
-    var child_tag = try ctx.createNamedTag("child_test_tag", "en", null);
-    try indexed_file.addTag(child_tag.core, .{});
-
-    // only add this through inferrence
-    var parent_tag = try ctx.createNamedTag("parent_test_tag", "en", null);
-    var parent_tag2 = try ctx.createNamedTag("parent_test_tag2", "en", null);
-    var parent_tag3 = try ctx.createNamedTag("parent_test_tag3", "en", null);
-    const tag_tree_entry_id = try ctx.createTagParent(child_tag, parent_tag);
-    _ = try ctx.createTagParent(child_tag, parent_tag2);
-    _ = try ctx.createTagParent(parent_tag2, parent_tag3);
-    try ctx.processTagTree(.{});
-
-    // attempt to run command with delete_file_entries = false, then
-    // set it to true and see what happens
+    const ids = try parentTestSetup(&ctx, &indexed_file);
 
     var args = Args{ .ask_confirmation = false };
     var config = RemoveParent.Config{
         .given_args = &args,
-        .rowid = tag_tree_entry_id,
+        // remove relationship child_tag -> parent_tag
+        .rowid = ids.tag_tree_entry_id,
         .delete_file_entries = true,
     };
 
