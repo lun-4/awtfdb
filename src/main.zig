@@ -260,7 +260,7 @@ const MIGRATION_LOG_TABLE =
     \\ );
 ;
 
-const log = std.log.scoped(.awtfdb_main);
+const logger = std.log.scoped(.awtfdb_main);
 
 pub const TagSourceType = enum(usize) {
     /// This tag source is a part of the core awtfdb system
@@ -337,7 +337,7 @@ pub const Context = struct {
         const result = try self.db.?.one(i32, "select 123;", .{}, .{});
         if (result == null or result.? != 123) {
             const result_packed = result orelse 0;
-            log.err("error on test statement: expected 123, got {?d} {d} ({})", .{ result, result_packed, (result orelse 0) == 123 });
+            logger.err("error on test statement: expected 123, got {?d} {d} ({})", .{ result, result_packed, (result orelse 0) == 123 });
             return error.TestStatementFailed;
         }
 
@@ -390,7 +390,7 @@ pub const Context = struct {
         if (self.db_path) |db_path| self.allocator.free(db_path);
 
         if (self.db) |*db| {
-            log.info("possibly optimizing database...", .{});
+            logger.info("possibly optimizing database...", .{});
             // The results of analysis are not as good when only part of each index is examined,
             // but the results are usually good enough. Setting N to 100 or 1000 allows
             // the ANALYZE command to run very quickly, even on multi-gigabyte database files.
@@ -615,7 +615,7 @@ pub const Context = struct {
                 .{ core_hash.id, core_data_blob },
             );
 
-            log.debug("created tag core with hash {s}", .{core_hash});
+            logger.debug("created tag core with hash {s}", .{core_hash});
         }
 
         try self.db.?.exec(
@@ -623,7 +623,7 @@ pub const Context = struct {
             .{},
             .{ core_hash.id, text, language },
         );
-        log.debug("created name tag with value {s} language {s} core {s}", .{ text, language, core_hash });
+        logger.debug("created name tag with value {s} language {s} core {s}", .{ text, language, core_hash });
 
         return Tag{
             .core = core_hash,
@@ -652,13 +652,13 @@ pub const Context = struct {
         // TODO create Source.addTagTo(), as its a safer api overall
         //  (prevent people from having to audit every addTag call)
         pub fn addTag(self: *FileSelf, core_hash: Hash, options: AddTagOptions) !void {
-            log.debug("link file {s} (hash {s}) with tag core hash {d} {s}", .{ self.local_path, self.hash, core_hash.id, core_hash });
+            logger.debug("link file {s} (hash {s}) with tag core hash {d} {s}", .{ self.local_path, self.hash, core_hash.id, core_hash });
 
             if (options.source) |source| {
                 if (options.parent_source_id) |parent_source_id| {
                     if (source.kind != TagSourceType.system) return error.InvalidSourceType;
                     if (source.id != @enumToInt(SystemTagSources.tag_parenting)) {
-                        log.err("expected tag parent source, got {}", .{source});
+                        logger.err("expected tag parent source, got {}", .{source});
                         return error.InvalidSourceID;
                     }
 
@@ -697,7 +697,7 @@ pub const Context = struct {
                 .{},
                 .{ core_hash.id, self.hash.id },
             );
-            log.debug("remove file {s} (hash {s}) with tag core hash {d}", .{ self.local_path, self.hash, core_hash.id });
+            logger.debug("remove file {s} (hash {s}) with tag core hash {d}", .{ self.local_path, self.hash, core_hash.id });
         }
 
         // Copies ownership of given new_local_path
@@ -713,7 +713,7 @@ pub const Context = struct {
         }
 
         pub fn delete(self: FileSelf) !void {
-            log.info("deleted file {d} {s}", .{ self.hash.id, self.local_path });
+            logger.info("deleted file {d} {s}", .{ self.hash.id, self.local_path });
             try self.ctx.db.?.exec(
                 "delete from files where file_hash = ? and local_path = ?",
                 .{},
@@ -835,7 +835,7 @@ pub const Context = struct {
     pub fn createTagSource(self: *Self, name: []const u8, options: TagSourceOptions) !File.Source {
         _ = options;
 
-        log.debug("create tag source '{s}'", .{name});
+        logger.debug("create tag source '{s}'", .{name});
 
         // fetch max id, do max(id) + 1
         // TODO (before merge) is this a good idea for ids?
@@ -982,7 +982,7 @@ pub const Context = struct {
             .{},
             .{ file_hash.id, absolute_local_path },
         );
-        log.debug("created file entry hash={s} path={s}", .{
+        logger.debug("created file entry hash={s} path={s}", .{
             absolute_local_path,
             file_hash,
         });
@@ -1234,7 +1234,7 @@ pub const Context = struct {
     const TagTreeMap = std.AutoHashMap(i64, []TagTreeEntry);
 
     pub fn processTagTree(self: *Self, options: ProcessTagTreeOptions) !void {
-        log.info("processing tag tree...", .{});
+        logger.info("processing tag tree...", .{});
 
         var tree_stmt = try self.db.?.prepare(
             "select rowid, child_tag, parent_tag from tag_implications",
@@ -1335,7 +1335,7 @@ pub const Context = struct {
 
         pub fn addFile(self: PoolSelf, file_id: i64) !void {
             const index = try self.availableIndex();
-            log.warn("adding file {d} to pool {d} index {d}", .{ file_id, self.hash.id, index });
+            logger.warn("adding file {d} to pool {d} index {d}", .{ file_id, self.hash.id, index });
             try self.ctx.db.?.exec(
                 "insert into pool_entries (file_hash, pool_hash, entry_index) values (?, ?, ?)",
                 .{},
@@ -1402,7 +1402,7 @@ pub const Context = struct {
                 \\ where pool_entries.pool_hash = ?
                 \\ order by pool_entries.entry_index asc
             , .{ .diags = &diags }) catch |err| {
-                log.err("unable to prepare statement, got error {}. diagnostics: {s}", .{ err, diags });
+                logger.err("unable to prepare statement, got error {}. diagnostics: {s}", .{ err, diags });
                 return err;
             };
             defer stmt.deinit();
@@ -1462,7 +1462,7 @@ pub const Context = struct {
         );
 
         var pool_hash = Hash{ .id = core_hash_id, .hash_data = core_hash_bytes };
-        log.debug("created pool with hash {s}", .{pool_hash});
+        logger.debug("created pool with hash {s}", .{pool_hash});
         return Pool{
             .ctx = self,
             .hash = pool_hash,
@@ -1517,7 +1517,7 @@ pub const Context = struct {
         try self.db.?.exec(MIGRATION_LOG_TABLE, .{}, .{});
 
         const current_version: i32 = (try self.db.?.one(i32, "select max(version) from migration_logs", .{}, .{})) orelse 0;
-        log.info("db version: {d}", .{current_version});
+        logger.info("db version: {d}", .{current_version});
 
         // before running migrations, copy the database over
 
@@ -1527,7 +1527,7 @@ pub const Context = struct {
                 &[_][]const u8{ self.home_path.?, ".awtf.before-migration.db" },
             );
             defer self.allocator.free(backup_db_path);
-            log.info("starting transaction for backup from {s} to {s}", .{ db_path, backup_db_path });
+            logger.info("starting transaction for backup from {s} to {s}", .{ db_path, backup_db_path });
 
             try self.db.?.exec("begin exclusive transaction", .{}, .{});
             errdefer {
@@ -1549,7 +1549,7 @@ pub const Context = struct {
                 };
             }
 
-            log.info("copying database to {s}", .{backup_db_path});
+            logger.info("copying database to {s}", .{backup_db_path});
             try std.fs.copyFileAbsolute(db_path, backup_db_path, .{});
         }
 
@@ -1562,10 +1562,10 @@ pub const Context = struct {
                 const migration = Migration.fromTuple(migration_decl);
 
                 if (current_version < migration.version) {
-                    log.info("running migration {d} '{s}'", .{ migration.version, migration.name });
+                    logger.info("running migration {d} '{s}'", .{ migration.version, migration.name });
                     var diags = sqlite.Diagnostics{};
                     self.db.?.execMulti(migration.sql.?, .{ .diags = &diags }) catch |err| {
-                        log.err("unable to prepare statement, got error {s}. diagnostics: {s}", .{ @errorName(err), diags });
+                        logger.err("unable to prepare statement, got error {s}. diagnostics: {s}", .{ @errorName(err), diags });
                         return err;
                     };
 
@@ -1583,7 +1583,7 @@ pub const Context = struct {
         }
 
         const val = (try self.db.?.one(i64, "PRAGMA integrity_check", .{}, .{})) orelse return error.PossiblyFailedIntegrityCheck;
-        log.debug("integrity check returned {d}", .{val});
+        logger.debug("integrity check returned {d}", .{val});
         try self.db.?.exec("PRAGMA foreign_key_check", .{}, .{});
     }
 
@@ -1597,7 +1597,7 @@ pub const Context = struct {
 };
 
 pub export fn sqliteLog(_: ?*anyopaque, level: c_int, message: ?[*:0]const u8) callconv(.C) void {
-    log.info("sqlite logged level={d} msg={?s}", .{ level, message });
+    logger.info("sqlite logged level={d} msg={?s}", .{ level, message });
 }
 
 pub fn main() anyerror!void {
@@ -1606,7 +1606,7 @@ pub fn main() anyerror!void {
     var allocator = gpa.allocator();
     const rc = sqlite.c.sqlite3_config(sqlite.c.SQLITE_CONFIG_LOG, sqliteLog, @as(?*anyopaque, null));
     if (rc != sqlite.c.SQLITE_OK) {
-        log.err("failed to configure: {d} '{s}'", .{
+        logger.err("failed to configure: {d} '{s}'", .{
             rc, sqlite.c.sqlite3_errstr(rc),
         });
         return error.ConfigFail;
@@ -1649,7 +1649,7 @@ pub fn main() anyerror!void {
     }
 
     if (given_args.maybe_action == null) {
-        log.err("action argument is required", .{});
+        logger.err("action argument is required", .{});
         return error.MissingActionArgument;
     }
 
@@ -1668,7 +1668,7 @@ pub fn main() anyerror!void {
     } else if (std.mem.eql(u8, action, "migrate")) {
         try ctx.migrateCommand();
     } else {
-        log.err("unknown action {s}", .{action});
+        logger.err("unknown action {s}", .{action});
         return error.UnknownAction;
     }
 }
@@ -1712,7 +1712,7 @@ pub fn makeTestContextRealFile() !Context {
     defer file.close();
     const dbpath = try tmp.dir.realpath("test.db", test_db_path_buffer[homepath.len..]);
 
-    log.warn("using test context database file '{s}'", .{dbpath});
+    logger.warn("using test context database file '{s}'", .{dbpath});
 
     var ctx = Context{
         .args_it = undefined,

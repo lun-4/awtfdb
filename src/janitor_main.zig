@@ -4,7 +4,7 @@ const manage_main = @import("main.zig");
 const libpcre = @import("libpcre");
 const Context = manage_main.Context;
 
-const log = std.log.scoped(.awtfdb_janitor);
+const logger = std.log.scoped(.awtfdb_janitor);
 pub const io_mode = .evented;
 
 const VERSION = "0.0.1";
@@ -36,21 +36,21 @@ const ErrorCounters = struct {
 
 fn parseByteAmount(text: []const u8) !usize {
     const numeric_part_text = text[0 .. text.len - 1];
-    log.debug("numeric part {s}", .{numeric_part_text});
+    logger.debug("numeric part {s}", .{numeric_part_text});
     const numeric_part = try std.fmt.parseInt(usize, numeric_part_text, 10);
     const unit = text[text.len - 1];
-    log.debug("unit {s}", .{&[_]u8{unit}});
+    logger.debug("unit {s}", .{&[_]u8{unit}});
     const modifier: usize = switch (unit) {
         'K' => 1024,
         'M' => 1024 * 1024,
         'G' => 1024 * 1024 * 1024,
         else => {
-            log.err("expected K, M, G, got {s}", .{&[_]u8{unit}});
+            logger.err("expected K, M, G, got {s}", .{&[_]u8{unit}});
             return error.InvalidByteAmount;
         },
     };
     const bytecount = numeric_part * modifier;
-    log.debug("will only hash files smaller than {d} bytes", .{bytecount});
+    logger.debug("will only hash files smaller than {d} bytes", .{bytecount});
     return bytecount;
 }
 
@@ -106,7 +106,7 @@ pub fn janitorCheckCores(
             counters.incorrect_hash_cores.total += 1;
             counters.incorrect_hash_cores.unrepairable += 1;
 
-            log.err(
+            logger.err(
                 "hashes are incorrect for tag core {d} ({s} != {s})",
                 .{ core_with_blob.core_hash, calculated_hash, upstream_hash },
             );
@@ -168,7 +168,7 @@ pub fn janitorCheckUnusedHashes(
 
         if (pool_count > 0) continue;
 
-        log.warn("unused hash in table: {d}", .{hash_id});
+        logger.warn("unused hash in table: {d}", .{hash_id});
 
         counters.unused_hash.total += 1;
 
@@ -180,7 +180,7 @@ pub fn janitorCheckUnusedHashes(
                 .{},
                 .{hash_id},
             );
-            log.info("deleted hash {d}", .{hash_id});
+            logger.info("deleted hash {d}", .{hash_id});
         }
     }
 }
@@ -214,7 +214,7 @@ pub fn janitorCheckFiles(
 
         var file = std.fs.openFileAbsolute(row.local_path, .{ .mode = .read_only }) catch |err| switch (err) {
             error.FileNotFound => {
-                log.err("file {s} not found", .{row.local_path});
+                logger.err("file {s} not found", .{row.local_path});
                 counters.file_not_found.total += 1;
 
                 const repeated_count = (try ctx.db.?.one(
@@ -231,7 +231,7 @@ pub fn janitorCheckFiles(
 
                 if (repeated_count > 1) {
                     // repair action: delete old entry to keep index consistent
-                    log.warn(
+                    logger.warn(
                         "found {d} files with same hash, assuming a file move happened for {d}",
                         .{ repeated_count, row.file_hash },
                     );
@@ -240,7 +240,7 @@ pub fn janitorCheckFiles(
                         try indexed_file.delete();
                     }
                 } else if (repeated_count == 1) {
-                    log.err(
+                    logger.err(
                         "can not repair {s} as it is not indexed, please index a file with same contents or remove it manually from the index",
                         .{row.local_path},
                     );
@@ -290,13 +290,13 @@ pub fn janitorCheckFiles(
 
                 counters.incorrect_hash_files.total += 1;
 
-                log.err(
+                logger.err(
                     "hashes are incorrect for file {d} (wanted '{s}', got '{s}')",
                     .{ row.file_hash, calculated_hash, indexed_file.hash },
                 );
 
                 if (given_args.repair) {
-                    log.warn("repair: forcefully setting hash for file {d} '{s}'", .{ row.file_hash, calculated_hash.toHex() });
+                    logger.warn("repair: forcefully setting hash for file {d} '{s}'", .{ row.file_hash, calculated_hash.toHex() });
                     const hash_blob = sqlite.Blob{ .data = &calculated_hash.hash_data };
 
                     const maybe_preexisting_hash_id = try ctx.db.?.one(
@@ -313,7 +313,7 @@ pub fn janitorCheckFiles(
                         // the fix here is to repoint file hash to the existing
                         // one, then garbage collect the old one in a separate
                         // janitor run
-                        log.info("target hash already exists {d}, setting file to it", .{preexisting_hash_id});
+                        logger.info("target hash already exists {d}, setting file to it", .{preexisting_hash_id});
 
                         try ctx.db.?.exec(
                             \\ update files
@@ -337,14 +337,14 @@ pub fn janitorCheckFiles(
                 continue;
             }
         }
-        log.debug("path {s} ok", .{row.local_path});
+        logger.debug("path {s} ok", .{row.local_path});
     }
 }
 
 pub fn main() anyerror!u8 {
     const rc = sqlite.c.sqlite3_config(sqlite.c.SQLITE_CONFIG_LOG, manage_main.sqliteLog, @as(?*anyopaque, null));
     if (rc != sqlite.c.SQLITE_OK) {
-        std.log.err("failed to configure: {d} '{s}'", .{
+        logger.err("failed to configure: {d} '{s}'", .{
             rc, sqlite.c.sqlite3_errstr(rc),
         });
         return error.ConfigFail;
@@ -443,7 +443,7 @@ pub fn main() anyerror!u8 {
     inline for (CountersTypeInfo.Struct.fields) |field| {
         const total = @field(counters, field.name).total;
 
-        log.info("problem {s}, {d} found, {d} unrepairable", .{
+        logger.info("problem {s}, {d} found, {d} unrepairable", .{
             field.name,
             total,
             @field(counters, field.name).unrepairable,
@@ -453,7 +453,7 @@ pub fn main() anyerror!u8 {
     }
 
     if ((!given_args.repair) and total_problems > 0) {
-        log.info("this database has identified problems, please run --repair", .{});
+        logger.info("this database has identified problems, please run --repair", .{});
         return 2;
     }
     return 0;

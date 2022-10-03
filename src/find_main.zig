@@ -4,7 +4,7 @@ const manage_main = @import("main.zig");
 const libpcre = @import("libpcre");
 const Context = manage_main.Context;
 
-const log = std.log.scoped(.afind);
+const logger = std.log.scoped(.afind);
 
 const VERSION = "0.0.1";
 const HELPTEXT =
@@ -40,7 +40,7 @@ const HELPTEXT =
 pub fn main() anyerror!void {
     const rc = sqlite.c.sqlite3_config(sqlite.c.SQLITE_CONFIG_LOG, manage_main.sqliteLog, @as(?*anyopaque, null));
     if (rc != sqlite.c.SQLITE_OK) {
-        std.log.err("failed to configure: {d} '{s}'", .{
+        logger.err("failed to configure: {d} '{s}'", .{
             rc, sqlite.c.sqlite3_errstr(rc),
         });
         return error.ConfigFail;
@@ -99,7 +99,7 @@ pub fn main() anyerror!void {
     }
 
     if (given_args.query.items.len == 0) {
-        std.log.err("query is a required argument", .{});
+        logger.err("query is a required argument", .{});
         return error.MissingQuery;
     }
     const query = try std.mem.join(allocator, " ", given_args.query.items);
@@ -130,7 +130,7 @@ pub fn main() anyerror!void {
     const result = switch (wrapped_result) {
         .Ok => |ok_body| ok_body,
         .Error => |error_body| {
-            log.err("error at character {d}: {}", .{ error_body.character, error_body.error_type });
+            logger.err("error at character {d}: {}", .{ error_body.character, error_body.error_type });
             return error.ParseErrorHappened;
         },
     };
@@ -143,7 +143,7 @@ pub fn main() anyerror!void {
         if (maybe_tag) |tag| {
             try resolved_tag_cores.append(tag.core.id);
         } else {
-            log.err("unknown tag '{s}'", .{tag_text});
+            logger.err("unknown tag '{s}'", .{tag_text});
             return error.UnknownTag;
         }
     }
@@ -151,8 +151,8 @@ pub fn main() anyerror!void {
     var stmt = try ctx.db.?.prepareDynamic(result.query);
     defer stmt.deinit();
 
-    log.debug("generated query: {s}", .{result.query});
-    log.debug("found tag cores: {any}", .{resolved_tag_cores.items});
+    logger.debug("generated query: {s}", .{result.query});
+    logger.debug("found tag cores: {any}", .{resolved_tag_cores.items});
 
     var it = try stmt.iterator(i64, resolved_tag_cores.items);
 
@@ -190,7 +190,7 @@ pub fn main() anyerror!void {
         }
     }
 
-    log.info("found {d} files", .{returned_files.items.len});
+    logger.info("found {d} files", .{returned_files.items.len});
 
     if (given_args.link) {
         var PREFIX = "/tmp/awtf/afind-";
@@ -207,14 +207,14 @@ pub fn main() anyerror!void {
             el.* = letter;
         }
 
-        log.debug("attempting to create folder '{s}'", .{tmp_path});
+        logger.debug("attempting to create folder '{s}'", .{tmp_path});
         std.fs.makeDirAbsolute("/tmp/awtf") catch |err| if (err != error.PathAlreadyExists) return err else {};
         try std.fs.makeDirAbsolute(&tmp_path);
         var tmp = try std.fs.openDirAbsolute(&tmp_path, .{});
 
         defer {
             tmp.deleteTree(&tmp_path) catch |err| {
-                log.err(
+                logger.err(
                     "error happened while deleting '{s}': {s}, ignoring.",
                     .{ &tmp_path, @errorName(err) },
                 );
@@ -228,14 +228,14 @@ pub fn main() anyerror!void {
                 std.fs.path.basename(file.local_path),
             });
             defer allocator.free(joined_symlink_path);
-            log.info("symlink '{s}' to '{s}'", .{ file.local_path, joined_symlink_path });
+            logger.info("symlink '{s}' to '{s}'", .{ file.local_path, joined_symlink_path });
             tmp.symLink(file.local_path, joined_symlink_path, .{}) catch |err| switch (err) {
                 error.PathAlreadyExists => {},
                 else => return err,
             };
         }
 
-        log.info("successfully created symlinked folder at", .{});
+        logger.info("successfully created symlinked folder at", .{});
         try stdout.print("{s}\n", .{tmp_path});
 
         const self_pipe_fds = try std.os.pipe();
@@ -274,14 +274,14 @@ pub fn main() anyerror!void {
         // we don't need to do 'while (true) { sleep(1000); }' because
         // we can poll on the selfpipe trick!
 
-        log.info("press ctrl-c to delete the temporary folder...", .{});
+        logger.info("press ctrl-c to delete the temporary folder...", .{});
         var run: bool = true;
         while (run) {
-            log.debug("polling for signals...", .{});
+            logger.debug("polling for signals...", .{});
             const available = try std.os.poll(sockets.items, -1);
             try std.testing.expect(available > 0);
             for (sockets.items) |pollfd| {
-                log.debug("fd {d} has revents {d}", .{ pollfd.fd, pollfd.revents });
+                logger.debug("fd {d} has revents {d}", .{ pollfd.fd, pollfd.revents });
                 if (pollfd.revents == 0) continue;
 
                 if (pollfd.fd == maybe_self_pipe.?.reader.handle) {
@@ -291,7 +291,7 @@ pub fn main() anyerror!void {
                             else => return err,
                         };
 
-                        log.info("exiting! with signal {d}", .{signal_data.signal});
+                        logger.info("exiting! with signal {d}", .{signal_data.signal});
                         run = false;
                     }
                 }
@@ -415,17 +415,17 @@ pub const SqlGiver = struct {
             var maybe_captures: ?[]?libpcre.Capture = null;
             var captured_regex_index: ?CaptureType = null;
             for (self.operators) |regex, current_regex_index| {
-                log.debug("try regex {d} on query '{s}'", .{ current_regex_index, query_slice });
+                logger.debug("try regex {d} on query '{s}'", .{ current_regex_index, query_slice });
                 maybe_captures = try regex.captures(allocator, query_slice, .{});
                 captured_regex_index = @intToEnum(CaptureType, current_regex_index);
-                log.debug("raw capture? {any}", .{maybe_captures});
+                logger.debug("raw capture? {any}", .{maybe_captures});
                 if (maybe_captures) |captures| {
                     const capture = captures[0].?;
                     if (capture.start != 0) {
                         allocator.free(captures);
                         maybe_captures = null;
                     } else {
-                        log.debug("captured!!! {any}", .{maybe_captures});
+                        logger.debug("captured!!! {any}", .{maybe_captures});
                         break;
                     }
                 }

@@ -6,7 +6,7 @@ const tunez = @import("tunez");
 
 const libpcre = @import("libpcre");
 
-const log = std.log.scoped(.ainclude);
+const logger = std.log.scoped(.ainclude);
 
 const VERSION = "0.0.1";
 const HELPTEXT =
@@ -169,9 +169,9 @@ const TestUtil = struct {
 
         for (found_tags) |value, index| {
             if (!value) {
-                log.err("tag on index {d} not found", .{index});
+                logger.err("tag on index {d} not found", .{index});
                 for (tags_to_add.items) |tag| {
-                    log.err("given tag {s}", .{tag});
+                    logger.err("given tag {s}", .{tag});
                 }
                 return error.TestUnexpectedResult;
             }
@@ -224,7 +224,7 @@ const RegexTagInferrer = struct {
         var arg: []const u8 = undefined;
         while (args_it.next()) |arg_from_loop| {
             arg = arg_from_loop;
-            log.debug("(regex tag inferrer) state: {} arg: {s}", .{ arg_state, arg });
+            logger.debug("(regex tag inferrer) state: {} arg: {s}", .{ arg_state, arg });
 
             switch (arg_state) {
                 .None => {},
@@ -240,7 +240,7 @@ const RegexTagInferrer = struct {
                 arg = args_it.next() orelse break;
                 arg_state = .None;
             }
-            log.debug("(regex tag inferrer, main loop) state: {} arg: {s}", .{ arg_state, arg });
+            logger.debug("(regex tag inferrer, main loop) state: {} arg: {s}", .{ arg_state, arg });
 
             if (std.mem.eql(u8, arg, "--regex")) {
                 arg_state = .Text;
@@ -362,7 +362,7 @@ const AudioMetadataTagInferrer = struct {
         var arg: []const u8 = undefined;
         while (args_it.next()) |arg_from_loop| {
             arg = arg_from_loop;
-            log.debug("(audio tag inferrer) state: {} arg: {s}", .{ arg_state, arg });
+            logger.debug("(audio tag inferrer) state: {} arg: {s}", .{ arg_state, arg });
 
             switch (arg_state) {
                 .None => {},
@@ -379,7 +379,7 @@ const AudioMetadataTagInferrer = struct {
                 arg = args_it.next() orelse break;
                 arg_state = .None;
             }
-            log.debug("(audio tag inferrer, main loop) state: {} arg: {s}", .{ arg_state, arg });
+            logger.debug("(audio tag inferrer, main loop) state: {} arg: {s}", .{ arg_state, arg });
 
             if (std.mem.eql(u8, arg, "--artist-tag-scope")) {
                 arg_state = .ArtistTagScope;
@@ -418,7 +418,7 @@ const AudioMetadataTagInferrer = struct {
         const is_mp3 = std.mem.eql(u8, extension, ".mp3");
         const is_flac = std.mem.eql(u8, extension, ".flac");
         if (!is_mp3 and !is_flac) {
-            log.err(
+            logger.err(
                 "file {s} is not mp3 or flac (extension '{s}'), please exclude from paths",
                 .{ file.local_path, extension },
             );
@@ -477,7 +477,7 @@ test "audio tag inferrer" {
     defer ctx.deinit();
 
     inline for (AUDIO_TEST_VECTORS) |test_vector_path| {
-        std.log.warn("testing {s}", .{test_vector_path});
+        logger.warn("testing {s}", .{test_vector_path});
         const test_vector_bytes = @embedFile(test_vector_path);
 
         // setup audio inferrer
@@ -563,7 +563,7 @@ const MimeCookie = struct {
 
         const magicdb_prefix = POSSIBLE_MAGICDB_PREFIXES[
             found_prefix orelse {
-                log.err("failed to locate magic file", .{});
+                logger.err("failed to locate magic file", .{});
                 return error.MagicNotFound;
             }
         ];
@@ -574,17 +574,17 @@ const MimeCookie = struct {
         const path_cstr = try std.cstr.addNullByte(allocator, magicdb_path);
         defer allocator.free(path_cstr);
 
-        log.info("loading magic file at prefix {s}", .{path_cstr});
+        logger.info("loading magic file at prefix {s}", .{path_cstr});
 
         if (c.magic_load(cookie, path_cstr) == -1) {
             const magic_error_value = c.magic_error(cookie);
-            log.err("failed to load magic file: {s}", .{magic_error_value});
+            logger.err("failed to load magic file: {s}", .{magic_error_value});
             return error.MagicFileFail;
         }
 
         if (c.magic_check(cookie, path_cstr) == -1) {
             const magic_error_value = c.magic_error(cookie);
-            log.err("failed to check magic file: {s}", .{magic_error_value});
+            logger.err("failed to check magic file: {s}", .{magic_error_value});
             return error.MagicFileFail;
         }
 
@@ -598,7 +598,7 @@ const MimeCookie = struct {
     pub fn inferFile(self: Self, path: [:0]const u8) ![]const u8 {
         const mimetype = c.magic_file(self.cookie, path) orelse {
             const magic_error_value = c.magic_error(self.cookie);
-            log.err("failed to infer mimetype: {s}", .{magic_error_value});
+            logger.err("failed to infer mimetype: {s}", .{magic_error_value});
             return error.MimetypeFail;
         };
         return std.mem.span(mimetype);
@@ -629,7 +629,7 @@ const MimeTagInferrer = struct {
         var arg: []const u8 = undefined;
         while (args_it.next()) |arg_from_loop| {
             arg = arg_from_loop;
-            log.debug("(mime tag inferrer) state: {} arg: {s}", .{ arg_state, arg });
+            logger.debug("(mime tag inferrer) state: {} arg: {s}", .{ arg_state, arg });
 
             switch (arg_state) {
                 .None => {},
@@ -647,7 +647,7 @@ const MimeTagInferrer = struct {
                 arg = args_it.next() orelse break;
                 arg_state = .None;
             }
-            log.debug("(mime tag inferrer, main loop) state: {} arg: {s}", .{ arg_state, arg });
+            logger.debug("(mime tag inferrer, main loop) state: {} arg: {s}", .{ arg_state, arg });
 
             if (std.mem.eql(u8, arg, "--mime-tag-scope")) {
                 arg_state = .TagScopeMimetype;
@@ -668,7 +668,7 @@ const MimeTagInferrer = struct {
 
     pub fn init(config: TagInferrerConfig, allocator: std.mem.Allocator) !RunContext {
         std.debug.assert(c.MAGIC_VERSION == c.magic_version());
-        log.debug("version: {d}", .{c.magic_version()});
+        logger.debug("version: {d}", .{c.magic_version()});
         return RunContext{
             .allocator = allocator,
             .cookie = try MimeCookie.init(allocator),
@@ -692,7 +692,7 @@ const MimeTagInferrer = struct {
         defer self.allocator.free(path_cstr);
 
         var mimetype = try self.cookie.inferFile(path_cstr);
-        log.debug("mime: {s}", .{mimetype});
+        logger.debug("mime: {s}", .{mimetype});
 
         if (self.config.tag_scope_mimetype != null) {
             try utilAddTag(
@@ -795,7 +795,7 @@ fn addTagList(
     tags_to_add: std.ArrayList([]const u8),
 ) !void {
     for (tags_to_add.items) |named_tag_text| {
-        log.info("adding tag {s}", .{named_tag_text});
+        logger.info("adding tag {s}", .{named_tag_text});
         var maybe_tag = try ctx.fetchNamedTag(named_tag_text, "en");
         if (maybe_tag) |tag| {
             try file.addTag(tag.core, .{});
@@ -811,7 +811,7 @@ var wanted_log_level: std.log.Level = .info;
 pub fn main() anyerror!void {
     const rc = sqlite.c.sqlite3_config(sqlite.c.SQLITE_CONFIG_LOG, manage_main.sqliteLog, @as(?*anyopaque, null));
     if (rc != sqlite.c.SQLITE_OK) {
-        std.log.err("failed to configure: {d} '{s}'", .{
+        logger.err("failed to configure: {d} '{s}'", .{
             rc, sqlite.c.sqlite3_errstr(rc),
         });
         return error.ConfigFail;
@@ -849,7 +849,7 @@ pub fn main() anyerror!void {
     var arg: []const u8 = undefined;
     while (args_it.next()) |arg_from_loop| {
         arg = arg_from_loop;
-        log.debug("state: {} arg: {s}", .{ state, arg });
+        logger.debug("state: {} arg: {s}", .{ state, arg });
         switch (state) {
             .FetchTag => {
                 try given_args.default_tags.append(arg);
@@ -882,7 +882,7 @@ pub fn main() anyerror!void {
             },
             .None => {},
         }
-        log.debug("(possible transition) state: {} arg: {s}", .{ state, arg });
+        logger.debug("(possible transition) state: {} arg: {s}", .{ state, arg });
 
         if (std.mem.eql(u8, arg, "-h")) {
             given_args.help = true;
@@ -932,13 +932,13 @@ pub fn main() anyerror!void {
     }
 
     if (given_args.include_paths.items.len == 0) {
-        std.log.err("at least one include path needs to be given", .{});
+        logger.err("at least one include path needs to be given", .{});
         return error.MissingArgument;
     }
 
     if (given_args.dry_run) try ctx.turnIntoMemoryDb();
 
-    std.log.info("args: {}", .{given_args});
+    logger.info("args: {}", .{given_args});
 
     // map tag names to their relevant cores in db
     var default_tag_cores = Context.HashList.init(allocator);
@@ -947,7 +947,7 @@ pub fn main() anyerror!void {
     for (given_args.default_tags.items) |named_tag_text| {
         const maybe_tag = try ctx.fetchNamedTag(named_tag_text, "en");
         if (maybe_tag) |tag| {
-            log.debug(
+            logger.debug(
                 "tag '{s}' is core {s}",
                 .{ named_tag_text, tag.core },
             );
@@ -955,11 +955,11 @@ pub fn main() anyerror!void {
         } else {
             had_unknown_tags = true;
             if (given_args.strict) {
-                log.err("strict mode is on. '{s}' is an unknown tag", .{named_tag_text});
+                logger.err("strict mode is on. '{s}' is an unknown tag", .{named_tag_text});
             } else {
                 // TODO support ISO 639-1 for language codes
                 var new_tag = try ctx.createNamedTag(named_tag_text, "en", null);
-                log.debug(
+                logger.debug(
                     "(created!) tag '{s}' with core {s}",
                     .{ named_tag_text, new_tag.core },
                 );
@@ -969,7 +969,7 @@ pub fn main() anyerror!void {
     }
 
     if (given_args.strict and had_unknown_tags) {
-        log.err("strict mode is on. had unknown tags. exiting", .{});
+        logger.err("strict mode is on. had unknown tags. exiting", .{});
         return error.UnknownTag;
     }
 
@@ -1000,7 +1000,7 @@ pub fn main() anyerror!void {
     for (given_args.include_paths.items) |path_to_include| {
         var dir = std.fs.cwd().openIterableDir(path_to_include, .{}) catch |err| blk: {
             if (err == error.NotDir) break :blk null;
-            log.err("error while including path '{s}': {s}", .{ path_to_include, @errorName(err) });
+            logger.err("error while including path '{s}': {s}", .{ path_to_include, @errorName(err) });
             return err;
         };
         defer if (dir) |*unpacked_dir| unpacked_dir.close();
@@ -1012,7 +1012,7 @@ pub fn main() anyerror!void {
             var file = try ctx.createFileFromPath(path_to_include);
             try file_ids_for_tagtree.append(file.hash.id);
             defer file.deinit();
-            log.debug("adding file '{s}'", .{file.local_path});
+            logger.debug("adding file '{s}'", .{file.local_path});
 
             var savepoint = try ctx.db.?.savepoint("tags");
             errdefer savepoint.rollback();
@@ -1029,7 +1029,7 @@ pub fn main() anyerror!void {
             }
 
             for (given_args.wanted_inferrers.items) |inferrer_config, index| {
-                log.info("found config for  {}", .{inferrer_config});
+                logger.info("found config for  {}", .{inferrer_config});
                 var inferrer_ctx = &contexts.items[index];
                 switch (inferrer_ctx.*) {
                     .regex => |*regex_ctx| try RegexTagInferrer.run(regex_ctx, &file, &tags_to_add),
@@ -1048,7 +1048,7 @@ pub fn main() anyerror!void {
             while (try walker.next()) |entry| {
                 switch (entry.kind) {
                     .File, .SymLink => {
-                        log.debug(
+                        logger.debug(
                             "adding child path '{s}{s}{s}'",
                             .{ path_to_include, std.fs.path.sep_str, entry.path },
                         );
@@ -1064,13 +1064,13 @@ pub fn main() anyerror!void {
                             defer fs_file.close();
 
                             const hash = try ctx.calculateHash(fs_file, .{ .insert_new_hash = false });
-                            log.debug("hash is {s}", .{hash});
+                            logger.debug("hash is {s}", .{hash});
                             const maybe_file = try ctx.fetchFileByHash(hash.hash_data);
 
                             if (maybe_file) |file| {
                                 file.deinit();
                             } else {
-                                log.debug("skipping due to selected filter", .{});
+                                logger.debug("skipping due to selected filter", .{});
                                 continue;
                             }
                         }
@@ -1094,7 +1094,7 @@ pub fn main() anyerror!void {
                             }
 
                             for (given_args.wanted_inferrers.items) |inferrer_config, index| {
-                                log.info("found config for  {}", .{inferrer_config});
+                                logger.info("found config for  {}", .{inferrer_config});
                                 var inferrer_ctx = &contexts.items[index];
                                 switch (inferrer_ctx.*) {
                                     .regex => |*regex_ctx| try RegexTagInferrer.run(regex_ctx, &file, &tags_to_add),

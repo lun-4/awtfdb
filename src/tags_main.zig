@@ -4,7 +4,7 @@ const manage_main = @import("main.zig");
 const libpcre = @import("libpcre");
 const Context = manage_main.Context;
 
-const log = std.log.scoped(.atags);
+const logger = std.log.scoped(.atags);
 
 const VERSION = "0.0.1";
 const HELPTEXT =
@@ -95,7 +95,7 @@ const CreateAction = struct {
             }
 
             if (config.tag_core != null and config.tag_alias != null) {
-                log.err("only one of --core or --alias may be provided", .{});
+                logger.err("only one of --core or --alias may be provided", .{});
                 return error.OnlyOneAliasOrCore;
             }
         }
@@ -151,7 +151,7 @@ const CreateAction = struct {
                 return error.UnknownTag;
 
             if (tag_to_be_aliased_from.core.id == tag_to_be_aliased_to.id) {
-                log.err(
+                logger.err(
                     "tag {s} already is pointing to core {s}, making a new alias of an existing alias is a destructive operation",
                     .{ self.config.tag.?, tag_to_be_aliased_to },
                 );
@@ -175,13 +175,13 @@ const CreateAction = struct {
             const sql_result = switch (wrapped_sql_result) {
                 .Ok => |ok_body| ok_body,
                 .Error => |error_body| {
-                    log.err("parse error at character {d}: {}", .{ error_body.character, error_body.error_type });
+                    logger.err("parse error at character {d}: {}", .{ error_body.character, error_body.error_type });
                     return error.ParseErrorHappened;
                 },
             };
 
             if (sql_result.tags.len != 1) {
-                log.err("expected 1 tag to bind from find query: '{s}', got {d}", .{ self.config.tag.?, sql_result.tags.len });
+                logger.err("expected 1 tag to bind from find query: '{s}', got {d}", .{ self.config.tag.?, sql_result.tags.len });
                 return error.ExpectedSingleTag;
             }
 
@@ -206,11 +206,11 @@ const CreateAction = struct {
 
             // delete tag_to_be_aliased_from
             const deleted_tag_names = try tag_to_be_aliased_from.deleteAll(&self.ctx.db.?);
-            log.info("deleted {d} tag names", .{deleted_tag_names});
+            logger.info("deleted {d} tag names", .{deleted_tag_names});
 
             // and create the proper alias (can only be done after deletion)
             const aliased_tag = try self.ctx.createNamedTag(self.config.tag.?, "en", tag_to_be_aliased_to);
-            log.info("full tag info: {}", .{aliased_tag});
+            logger.info("full tag info: {}", .{aliased_tag});
 
             return;
         }
@@ -275,7 +275,7 @@ test "create action (aliasing)" {
 
 fn consumeCoreHash(ctx: *Context, raw_core_hash_buffer: *[32]u8, tag_core_hex_string: []const u8) !Context.Hash {
     if (tag_core_hex_string.len != 64) {
-        log.err("hashes myst be 64 bytes long, got {d}", .{tag_core_hex_string.len});
+        logger.err("hashes myst be 64 bytes long, got {d}", .{tag_core_hex_string.len});
         return error.InvalidHashLength;
     }
     var raw_core_hash = try std.fmt.hexToBytes(raw_core_hash_buffer, tag_core_hex_string);
@@ -295,7 +295,7 @@ fn consumeCoreHash(ctx: *Context, raw_core_hash_buffer: *[32]u8, tag_core_hex_st
         return error.UnknownTagCore;
     };
 
-    log.debug("found hash_id for the given core: {d}", .{hash_id});
+    logger.debug("found hash_id for the given core: {d}", .{hash_id});
     return Context.Hash{ .id = hash_id, .hash_data = raw_core_hash_buffer.* };
 }
 
@@ -409,7 +409,7 @@ const RemoveAction = struct {
             // tag core will be garbage collected in a janitor run
 
             _ = (try self.ctx.fetchNamedTag(only_tag_name, "en")) orelse {
-                log.err("named tag not found '{s}'", .{only_tag_name});
+                logger.err("named tag not found '{s}'", .{only_tag_name});
                 return error.NamedTagNotFound;
             };
 
@@ -436,7 +436,7 @@ const RemoveAction = struct {
                 .{ only_tag_name, "en", only_tag_name, "en" },
             )).?;
 
-            log.info("deleted {} tag names", .{deleted_name_count});
+            logger.info("deleted {} tag names", .{deleted_name_count});
             return;
         } else {
             unreachable;
@@ -647,18 +647,18 @@ const CreateParent = struct {
                 config.parent_tag = arg;
                 state = .None;
             } else {
-                log.err("invalid argument '{s}'", .{arg});
+                logger.err("invalid argument '{s}'", .{arg});
                 return error.InvalidArgument;
             }
         }
 
         if (config.child_tag == null) {
-            log.err("child tag is required", .{});
+            logger.err("child tag is required", .{});
             return error.ChildTagRequired;
         }
 
         if (config.parent_tag == null) {
-            log.err("parent tag is required", .{});
+            logger.err("parent tag is required", .{});
             return error.ParentTagRequired;
         }
 
@@ -681,11 +681,11 @@ const CreateParent = struct {
     pub fn run(self: *Self) !void {
         var stdout = std.io.getStdOut().writer();
         const child_tag = (try self.ctx.fetchNamedTag(self.config.child_tag.?, "en")) orelse {
-            log.err("expected '{s}' to be a named tag", .{self.config.child_tag.?});
+            logger.err("expected '{s}' to be a named tag", .{self.config.child_tag.?});
             return error.ChildTagNotFound;
         };
         const parent_tag = (try self.ctx.fetchNamedTag(self.config.parent_tag.?, "en")) orelse {
-            log.err("expected '{s}' to be a named tag", .{self.config.parent_tag.?});
+            logger.err("expected '{s}' to be a named tag", .{self.config.parent_tag.?});
             return error.ParentTagNotFound;
         };
 
@@ -857,7 +857,7 @@ const RemoveParent = struct {
             const rowid = self.config.rowid.?;
 
             if (self.config.delete_file_entries) {
-                log.info("REMOVING all tag file entries that were made by this parent...", .{});
+                logger.info("REMOVING all tag file entries that were made by this parent...", .{});
                 const deleted_tag_file_count = (try self.ctx.db.?.one(
                     i64,
                     \\ delete from tag_files
@@ -878,9 +878,9 @@ const RemoveParent = struct {
                     .{ rowid, rowid },
                 )).?;
 
-                log.info("deleted {d} tag_files entries", .{deleted_tag_file_count});
+                logger.info("deleted {d} tag_files entries", .{deleted_tag_file_count});
             } else {
-                log.info("UPDATING all tag file entries that were made by this parent and setting to null...", .{});
+                logger.info("UPDATING all tag file entries that were made by this parent and setting to null...", .{});
                 const updated_tag_file_count = (try self.ctx.db.?.one(
                     i64,
                     \\ update tag_files
@@ -905,7 +905,7 @@ const RemoveParent = struct {
                     .{ rowid, rowid },
                 )).?;
 
-                log.info("updated {d} tag_files entries", .{updated_tag_file_count});
+                logger.info("updated {d} tag_files entries", .{updated_tag_file_count});
             }
         }
 
@@ -1364,7 +1364,7 @@ const Args = struct {
 pub fn main() anyerror!void {
     const rc = sqlite.c.sqlite3_config(sqlite.c.SQLITE_CONFIG_LOG, manage_main.sqliteLog, @as(?*anyopaque, null));
     if (rc != sqlite.c.SQLITE_OK) {
-        std.log.err("failed to configure: {d} '{s}'", .{
+        logger.err("failed to configure: {d} '{s}'", .{
             rc, sqlite.c.sqlite3_errstr(rc),
         });
         return error.ConfigFail;
@@ -1390,7 +1390,7 @@ pub fn main() anyerror!void {
                 } else if (std.mem.eql(u8, arg, "remove")) {
                     given_args.action_config = try RemoveParent.processArgs(&args_it, &given_args);
                 } else {
-                    log.err("{s} is an invalid parent action", .{arg});
+                    logger.err("{s} is an invalid parent action", .{arg});
                     return error.InvalidParentAction;
                 }
                 arg_state = .None;
@@ -1407,7 +1407,7 @@ pub fn main() anyerror!void {
                 } else if (std.mem.eql(u8, arg, "remove")) {
                     given_args.action_config = try RemovePool.processArgs(&args_it, &given_args);
                 } else {
-                    log.err("{s} is an invalid pool action", .{arg});
+                    logger.err("{s} is an invalid pool action", .{arg});
                     return error.InvalidPoolAction;
                 }
                 arg_state = .None;
@@ -1422,7 +1422,7 @@ pub fn main() anyerror!void {
                 } else if (std.mem.eql(u8, arg, "remove")) {
                     given_args.action_config = try RemoveSource.processArgs(&args_it, &given_args);
                 } else {
-                    log.err("{s} is an invalid source action", .{arg});
+                    logger.err("{s} is an invalid source action", .{arg});
                     return error.InvalidPoolAction;
                 }
                 arg_state = .None;
@@ -1453,7 +1453,7 @@ pub fn main() anyerror!void {
         } else if (std.mem.eql(u8, arg, "source")) {
             arg_state = .Source;
         } else {
-            log.err("{s} is an invalid action", .{arg});
+            logger.err("{s} is an invalid action", .{arg});
             return error.InvalidAction;
         }
     }
@@ -1467,7 +1467,7 @@ pub fn main() anyerror!void {
     }
 
     if (given_args.action_config == null) {
-        std.log.err("action is a required argument", .{});
+        logger.err("action is a required argument", .{});
         return error.MissingAction;
     }
     const action_config = given_args.action_config.?;

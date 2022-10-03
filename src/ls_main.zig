@@ -4,7 +4,7 @@ const manage_main = @import("main.zig");
 const libpcre = @import("libpcre");
 const Context = manage_main.Context;
 
-const log = std.log.scoped(.als);
+const logger = std.log.scoped(.als);
 
 const VERSION = "0.0.1";
 const HELPTEXT =
@@ -29,7 +29,7 @@ const HELPTEXT =
 pub fn main() anyerror!void {
     const rc = sqlite.c.sqlite3_config(sqlite.c.SQLITE_CONFIG_LOG, manage_main.sqliteLog, @as(?*anyopaque, null));
     if (rc != sqlite.c.SQLITE_OK) {
-        std.log.err("failed to configure: {d} '{s}'", .{
+        logger.err("failed to configure: {d} '{s}'", .{
             rc, sqlite.c.sqlite3_errstr(rc),
         });
         return error.ConfigFail;
@@ -123,7 +123,7 @@ pub fn main() anyerror!void {
 
         var maybe_dir = std.fs.cwd().openIterableDir(query, .{}) catch |err| switch (err) {
             error.FileNotFound => {
-                log.err("path not found: {s}", .{query});
+                logger.err("path not found: {s}", .{query});
                 return err;
             },
             error.NotDir => blk: {

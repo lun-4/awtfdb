@@ -4,7 +4,7 @@ const manage_main = @import("main.zig");
 const libpcre = @import("libpcre");
 const Context = manage_main.Context;
 
-const log = std.log.scoped(.arm);
+const logger = std.log.scoped(.arm);
 
 const VERSION = "0.0.1";
 const HELPTEXT =
@@ -65,7 +65,7 @@ fn processFile(given_args: Args, file: *Context.File) !usize {
 pub fn main() anyerror!void {
     const rc = sqlite.c.sqlite3_config(sqlite.c.SQLITE_CONFIG_LOG, manage_main.sqliteLog, @as(?*anyopaque, null));
     if (rc != sqlite.c.SQLITE_OK) {
-        std.log.err("failed to configure: {d} '{s}'", .{
+        logger.err("failed to configure: {d} '{s}'", .{
             rc, sqlite.c.sqlite3_errstr(rc),
         });
         return error.ConfigFail;
@@ -102,7 +102,7 @@ pub fn main() anyerror!void {
         switch (state) {
             .FetchTag => {
                 var tag = (try ctx.fetchNamedTag(arg, "en")) orelse {
-                    log.err("tag '{s}' not found", .{arg});
+                    logger.err("tag '{s}' not found", .{arg});
                     return error.UnknownNamedTag;
                 };
                 try given_args.tags.append(tag.core);
@@ -148,7 +148,7 @@ pub fn main() anyerror!void {
     }
 
     if (given_args.paths.items.len == 0) {
-        std.log.err("path is a required argument", .{});
+        logger.err("path is a required argument", .{});
         return error.MissingPath;
     }
     if (given_args.dry_run) try ctx.turnIntoMemoryDb();
@@ -176,14 +176,14 @@ pub fn main() anyerror!void {
         } else {
             var dir = std.fs.cwd().openIterableDir(full_path, .{}) catch |err| switch (err) {
                 std.fs.Dir.OpenError.FileNotFound => {
-                    log.err("path not found: {s}", .{full_path});
+                    logger.err("path not found: {s}", .{full_path});
                     return err;
                 },
                 else => return err,
             };
 
             if (!given_args.recursive) {
-                log.err("given path is a folder but -r is not set", .{});
+                logger.err("given path is a folder but -r is not set", .{});
                 return error.MissingRecursiveFlag;
             }
 
@@ -192,14 +192,14 @@ pub fn main() anyerror!void {
 
             while (try walker.next()) |entry| {
                 if (entry.kind != .File) continue;
-                log.debug("checking path {s}", .{entry.path});
+                logger.debug("checking path {s}", .{entry.path});
                 var inner_realpath_buffer: [std.os.PATH_MAX]u8 = undefined;
                 const inner_full_path = try entry.dir.realpath(entry.basename, &inner_realpath_buffer);
                 var maybe_inner_file = try ctx.fetchFileByPath(inner_full_path);
 
                 if (maybe_inner_file) |*file| {
                     defer file.deinit();
-                    log.info("removing path {s}", .{entry.path});
+                    logger.info("removing path {s}", .{entry.path});
                     count += try processFile(given_args, file);
                 }
             }
@@ -207,6 +207,6 @@ pub fn main() anyerror!void {
     }
 
     if (count > 0) {
-        log.info("deleted {d} files", .{count});
+        logger.info("deleted {d} files", .{count});
     }
 }

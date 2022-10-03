@@ -4,7 +4,7 @@ const manage_main = @import("main.zig");
 const Context = manage_main.Context;
 const ExpiringHashMap = @import("expiring-hash-map").ExpiringHashMap;
 
-const log = std.log.scoped(.awtfdb_watcher);
+const logger = std.log.scoped(.awtfdb_watcher);
 
 const VERSION = "0.0.1";
 const HELPTEXT =
@@ -69,7 +69,7 @@ const RenameContext = struct {
 
             var cwd_path = std.fs.realpathAlloc(self.allocator, cwd_proc_path) catch |err| switch (err) {
                 error.AccessDenied, error.FileNotFound => {
-                    log.debug("can't access cwd for {d}, ignoring rename", .{pid});
+                    logger.debug("can't access cwd for {d}, ignoring rename", .{pid});
                     return;
                 },
                 else => return err,
@@ -214,7 +214,7 @@ const RenameContext = struct {
 
             cwd_path = std.fs.realpathAlloc(self.allocator, cwd_proc_path) catch |err| switch (err) {
                 error.AccessDenied, error.FileNotFound => {
-                    log.debug("can't access cwd for {d}, ignoring rename", .{pid});
+                    logger.debug("can't access cwd for {d}, ignoring rename", .{pid});
                     return;
                 },
                 else => return err,
@@ -248,11 +248,11 @@ const RenameContext = struct {
         const is_new_in_home = std.mem.startsWith(u8, newpath, self.ctx.home_path.?);
 
         if (!(is_new_in_home or is_old_in_home)) {
-            log.debug("{d}: neither {s} or {s} are in home", .{ pid, oldpath, newpath });
+            logger.debug("{d}: neither {s} or {s} are in home", .{ pid, oldpath, newpath });
             return;
         }
 
-        log.info("{d}: relevant rename: {s} -> {s}", .{ pid, oldpath, newpath });
+        logger.info("{d}: relevant rename: {s} -> {s}", .{ pid, oldpath, newpath });
 
         // find out if this is a folder or not by sql count(*)
         //  with (local_path LIKE ? || '%')
@@ -335,7 +335,7 @@ const RenameContext = struct {
 
                     // if we coulnd't find out from db, try to find from fs
                     if (is_newpath_dir == null) {
-                        log.debug("newpath:{s}", .{newpath});
+                        logger.debug("newpath:{s}", .{newpath});
                         var maybe_newpath_dir: ?std.fs.Dir = std.fs.openDirAbsolute(newpath, .{}) catch |err| switch (err) {
                             error.FileNotFound, error.NotDir => blk: {
                                 is_newpath_dir = false;
@@ -363,7 +363,7 @@ const RenameContext = struct {
                     }
 
                     // confirmed single file
-                    log.info(
+                    logger.info(
                         "single File {s} was renamed from {s} to {s}",
                         .{ real_hash, oldpath, newpath },
                     );
@@ -420,7 +420,7 @@ const RenameContext = struct {
                             .{ newpath, std.fs.path.sep_str, path_after_oldpath },
                         );
 
-                        log.info(
+                        logger.info(
                             "(direcotry move) File {s} was renamed from {s} to {s}",
                             .{ &raw_file.file_hash, raw_file.local_path, replaced_path },
                         );
@@ -456,7 +456,7 @@ const RenameContext = struct {
                 error.EndOfStream => break,
                 else => return err,
             };
-            log.info("exiting! with signal {d}", .{signal_data.signal});
+            logger.info("exiting! with signal {d}", .{signal_data.signal});
             self.keep_running = false;
             return;
         }
@@ -495,7 +495,7 @@ fn signalHandler(
 pub fn main() anyerror!void {
     const rc = sqlite.c.sqlite3_config(sqlite.c.SQLITE_CONFIG_LOG, manage_main.sqliteLog, @as(?*anyopaque, null));
     if (rc != sqlite.c.SQLITE_OK) {
-        std.log.err("failed to configure: {d} '{s}'", .{
+        logger.err("failed to configure: {d} '{s}'", .{
             rc, sqlite.c.sqlite3_errstr(rc),
         });
         return error.ConfigFail;
@@ -571,7 +571,7 @@ pub fn main() anyerror!void {
 
     try ctx.loadDatabase(.{});
 
-    std.log.info("args: {}", .{given_args});
+    logger.info("args: {}", .{given_args});
 
     const bpftrace_program = @embedFile("./rename_trace.bt");
 
@@ -633,7 +633,7 @@ pub fn main() anyerror!void {
     while (rename_ctx.keep_running) {
         const available = try std.os.poll(&sockets, -1);
         if (available == 0) {
-            log.info("timed out, retrying", .{});
+            logger.info("timed out, retrying", .{});
             continue;
         }
 
@@ -648,7 +648,7 @@ pub fn main() anyerror!void {
                 _ = try proc.kill();
             } else if (proc.stdout != null and pollfd.fd == proc.stdout.?.handle) {
                 const line = proc.stdout.?.reader().readUntilDelimiter(&line_buffer, '\n') catch |err| {
-                    log.err("error reading from stdout {s}", .{@errorName(err)});
+                    logger.err("error reading from stdout {s}", .{@errorName(err)});
                     switch (err) {
                         // process might have died while we're in the middle of a read
                         error.NotOpenForReading, error.EndOfStream => {
@@ -658,11 +658,11 @@ pub fn main() anyerror!void {
                         else => return err,
                     }
                 };
-                //log.info("got out: {s}", .{line});
+                //logger.info("got out: {s}", .{line});
                 try rename_ctx.processLine(line);
             } else if (proc.stderr != null and pollfd.fd == proc.stderr.?.handle) {
                 const buffer_offset = proc.stderr.?.reader().readAll(&line_buffer) catch |err| {
-                    log.err("error reading from stderr {s}", .{@errorName(err)});
+                    logger.err("error reading from stderr {s}", .{@errorName(err)});
                     switch (err) {
                         // process might have died while we're in the middle of a read
                         error.NotOpenForReading => {
@@ -674,7 +674,7 @@ pub fn main() anyerror!void {
                 };
 
                 const line = line_buffer[0..buffer_offset];
-                log.warn("got stderr: {s}", .{line});
+                logger.warn("got stderr: {s}", .{line});
             } else if (pollfd.fd == pidfd) {
                 var siginfo: std.os.siginfo_t = undefined;
                 const waitid_rc = std.os.linux.waitid(.PIDFD, pidfd.?, &siginfo, 0);
@@ -683,17 +683,17 @@ pub fn main() anyerror!void {
                     .CHILD => unreachable, // unknown process. race condition
                     .INVAL => unreachable, // programming error
                     else => |err| {
-                        log.err("wtf {}", .{err});
+                        logger.err("wtf {}", .{err});
                         return std.os.unexpectedErrno(err);
                     },
                 }
-                log.err("bpftrace exited with {d}", .{siginfo.signo});
+                logger.err("bpftrace exited with {d}", .{siginfo.signo});
                 return;
             }
         }
     }
 
-    log.info("exiting main loop", .{});
+    logger.info("exiting main loop", .{});
 }
 
 test "rename syscalls trigger db rename" {

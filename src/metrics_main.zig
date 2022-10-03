@@ -5,7 +5,7 @@ const Context = manage_main.Context;
 
 pub const io_mode = .evented;
 
-const log = std.log.scoped(.awtfdb_janitor);
+const logger = std.log.scoped(.awtfdb_janitor);
 
 const VERSION = "0.0.1";
 const HELPTEXT =
@@ -38,7 +38,7 @@ fn runMetricsCounter(
     comptime output_metrics_table: []const u8,
 ) !void {
     const row_count = (try ctx.db.?.one(i64, "select count(*) from " ++ input_table, .{}, .{})).?;
-    log.info("{d} rows in table '{s}'", .{ row_count, input_table });
+    logger.info("{d} rows in table '{s}'", .{ row_count, input_table });
 
     try ctx.db.?.exec(
         "insert into " ++ output_metrics_table ++ " (timestamp, value) values (?, ?)",
@@ -50,7 +50,7 @@ fn runMetricsCounter(
 pub fn main() anyerror!u8 {
     const rc = sqlite.c.sqlite3_config(sqlite.c.SQLITE_CONFIG_LOG, manage_main.sqliteLog, @as(?*anyopaque, null));
     if (rc != sqlite.c.SQLITE_OK) {
-        std.log.err("failed to configure: {d} '{s}'", .{
+        logger.err("failed to configure: {d} '{s}'", .{
             rc, sqlite.c.sqlite3_errstr(rc),
         });
         return error.ConfigFail;
@@ -101,7 +101,7 @@ pub fn main() anyerror!u8 {
     // timestamp = db creation (migration 0), count 0
 
     const metrics_timestamp = std.time.timestamp();
-    log.info("running metrics queries at timestamp {d}", .{metrics_timestamp});
+    logger.info("running metrics queries at timestamp {d}", .{metrics_timestamp});
 
     // execute inserts here
     {
@@ -135,7 +135,7 @@ fn runMetricsTagUsageSingleCore(
     tag_files_stmt.reset();
 
     const core_count_time_taken_ns = timer.lap();
-    log.info(
+    logger.info(
         "core {d} has {d} files (took {:.2}ms)",
         .{ core_hash, tag_files_count, core_count_time_taken_ns / std.time.ns_per_ms },
     );
@@ -164,7 +164,7 @@ fn runMetricsTagUsage(ctx: *Context, metrics_timestamp: i64) !void {
     var timer = try std.time.Timer.start();
     while (try it.next(.{})) |row| {
         const exec_time_ns = timer.lap();
-        log.info("{} took {:.2}ms to fetch", .{ row, exec_time_ns / std.time.ns_per_ms });
+        logger.info("{} took {:.2}ms to fetch", .{ row, exec_time_ns / std.time.ns_per_ms });
 
         try ctx.db.?.exec(
             "insert into metrics_tag_usage_values (timestamp, core_hash, relationship_count) values (?, ?, ?)",

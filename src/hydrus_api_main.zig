@@ -11,7 +11,7 @@ const Context = struct {
     given_args: *Args,
 };
 
-const log = std.log.scoped(.ahydrus_api);
+const logger = std.log.scoped(.ahydrus_api);
 
 const VERSION = "0.0.1";
 const HELPTEXT =
@@ -59,7 +59,7 @@ const Args = struct {
 pub fn main() anyerror!void {
     const rc = sqlite.c.sqlite3_config(sqlite.c.SQLITE_CONFIG_LOG, manage_main.sqliteLog, @as(?*anyopaque, null));
     if (rc != sqlite.c.SQLITE_OK) {
-        std.log.err("failed to configure: {d} '{s}'", .{
+        logger.err("failed to configure: {d} '{s}'", .{
             rc, sqlite.c.sqlite3_errstr(rc),
         });
         return error.ConfigFail;
@@ -90,7 +90,7 @@ pub fn main() anyerror!void {
         } else if (std.mem.eql(u8, arg, "--key")) {
             state = .FetchAccessKey;
         } else {
-            log.err("unknown argument {s}", .{arg});
+            logger.err("unknown argument {s}", .{arg});
             return error.UnknownArgument;
         }
     }
@@ -115,7 +115,7 @@ pub fn main() anyerror!void {
     try manage_ctx.loadDatabase(.{});
 
     if (given_args.access_keys.items.len == 0) {
-        log.warn("no access keys defined, nobody will be able to access the api", .{});
+        logger.warn("no access keys defined, nobody will be able to access the api", .{});
     }
 
     var ctx = Context{ .manage = &manage_ctx, .given_args = &given_args };
@@ -153,7 +153,7 @@ fn mainHandler(
 
     try writeCors(response);
     router(ctx, response, request) catch |err| {
-        log.info("{s} {s} got error: {s}", .{
+        logger.info("{s} {s} got error: {s}", .{
             methodString(request),
             request.path(),
             @errorName(err),
@@ -161,7 +161,7 @@ fn mainHandler(
 
         return err;
     };
-    log.info("{s} {s} {d}", .{
+    logger.info("{s} {s} {d}", .{
         methodString(request),
         request.path(),
         @enumToInt(response.status_code),
@@ -314,7 +314,7 @@ fn fetchInput(
 ) !HydrusAPIInputResult {
     const param_map = try http.Uri.decodeQueryString(ctx.allocator, raw_query);
     errdefer param_map.deinit();
-    log.info("uri: {s}", .{param_map});
+    logger.info("uri: {s}", .{param_map});
 
     _ = ctx;
     _ = headers;
@@ -404,7 +404,7 @@ fn convertTagsToFindQuery(allocator: std.mem.Allocator, tags_string: []const u8)
     //parse json out of tags_string
     //construct afind query out of it
 
-    log.debug("tags string: '{s}'", .{tags_string});
+    logger.debug("tags string: '{s}'", .{tags_string});
     var tokens = std.json.TokenStream.init(tags_string);
     const opts = std.json.ParseOptions{ .allocator = allocator };
     const tags = try std.json.parse([][]const u8, &tokens, opts);
@@ -481,8 +481,8 @@ fn searchFiles(
     var stmt = try ctx.manage.db.?.prepareDynamic(result.query);
     defer stmt.deinit();
 
-    log.debug("generated query: {s}", .{result.query});
-    log.debug("found tag cores: {any}", .{resolved_tag_cores.items});
+    logger.debug("generated query: {s}", .{result.query});
+    logger.debug("found tag cores: {any}", .{resolved_tag_cores.items});
 
     var it = try stmt.iterator(i64, resolved_tag_cores.items);
 
@@ -517,7 +517,7 @@ fn fileMetadata(
         return;
     };
 
-    log.info("file ids: {s}", .{file_ids_serialized});
+    logger.info("file ids: {s}", .{file_ids_serialized});
 
     var tokens = std.json.TokenStream.init(file_ids_serialized);
 
@@ -597,7 +597,7 @@ fn inferMimetype(response: *http.Response, allocator: std.mem.Allocator, local_p
     // TODO use MAGIC variable if set here????
     if (c.magic_load(cookie, "/usr/share/misc/magic.mgc") == -1) {
         const magic_error_value = c.magic_error(cookie);
-        log.err("failed to load magic file: {s}", .{magic_error_value});
+        logger.err("failed to load magic file: {s}", .{magic_error_value});
 
         try writeError(
             response,
@@ -613,7 +613,7 @@ fn inferMimetype(response: *http.Response, allocator: std.mem.Allocator, local_p
 
     const mimetype = c.magic_file(cookie, local_path_cstr) orelse {
         const magic_error_value = c.magic_error(cookie);
-        log.err("failed to infer mimetype: {s}", .{magic_error_value});
+        logger.err("failed to infer mimetype: {s}", .{magic_error_value});
         return error.MimetypeFail;
     };
     return MagicResult{
@@ -663,7 +663,7 @@ fn fileThumbnail(
         };
     }
 
-    log.debug("id? {?s} hash? {?s}", .{ maybe_file_id, maybe_file_hash });
+    logger.debug("id? {?s} hash? {?s}", .{ maybe_file_id, maybe_file_hash });
 
     var maybe_file: ?ManageContext.File = if (maybe_file_id != null)
         try ctx.manage.fetchFile(hash_id_parsed.?)
@@ -680,7 +680,7 @@ fn fileThumbnail(
         const mimetype_cstr = mimetype_result.result;
         if (mimetype_cstr == null) {
             const magic_error_value = c.magic_error(mimetype_result.cookie);
-            log.err("failed to get mimetype: {s}", .{magic_error_value});
+            logger.err("failed to get mimetype: {s}", .{magic_error_value});
             try writeError(
                 response,
                 .internal_server_error,
@@ -690,7 +690,7 @@ fn fileThumbnail(
             return;
         } else {
             const mimetype = mimetype_cstr.?;
-            log.debug("mimetype found: {s}", .{mimetype});
+            logger.debug("mimetype found: {s}", .{mimetype});
             if (std.mem.startsWith(u8, mimetype, "image/")) {
                 //var mctx = try magick.loadImage(local_path_cstr);
                 //defer mctx.deinit();
@@ -828,7 +828,7 @@ fn fileContents(
         };
     }
 
-    log.debug("id? {?s} hash? {?s}", .{ maybe_file_id, maybe_file_hash });
+    logger.debug("id? {?s} hash? {?s}", .{ maybe_file_id, maybe_file_hash });
 
     var maybe_file: ?ManageContext.File = if (maybe_file_id != null)
         try ctx.manage.fetchFile(hash_id_parsed.?)
@@ -844,7 +844,7 @@ fn fileContents(
         defer c.magic_close(mimetype_result.cookie);
         const maybe_mimetype = mimetype_result.result;
         if (maybe_mimetype) |mimetype| {
-            log.debug("mimetype found: {s}", .{mimetype});
+            logger.debug("mimetype found: {s}", .{mimetype});
 
             const file_fd = try std.fs.openFileAbsolute(file.local_path, .{ .mode = .read_only });
             defer file_fd.close();
@@ -869,7 +869,7 @@ fn fileContents(
             }
         } else {
             const magic_error_value = c.magic_error(mimetype_result.cookie);
-            log.err("failed to get mimetype: {s}", .{magic_error_value});
+            logger.err("failed to get mimetype: {s}", .{magic_error_value});
             try writeError(
                 response,
                 .internal_server_error,
