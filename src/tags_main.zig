@@ -353,7 +353,6 @@ const RemoveAction = struct {
         _ = self;
 
         var stdout = std.io.getStdOut().writer();
-        var stdin = std.io.getStdIn().reader();
 
         var raw_core_hash_buffer: [32]u8 = undefined;
 
@@ -803,7 +802,6 @@ const RemoveParent = struct {
 
     pub fn run(self: *Self) !void {
         var stdout = std.io.getStdOut().writer();
-        var stdin = std.io.getStdIn().reader();
 
         const parent_relationship = (try self.ctx.db.?.one(
             struct { child_tag: i64, parent_tag: i64 },
@@ -1210,8 +1208,6 @@ const RemovePool = struct {
             .{ pool.title, pool.hash },
         );
 
-        var stdin = std.io.getStdIn();
-
         try self.config.given_args.maybeAskConfirmation(
             "do you want to remove the pool (y/n)? ",
             .{},
@@ -1352,7 +1348,10 @@ const Args = struct {
     dry_run: bool = false,
 
     pub fn maybeAskConfirmation(self: @This(), comptime fmt: []const u8, args: anytype) !void {
-        if (self.config.given_args.ask_confirmation) {
+        var stdin = std.io.getStdIn().reader();
+        var stdout = std.io.getStdOut().writer();
+
+        if (self.ask_confirmation) {
             var outcome: [1]u8 = undefined;
             try stdout.print(fmt, args);
             _ = try stdin.read(&outcome);
