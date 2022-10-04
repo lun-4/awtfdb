@@ -413,13 +413,10 @@ const RemoveAction = struct {
                 return error.NamedTagNotFound;
             };
 
-            if (self.config.given_args.ask_confirmation) {
-                var outcome: [1]u8 = undefined;
-                try stdout.print("do you want to remove this tag? no files will have relationships removed (y/n)? ", .{});
-                _ = try stdin.read(&outcome);
-
-                if (!std.mem.eql(u8, &outcome, "y")) return error.NotConfirmed;
-            }
+            try self.config.given_args.maybeAskConfirmation(
+                "do you want to remove this tag? no files will have relationships removed (y/n)? ",
+                .{},
+            );
 
             const deleted_name_count = (try self.ctx.db.?.one(
                 i64,
@@ -452,13 +449,10 @@ const RemoveAction = struct {
             try stdout.print("{d} files reference this tag.\n", .{referenced_files});
         }
 
-        if (self.config.given_args.ask_confirmation) {
-            var outcome: [1]u8 = undefined;
-            try stdout.print("do you want to remove {d} tags (y/n)? ", .{amount});
-            _ = try stdin.read(&outcome);
-
-            if (!std.mem.eql(u8, &outcome, "y")) return error.NotConfirmed;
-        }
+        try self.config.given_args.maybeAskConfirmation(
+            "do you want to remove {d} tags (y/n)? ",
+            .{amount},
+        );
 
         var deleted_count: ?i64 = null;
 
@@ -836,12 +830,10 @@ const RemoveParent = struct {
             try stdout.print("tag entries in files that were made by this relationship will be retained but their relationship metadata will be removed. ({d} entries)\n", .{tag_file_count});
         }
 
-        if (self.config.given_args.ask_confirmation) {
-            try stdout.print("do you wish to remove it? (press y) ", .{});
-            var outcome: [1]u8 = undefined;
-            _ = try stdin.read(&outcome);
-            if (!std.mem.eql(u8, &outcome, "y")) return error.NotConfirmed;
-        }
+        try self.config.given_args.maybeAskConfirmation(
+            "do you wish to remove it? (press y) ",
+            .{},
+        );
 
         {
             var savepoint = try self.ctx.db.?.savepoint("parent_removal");
@@ -1219,12 +1211,11 @@ const RemovePool = struct {
         );
 
         var stdin = std.io.getStdIn();
-        if (self.config.given_args.ask_confirmation) {
-            var outcome: [1]u8 = undefined;
-            try stdout.print("do you want to remove the pool (y/n)? ", .{});
-            _ = try stdin.read(&outcome);
-            if (!std.mem.eql(u8, &outcome, "y")) return error.NotConfirmed;
-        }
+
+        try self.config.given_args.maybeAskConfirmation(
+            "do you want to remove the pool (y/n)? ",
+            .{},
+        );
 
         try pool.delete();
     }
@@ -1359,6 +1350,15 @@ const Args = struct {
     ask_confirmation: bool = true,
     action_config: ?ActionConfig = null,
     dry_run: bool = false,
+
+    pub fn maybeAskConfirmation(self: @This(), comptime fmt: []const u8, args: anytype) !void {
+        if (self.config.given_args.ask_confirmation) {
+            var outcome: [1]u8 = undefined;
+            try stdout.print(fmt, args);
+            _ = try stdin.read(&outcome);
+            if (!std.mem.eql(u8, &outcome, "y")) return error.NotConfirmed;
+        }
+    }
 };
 
 pub const log_level = .debug;
