@@ -26,6 +26,10 @@ const HELPTEXT =
     \\  	list file by id
 ;
 
+pub const log_level = .debug;
+pub var current_log_level: std.log.Level = .info;
+pub const log = manage_main.log;
+
 pub fn main() anyerror!void {
     const rc = sqlite.c.sqlite3_config(sqlite.c.SQLITE_CONFIG_LOG, manage_main.sqliteLog, @as(?*anyopaque, null));
     if (rc != sqlite.c.SQLITE_OK) {
@@ -59,6 +63,8 @@ pub fn main() anyerror!void {
             given_args.help = true;
         } else if (std.mem.eql(u8, arg, "-V")) {
             given_args.version = true;
+        } else if (std.mem.eql(u8, arg, "-v")) {
+            current_log_level = .debug;
         } else if (std.mem.eql(u8, arg, "-f")) {
             given_args.force = true;
         } else {

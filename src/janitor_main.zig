@@ -24,8 +24,6 @@ const HELPTEXT =
     \\ 					the index file, only run this manually)
 ;
 
-var wanted_log_level: std.log.Level = .info;
-
 const Counter = struct { total: usize = 0, unrepairable: usize = 0 };
 const ErrorCounters = struct {
     file_not_found: Counter = .{},
@@ -341,6 +339,10 @@ pub fn janitorCheckFiles(
     }
 }
 
+pub const log_level = .debug;
+pub var current_log_level: std.log.Level = .info;
+pub const log = manage_main.log;
+
 pub fn main() anyerror!u8 {
     const rc = sqlite.c.sqlite3_config(sqlite.c.SQLITE_CONFIG_LOG, manage_main.sqliteLog, @as(?*anyopaque, null));
     if (rc != sqlite.c.SQLITE_OK) {
@@ -385,7 +387,7 @@ pub fn main() anyerror!u8 {
         if (std.mem.eql(u8, arg, "-h")) {
             given_args.help = true;
         } else if (std.mem.eql(u8, arg, "-v")) {
-            given_args.verbose = true;
+            current_log_level = .debug;
         } else if (std.mem.eql(u8, arg, "-V")) {
             given_args.version = true;
         } else if (std.mem.eql(u8, arg, "--repair")) {
@@ -407,10 +409,6 @@ pub fn main() anyerror!u8 {
     } else if (given_args.version) {
         std.debug.print("awtfdb-janitor {s}\n", .{VERSION});
         return 1;
-    }
-
-    if (given_args.verbose) {
-        wanted_log_level = .debug;
     }
 
     var ctx = Context{

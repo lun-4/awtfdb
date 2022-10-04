@@ -1600,6 +1600,21 @@ pub export fn sqliteLog(_: ?*anyopaque, level: c_int, message: ?[*:0]const u8) c
     logger.info("sqlite logged level={d} msg={?s}", .{ level, message });
 }
 
+pub const log_level = .debug;
+
+pub var current_log_level: std.log.Level = .info;
+
+pub fn log(
+    comptime message_level: std.log.Level,
+    comptime scope: @Type(.EnumLiteral),
+    comptime format: []const u8,
+    args: anytype,
+) void {
+    if (@enumToInt(message_level) <= @enumToInt(@import("root").current_log_level)) {
+        std.log.defaultLog(message_level, scope, format, args);
+    }
+}
+
 pub fn main() anyerror!void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
@@ -1645,7 +1660,7 @@ pub fn main() anyerror!void {
     }
 
     if (given_args.verbose) {
-        @panic("TODO make logs runtime");
+        current_log_level = .debug;
     }
 
     if (given_args.maybe_action == null) {

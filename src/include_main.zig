@@ -770,7 +770,6 @@ const ConfigList = std.ArrayList(TagInferrerConfig);
 
 pub const Args = struct {
     help: bool = false,
-    verbose: bool = false,
     version: bool = false,
     filter_indexed_files_only: bool = false,
     dry_run: bool = false,
@@ -806,7 +805,9 @@ fn addTagList(
     }
 }
 
-var wanted_log_level: std.log.Level = .info;
+pub const log_level = .debug;
+pub var current_log_level: std.log.Level = .info;
+pub const log = manage_main.log;
 
 pub fn main() anyerror!void {
     const rc = sqlite.c.sqlite3_config(sqlite.c.SQLITE_CONFIG_LOG, manage_main.sqliteLog, @as(?*anyopaque, null));
@@ -887,7 +888,7 @@ pub fn main() anyerror!void {
         if (std.mem.eql(u8, arg, "-h")) {
             given_args.help = true;
         } else if (std.mem.eql(u8, arg, "-v")) {
-            given_args.verbose = true;
+            current_log_level = .debug;
         } else if (std.mem.eql(u8, arg, "-V")) {
             given_args.version = true;
         } else if (std.mem.eql(u8, arg, "--filter-indexed-files-only")) {
@@ -924,11 +925,6 @@ pub fn main() anyerror!void {
     } else if (given_args.version) {
         std.debug.print("ainclude {s}\n", .{VERSION});
         return;
-    }
-
-    if (given_args.verbose) {
-        // TODO
-        wanted_log_level = .debug;
     }
 
     if (given_args.include_paths.items.len == 0) {
