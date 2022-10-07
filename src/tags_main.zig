@@ -180,12 +180,12 @@ const CreateAction = struct {
                 },
             };
 
-            if (sql_result.tags.len != 1) {
-                logger.err("expected 1 tag to bind from find query: '{s}', got {d}", .{ self.config.tag.?, sql_result.tags.len });
+            if (sql_result.arguments.len != 1) {
+                logger.err("expected 1 tag to bind from find query: '{s}', got {d}", .{ self.config.tag.?, sql_result.arguments.len });
                 return error.ExpectedSingleTag;
             }
 
-            std.debug.assert(std.mem.eql(u8, sql_result.tags[0], self.config.tag.?));
+            std.debug.assert(std.mem.eql(u8, sql_result.arguments[0].tag, self.config.tag.?));
 
             // execute query and bind to tag_to_be_aliased_from
             var stmt = try self.ctx.db.?.prepareDynamic(sql_result.query);

@@ -141,16 +141,38 @@ pub fn main() anyerror!void {
         },
     };
 
-    var resolved_tag_cores = std.ArrayList(i64).init(allocator);
-    defer resolved_tag_cores.deinit();
+    var resolved_arguments = std.ArrayList(i64).init(allocator);
+    defer resolved_arguments.deinit();
 
-    for (result.tags) |tag_text| {
-        const maybe_tag = try ctx.fetchNamedTag(tag_text, "en");
-        if (maybe_tag) |tag| {
-            try resolved_tag_cores.append(tag.core.id);
-        } else {
-            logger.err("unknown tag '{s}'", .{tag_text});
-            return error.UnknownTag;
+    for (result.arguments) |argument| {
+        switch (argument) {
+            .tag => |tag_text| {
+                const maybe_tag = try ctx.fetchNamedTag(tag_text, "en");
+                if (maybe_tag) |tag| {
+                    try resolved_arguments.append(tag.core.id);
+                } else {
+                    logger.err("unknown tag '{s}'", .{tag_text});
+                    return error.UnknownTag;
+                }
+            },
+
+            .file => |file_hash| {
+                const hash_blob = sqlite.Blob{ .data = &file_hash };
+                const maybe_hash_id = (try ctx.db.?.one(
+                    i64,
+                    "select id from hashes where hash_data = ?",
+                    .{},
+                    .{hash_blob},
+                ));
+
+                if (maybe_hash_id) |hash_id| {
+                    try resolved_arguments.append(hash_id);
+                } else {
+                    try resolved_arguments.append(-1);
+                    //logger.err("unknown file '{x}'", .{std.fmt.fmtSliceHexLower(&file_hash)});
+                    //return error.UnknownFile;
+                }
+            },
         }
     }
 
@@ -158,9 +180,9 @@ pub fn main() anyerror!void {
     defer stmt.deinit();
 
     logger.debug("generated query: {s}", .{result.query});
-    logger.debug("found tag cores: {any}", .{resolved_tag_cores.items});
+    logger.debug("found arguments: {any}", .{resolved_arguments.items});
 
-    var it = try stmt.iterator(i64, resolved_tag_cores.items);
+    var it = try stmt.iterator(i64, resolved_arguments.items);
 
     const BufferedFileWriter = std.io.BufferedWriter(4096, std.fs.File.Writer);
 
@@ -339,6 +361,12 @@ fn signal_handler(
 pub const SqlGiver = struct {
     pub const ErrorType = enum {
         UnexpectedCharacter,
+        InvalidHashScopedTag,
+    };
+
+    const Argument = union(enum) {
+        tag: []const u8,
+        file: Context.Blake3Hash,
     };
 
     const Result = union(enum) {
@@ -349,14 +377,14 @@ pub const SqlGiver = struct {
         Ok: struct {
             allocator: std.mem.Allocator,
             query: []const u8,
-            tags: [][]const u8,
+            arguments: []Argument,
         },
 
         pub fn deinit(self: @This()) void {
             switch (self) {
                 .Ok => |ok_body| {
                     ok_body.allocator.free(ok_body.query);
-                    ok_body.allocator.free(ok_body.tags);
+                    ok_body.allocator.free(ok_body.arguments);
                 },
                 .Error => {},
             }
@@ -398,8 +426,8 @@ pub const SqlGiver = struct {
         var list = std.ArrayList(u8).init(allocator);
         defer list.deinit();
 
-        var tags = std.ArrayList([]const u8).init(allocator);
-        defer tags.deinit();
+        var arguments = std.ArrayList(Argument).init(allocator);
+        defer arguments.deinit();
 
         if (query.len == 0) {
             try list.writer().print("select distinct file_hash from tag_files", .{});
@@ -419,6 +447,7 @@ pub const SqlGiver = struct {
             if (query_slice.len == 0) break;
 
             var maybe_captures: ?[]?libpcre.Capture = null;
+            // TODO refactor add maybe_ prefix (good catch haze)
             var captured_regex_index: ?CaptureType = null;
             for (self.operators) |regex, current_regex_index| {
                 logger.debug("try regex {d} on query '{s}'", .{ current_regex_index, query_slice });
@@ -450,7 +479,7 @@ pub const SqlGiver = struct {
                         // this edge case is hit when queries start with '-TAG'
                         // since we already printed a select, we need to add
                         // some kind of condition before it's a syntax error
-                        if (tags.items.len == 0) {
+                        if (arguments.items.len == 0) {
                             try list.writer().print(" true", .{});
                         }
                         try list.writer().print(" except", .{});
@@ -461,7 +490,6 @@ pub const SqlGiver = struct {
                         try list.writer().print(" select file_hash from tag_files where", .{});
                     },
                     .Tag, .RawTag => {
-                        try list.writer().print(" core_hash = ?", .{});
                         // if we're matching raw_tag_regex (tags that have
                         // quotemarks around them), index forward and backward
                         // so that we don't pass those quotemarks to query
@@ -469,7 +497,27 @@ pub const SqlGiver = struct {
                         if (captured_regex_index.? == .RawTag) {
                             match_text = match_text[1 .. match_text.len - 1];
                         }
-                        try tags.append(match_text);
+
+                        if (std.mem.startsWith(u8, match_text, "hash:")) {
+                            var it = std.mem.split(u8, match_text, ":");
+                            _ = it.next();
+                            const file_blake3_hash_hex = it.next() orelse
+                                return Result{ .Error = .{ .character = index, .error_type = .InvalidHashScopedTag } };
+
+                            var hash_as_blob: Context.Blake3Hash = undefined;
+                            _ = std.fmt.hexToBytes(&hash_as_blob, file_blake3_hash_hex) catch |err| switch (err) {
+                                error.InvalidCharacter,
+                                error.InvalidLength,
+                                error.NoSpaceLeft,
+                                => return Result{ .Error = .{ .character = index, .error_type = .InvalidHashScopedTag } },
+                            };
+
+                            try list.writer().print(" file_hash = ?", .{});
+                            try arguments.append(Argument{ .file = hash_as_blob });
+                        } else {
+                            try list.writer().print(" core_hash = ?", .{});
+                            try arguments.append(Argument{ .tag = match_text });
+                        }
                     },
                 }
             } else {
@@ -480,7 +528,7 @@ pub const SqlGiver = struct {
         return Result{ .Ok = .{
             .allocator = allocator,
             .query = list.toOwnedSlice(),
-            .tags = tags.toOwnedSlice(),
+            .arguments = arguments.toOwnedSlice(),
         } };
     }
 };
@@ -499,13 +547,35 @@ test "sql parser" {
         result.query,
     );
 
-    try std.testing.expectEqual(@as(usize, 4), result.tags.len);
+    try std.testing.expectEqual(@as(usize, 4), result.arguments.len);
 
     const expected_tags = .{ "a", "b", "cd", "e" };
 
     inline for (expected_tags) |expected_tag, index| {
-        try std.testing.expectEqualStrings(expected_tag, result.tags[index]);
+        try std.testing.expectEqualStrings(expected_tag, result.arguments[index].tag);
     }
+}
+
+test "file hash" {
+    const allocator = std.testing.allocator;
+    var giver = try SqlGiver.init();
+    defer giver.deinit();
+
+    const HASH = "dee5b00b5cafebabecafebabecafebabe69696969420420420cafebabecafeba";
+    const wrapped_result = try giver.giveMeSql(allocator, "hash:" ++ HASH);
+    defer wrapped_result.deinit();
+
+    const result = wrapped_result.Ok;
+
+    try std.testing.expectEqualStrings(
+        "select file_hash from tag_files where file_hash = ?",
+        result.query,
+    );
+
+    try std.testing.expectEqual(@as(usize, 1), result.arguments.len);
+    var as_hex: Context.Blake3HashHex = undefined;
+    _ = try std.fmt.bufPrint(&as_hex, "{x}", .{std.fmt.fmtSliceHexLower(&result.arguments[0].file)});
+    try std.testing.expectEqualStrings(HASH, &as_hex);
 }
 
 test "sql parser errors" {
@@ -559,9 +629,9 @@ test "sql parser batch test" {
         };
         defer stmt.deinit();
 
-        try std.testing.expectEqual(@as(usize, expected_tags.len), result.tags.len);
+        try std.testing.expectEqual(@as(usize, expected_tags.len), result.arguments.len);
         inline for (expected_tags) |expected_tag, index| {
-            try std.testing.expectEqualStrings(expected_tag, result.tags[index]);
+            try std.testing.expectEqualStrings(expected_tag, result.arguments[index].tag);
         }
     }
 }
