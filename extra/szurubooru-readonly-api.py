@@ -710,8 +710,11 @@ async def posts_fetch():
 
 
 def extract_canvas_size(path: Path) -> tuple:
-    with Image.open(path) as im:
-        return im.width, im.height
+    try:
+        with Image.open(path) as im:
+            return im.width, im.height
+    except PIL.UnidentifiedImageError:
+        return (None, None)
 
 
 async def fetch_tag(core_hash):
