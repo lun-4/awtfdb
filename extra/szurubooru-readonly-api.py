@@ -18,7 +18,7 @@ import magic
 import aiosqlite
 from quart import Quart, request, send_file as quart_send_file
 from quart.ctx import copy_current_app_context
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, UnidentifiedImageError
 
 
 log = logging.getLogger(__name__)
@@ -424,9 +424,13 @@ async def content(file_id: int):
 
 
 def blocking_thumbnail_image(path, thumbnail_path, size):
-    with Image.open(path) as file_as_image:
-        file_as_image.thumbnail(size)
-        file_as_image.save(thumbnail_path)
+    try:
+        with Image.open(path) as file_as_image:
+            file_as_image.thumbnail(size)
+            file_as_image.save(thumbnail_path)
+    except UnidentifiedImageError:
+        log.exception("failed to make thumbnail")
+        return False
 
 
 async def thumbnail_given_path(path: Path, thumbnail_path: Path, size=(350, 350)):
@@ -713,7 +717,8 @@ def extract_canvas_size(path: Path) -> tuple:
     try:
         with Image.open(path) as im:
             return im.width, im.height
-    except PIL.UnidentifiedImageError:
+    except UnidentifiedImageError:
+        log.exception("failed to extract dimensions")
         return (None, None)
 
 
