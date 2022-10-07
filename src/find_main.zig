@@ -447,12 +447,11 @@ pub const SqlGiver = struct {
             if (query_slice.len == 0) break;
 
             var maybe_captures: ?[]?libpcre.Capture = null;
-            // TODO refactor add maybe_ prefix (good catch haze)
-            var captured_regex_index: ?CaptureType = null;
+            var maybe_captured_regex_index: ?CaptureType = null;
             for (self.operators) |regex, current_regex_index| {
                 logger.debug("try regex {d} on query '{s}'", .{ current_regex_index, query_slice });
                 maybe_captures = try regex.captures(allocator, query_slice, .{});
-                captured_regex_index = @intToEnum(CaptureType, current_regex_index);
+                maybe_captured_regex_index = @intToEnum(CaptureType, current_regex_index);
                 logger.debug("raw capture? {any}", .{maybe_captures});
                 if (maybe_captures) |captures| {
                     const capture = captures[0].?;
@@ -473,7 +472,7 @@ pub const SqlGiver = struct {
                 var match_text = query[index + full_match.start .. index + full_match.end];
                 index += full_match.end;
 
-                switch (captured_regex_index.?) {
+                switch (maybe_captured_regex_index.?) {
                     .Or => try list.writer().print(" or", .{}),
                     .Not => {
                         // this edge case is hit when queries start with '-TAG'
@@ -494,7 +493,7 @@ pub const SqlGiver = struct {
                         // quotemarks around them), index forward and backward
                         // so that we don't pass those quotemarks to query
                         // processors.
-                        if (captured_regex_index.? == .RawTag) {
+                        if (maybe_captured_regex_index.? == .RawTag) {
                             match_text = match_text[1 .. match_text.len - 1];
                         }
 
