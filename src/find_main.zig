@@ -591,6 +591,19 @@ test "sql parser errors" {
     try std.testing.expectEqual(SqlGiver.ErrorType.UnexpectedCharacter, error_data.error_type);
 }
 
+test "sql giver file hash errors" {
+    const allocator = std.testing.allocator;
+    var giver = try SqlGiver.init();
+    defer giver.deinit();
+
+    const wrapped_result = try giver.giveMeSql(allocator, "asd hash:AaaAAaaAaaA");
+    defer wrapped_result.deinit();
+
+    const error_data = wrapped_result.Error;
+    try std.testing.expectEqual(@as(usize, 20), error_data.character);
+    try std.testing.expectEqual(SqlGiver.ErrorType.InvalidHashScopedTag, error_data.error_type);
+}
+
 test "sql parser batch test" {
     const allocator = std.testing.allocator;
 
