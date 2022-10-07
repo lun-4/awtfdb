@@ -116,8 +116,6 @@ const CreateAction = struct {
     }
 
     pub fn run(self: *Self) !void {
-        _ = self;
-
         var stdout = std.io.getStdOut().writer();
 
         var raw_core_hash_buffer: [32]u8 = undefined;
@@ -308,7 +306,6 @@ const RemoveAction = struct {
     };
 
     pub fn processArgs(args_it: *std.process.ArgIterator, given_args: *Args) !ActionConfig {
-        _ = given_args;
         var config = Config{ .given_args = given_args };
 
         const ArgState = enum { None, NeedTagCore, NeedTag, NeedTagName };
@@ -350,8 +347,6 @@ const RemoveAction = struct {
     }
 
     pub fn run(self: *Self) !void {
-        _ = self;
-
         var stdout = std.io.getStdOut().writer();
 
         var raw_core_hash_buffer: [32]u8 = undefined;
@@ -500,7 +495,6 @@ test "remove action" {
     var tag2 = try ctx.createNamedTag("test tag2", "en", tag.core);
     _ = tag2;
     var tag3 = try ctx.createNamedTag("test tag3", "en", null);
-    _ = tag3;
 
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
@@ -771,7 +765,6 @@ const RemoveParent = struct {
     };
 
     pub fn processArgs(args_it: *std.process.ArgIterator, given_args: *Args) !ActionConfig {
-        _ = given_args;
         var config = Config{ .given_args = given_args };
 
         while (args_it.next()) |arg| {
