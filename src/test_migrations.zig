@@ -7,10 +7,27 @@ const Migration = manage_main.Migration;
 
 const logger = std.log.scoped(.migration_tests);
 
+var set_log = false;
+
 /// Make test context without any migrations loaded for proper testing.
 ///
 /// Inspired by manage_main.makeTestContext
 pub fn makeTestContext() !Context {
+    if (!set_log) {
+        logger.warn("AAAAAA", .{});
+
+        _ = sqlite.c.sqlite3_shutdown();
+
+        const rc = sqlite.c.sqlite3_config(sqlite.c.SQLITE_CONFIG_LOG, manage_main.sqliteLog, @as(?*anyopaque, null));
+        set_log = true;
+        if (rc != sqlite.c.SQLITE_OK) {
+            logger.err("failed to configure ({}): {d} '{s}'", .{
+                set_log, rc, sqlite.c.sqlite3_errstr(rc),
+            });
+            return error.ConfigFail;
+        }
+        _ = sqlite.c.sqlite3_initialize();
+    }
     const homepath = try std.fs.cwd().realpath(".", &manage_main.test_db_path_buffer);
     var ctx = Context{
         .args_it = undefined,
@@ -83,4 +100,16 @@ test "single migration test" {
     try loadSingleMigration(&ctx, 1);
     const count = try ctx.db.?.one(i64, "select count(*) from hashes", .{}, .{});
     try std.testing.expectEqual(@as(?i64, 0), count);
+}
+
+test "validate migration 2 works" {
+    var ctx = try makeTestContext();
+    defer ctx.deinit();
+
+    try loadSingleMigration(&ctx, 1);
+    try ctx.db.?.execMulti(
+        \\ insert into hashes (id, hash_data) values (1, X'7cecc98d9dc7503dcdad71adbbdf45d06667fd38c386f5d37489ea2c24d7a4dc');
+        \\ insert into files (file_hash, local_path) values (1, '/test.file');
+    , .{});
+    try loadSingleMigration(&ctx, 2);
 }

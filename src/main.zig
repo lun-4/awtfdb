@@ -1597,7 +1597,7 @@ pub const Context = struct {
 };
 
 pub export fn sqliteLog(_: ?*anyopaque, level: c_int, message: ?[*:0]const u8) callconv(.C) void {
-    logger.info("sqlite logged level={d} msg={?s}", .{ level, message });
+    logger.warn("sqlite logged level={d} msg={?s}", .{ level, message });
 }
 
 pub const log_level = .debug;
