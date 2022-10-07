@@ -432,7 +432,7 @@ pub const SqlGiver = struct {
         if (query.len == 0) {
             try list.writer().print("select distinct file_hash from tag_files", .{});
         } else {
-            try list.writer().print("select file_hash from tag_files where", .{});
+            try list.writer().print("select distinct file_hash from tag_files where", .{});
         }
 
         while (true) {
@@ -543,7 +543,7 @@ test "sql parser" {
     const result = wrapped_result.Ok;
 
     try std.testing.expectEqualStrings(
-        "select file_hash from tag_files where core_hash = ? intersect select file_hash from tag_files where core_hash = ? or core_hash = ? or core_hash = ?",
+        "select distinct file_hash from tag_files where core_hash = ? intersect select file_hash from tag_files where core_hash = ? or core_hash = ? or core_hash = ?",
         result.query,
     );
 
@@ -568,7 +568,7 @@ test "file hash" {
     const result = wrapped_result.Ok;
 
     try std.testing.expectEqualStrings(
-        "select file_hash from tag_files where file_hash = ?",
+        "select distinct file_hash from tag_files where file_hash = ?",
         result.query,
     );
 
