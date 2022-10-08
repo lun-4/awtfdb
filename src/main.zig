@@ -29,7 +29,7 @@ const HELPTEXT =
 
 const MigrationOptions = struct {};
 
-const Migration = struct {
+pub const Migration = struct {
     version: usize,
     name: []const u8,
     sql: ?[]const u8 = null,
@@ -53,7 +53,7 @@ const Migration = struct {
     }
 };
 
-const MIGRATIONS = .{
+pub const MIGRATIONS = .{
     .{
         1, "initial table",
         \\ -- we optimize table size by storing hashes in a dedicated table
@@ -252,7 +252,7 @@ const MIGRATIONS = .{
     },
 };
 
-const MIGRATION_LOG_TABLE =
+pub const MIGRATION_LOG_TABLE =
     \\ create table if not exists migration_logs (
     \\     version int primary key,
     \\     applied_at int,
@@ -1597,7 +1597,7 @@ pub const Context = struct {
 };
 
 pub export fn sqliteLog(_: ?*anyopaque, level: c_int, message: ?[*:0]const u8) callconv(.C) void {
-    logger.info("sqlite logged level={d} msg={?s}", .{ level, message });
+    logger.warn("sqlite logged level={d} msg={?s}", .{ level, message });
 }
 
 pub const log_level = .debug;
@@ -2124,4 +2124,5 @@ test "everyone else" {
     //std.testing.refAllDecls(@import("./hydrus_api_main.zig"));
     std.testing.refAllDecls(@import("./tags_main.zig"));
     std.testing.refAllDecls(@import("./metrics_main.zig"));
+    std.testing.refAllDecls(@import("./test_migrations.zig"));
 }

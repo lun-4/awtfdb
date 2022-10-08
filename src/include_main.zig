@@ -685,9 +685,6 @@ const MimeTagInferrer = struct {
         file: *const Context.File,
         tags_to_add: *std.ArrayList([]const u8),
     ) !void {
-        _ = self;
-        _ = tags_to_add;
-
         const path_cstr = try std.cstr.addNullByte(self.allocator, file.local_path);
         defer self.allocator.free(path_cstr);
 

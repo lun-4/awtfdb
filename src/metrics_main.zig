@@ -150,7 +150,6 @@ fn runMetricsTagUsageSingleCore(
 }
 
 fn runMetricsTagUsage(ctx: *Context, metrics_timestamp: i64) !void {
-    _ = metrics_timestamp;
     try ctx.db.?.exec(
         "insert into metrics_tag_usage_timestamps (timestamp) values (?)",
         .{},
