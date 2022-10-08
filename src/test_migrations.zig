@@ -112,4 +112,6 @@ test "validate migration 2 works" {
         \\ insert into files (file_hash, local_path) values (1, '/test.file');
     , .{});
     try loadSingleMigration(&ctx, 2);
+    const file_hash = try ctx.db.?.one(i64, "select file_hash from files where local_path = '/test.file'", .{}, .{});
+    try std.testing.expectEqual(@as(?i64, 1), file_hash);
 }
