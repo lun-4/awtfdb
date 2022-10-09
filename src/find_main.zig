@@ -62,6 +62,7 @@ pub fn main() anyerror!void {
         help: bool = false,
         version: bool = false,
         link: bool = false,
+        cli_v1: bool = true,
         query: StringList,
         pub fn deinit(self: *@This()) void {
             self.query.deinit();
@@ -90,6 +91,8 @@ pub fn main() anyerror!void {
             current_log_level = .debug;
         } else if (std.mem.eql(u8, arg, "-L") or std.mem.eql(u8, arg, "--link")) {
             given_args.link = true;
+        } else if (std.mem.eql(u8, arg, "--v1")) {
+            given_args.cli_v1 = true; // doesn't do anything yet
         } else {
             arg_state = .MoreTags;
             try given_args.query.append(arg);

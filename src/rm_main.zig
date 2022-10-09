@@ -44,6 +44,7 @@ const Args = struct {
     paths: StringList,
     tags: CoreList,
     pool: ?Context.Pool = null,
+    cli_v1: bool = true,
 };
 
 fn processFile(given_args: Args, file: *Context.File) !usize {
@@ -140,6 +141,8 @@ pub fn main() anyerror!void {
             state = .FetchTag;
         } else if (std.mem.eql(u8, arg, "-p")) {
             state = .FetchPool;
+        } else if (std.mem.eql(u8, arg, "--v1")) {
+            given_args.cli_v1 = true; // doesn't do anything yet
         } else {
             try given_args.paths.append(arg);
         }

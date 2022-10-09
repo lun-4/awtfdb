@@ -1339,6 +1339,7 @@ const Args = struct {
     ask_confirmation: bool = true,
     action_config: ?ActionConfig = null,
     dry_run: bool = false,
+    cli_v1: bool = true,
 
     pub fn maybeAskConfirmation(self: @This(), comptime fmt: []const u8, args: anytype) !void {
         var stdin = std.io.getStdIn().reader();
@@ -1450,6 +1451,9 @@ pub fn main() anyerror!void {
             arg_state = .Pool;
         } else if (std.mem.eql(u8, arg, "source")) {
             arg_state = .Source;
+        } else if (std.mem.eql(u8, arg, "--v1")) {
+            given_args.cli_v1 = true; // doesn't do anything yet
+
         } else {
             logger.err("{s} is an invalid action", .{arg});
             return error.InvalidAction;
