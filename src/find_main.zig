@@ -266,7 +266,7 @@ pub fn main() anyerror!void {
             };
         }
 
-        logger.info("successfully created symlinked folder at", .{});
+        logger.info("successfully created symlinked folder at {s}", .{tmp_path});
         try stdout.print("{s}\n", .{tmp_path});
 
         const self_pipe_fds = try std.os.pipe();

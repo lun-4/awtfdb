@@ -183,12 +183,9 @@ pub fn main() anyerror!void {
             defer file.deinit();
             count += try processFile(given_args, file);
         } else {
-            var dir = std.fs.cwd().openIterableDir(full_path, .{}) catch |err| switch (err) {
-                std.fs.Dir.OpenError.FileNotFound => {
-                    logger.err("path not found: {s}", .{full_path});
-                    return err;
-                },
-                else => return err,
+            var dir = std.fs.cwd().openIterableDir(full_path, .{}) catch |err| {
+                logger.err("path not found: {s}", .{full_path});
+                return err;
             };
 
             if (!given_args.recursive) {
