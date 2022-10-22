@@ -914,7 +914,7 @@ async def fetch_file_entity(
             elif file_mime.startswith("audio/"):
                 file_type = "audio"
             else:
-                file_type = None
+                file_type = "image"
         app.file_cache.file_type[file_id] = file_type
         assert file_type in ("image", "animation", "video", "flash", "audio")
         returned_file["type"] = file_type
