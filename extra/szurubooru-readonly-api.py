@@ -68,7 +68,7 @@ async def app_before_serving():
         mime_type=ExpiringDict(max_len=1000, max_age_seconds=300),
         local_path=ExpiringDict(max_len=1000, max_age_seconds=3600),
     )
-    app.tag_cache = ExpiringDict(max_len=1000, max_age_seconds=300)
+    app.tag_cache = ExpiringDict(max_len=4000, max_age_seconds=1800)
 
     @copy_current_app_context
     async def thumbnail_cleaner_run():
@@ -645,12 +645,20 @@ async def thumbnail(file_id: int):
         return "", 500
 
 
+def request_fields() -> Optional[List[str]]:
+    fields = request.args.get("fields")
+    if not fields:
+        return None
+    return fields.split(",")
+
+
 @app.get("/posts/")
 async def posts_fetch():
     query = request.args.get("query", "")
     offset = int(request.args.get("offset", 0))
     limit = int(request.args.get("limit", 15))
     query = query.replace("\\:", ":")
+    fields = request_fields()
 
     if "pool:" in query:
         # switch logic to fetching stuff from pool only in order lol
@@ -701,8 +709,12 @@ async def posts_fetch():
     rows_coroutines = []
     async for file_hash_row in tag_rows:
         file_hash = file_hash_row[0]
-        rows_coroutines.append(fetch_file_entity(file_hash))
+        rows_coroutines.append(fetch_file_entity(file_hash, fields=fields))
+    start_ts = time.monotonic()
     rows = await asyncio.gather(*rows_coroutines)
+    end_ts = time.monotonic()
+    time_taken = round(end_ts - start_ts, 3)
+    log.info("took %.3f seconds to fetch file metadata", time_taken)
 
     return {
         "query": query,
@@ -722,10 +734,12 @@ def extract_canvas_size(path: Path) -> tuple:
         return (None, None)
 
 
-async def fetch_tag(core_hash):
+async def fetch_tag(core_hash) -> list:
+    log.info("fetch %d", core_hash)
 
     tag_entry = app.tag_cache.get(core_hash)
     if tag_entry is None:
+        log.info("fetch name %d", core_hash)
         named_tag_cursor = await app.db.execute(
             """
             select tag_text
@@ -759,28 +773,100 @@ async def fetch_tag(core_hash):
             }
         )
 
+    log.info("fetch ret %d", core_hash)
     return tags_result
 
 
-async def fetch_file_entity(file_id: int, micro=False) -> dict:
-    file_tags = []
+MICRO_FILE_FIELDS = ("id", "thumbnailUrl")
+ALL_FILE_FIELDS = (
+    "id",
+    "thumbnailUrl",
+    "tags",
+    "pools",
+    "tagCount",
+    "type",
+    "canvasHeight",
+    "canvasWidth",
+)
 
+
+async def fetch_file_entity(
+    file_id: int, *, micro=False, fields: Optional[List[str]] = None
+) -> dict:
+    fields = fields or ALL_FILE_FIELDS
     if micro:
-        return {
-            "id": file_id,
-            "thumbnailUrl": f"api/_awtfdb_thumbnails/{file_id}",
-        }
+        fields = MICRO_FILE_FIELDS
 
-    file_tags_cursor = await app.db.execute(
-        "select core_hash from tag_files where file_hash = ?",
-        (file_id,),
-    )
-    async for core_hash in file_tags_cursor:
-        tags = await fetch_tag(core_hash[0])
-        file_tags.extend(tags)
+    returned_file = {
+        "version": 1,
+        "id": file_id,
+        "creationTime": "1900-01-01T00:00:00Z",
+        "lastEditTime": "1900-01-01T00:00:00Z",
+        "safety": "safe",
+        "source": None,
+        "checksum": "test",
+        "checksumMD5": "test",
+        "contentUrl": f"api/_awtfdb_content/{file_id}",
+        "thumbnailUrl": f"api/_awtfdb_thumbnails/{file_id}",
+        "flags": ["loop"],
+        "relations": [],
+        "notes": [],
+        "user": {"name": "root", "avatarUrl": None},
+        "score": 0,
+        "ownScore": 0,
+        "ownFavorite": False,
+        "favoriteCount": 0,
+        "commentCount": 0,
+        "noteCount": 0,
+        "featureCount": 0,
+        "relationCount": 0,
+        "lastFeatureTime": "1900-01-01T00:00:00Z",
+        "favoritedBy": [],
+        "hasCustomThumbnail": True,
+        "comments": [],
+    }
 
-    # sort tags by name instead of by hash
-    file_tags = sorted(file_tags, key=lambda t: t["names"][0])
+    if "thumbnailUrl" in fields:
+        returned_file["thumbnailUrl"] = f"api/_awtfdb_thumbnails/{file_id}"
+
+    if "tags" in fields or "pools" in fields or "tagCount" in fields:
+        file_tags = []
+        file_tags_cursor = await app.db.execute(
+            "select core_hash from tag_files where file_hash = ?",
+            (file_id,),
+        )
+
+        tags_coroutines = []
+        async for row in file_tags_cursor:
+            log.info("coro %d", row[0])
+            tags_coroutines.append(fetch_tag(row[0]))
+        tags_results = await asyncio.gather(*tags_coroutines)
+        for tag_result in tags_results:
+            file_tags.extend(tag_result)
+
+        # sort tags by name instead of by hash
+        returned_file["tags"] = sorted(file_tags, key=lambda t: t["names"][0])
+
+        pool_rows = await app.db.execute_fetchall(
+            "select pool_hash from pool_entries where file_hash = ?",
+            [file_id],
+        )
+        pool_coroutines = [fetch_pool_entity(row[0], micro=True) for row in pool_rows]
+        pools = await asyncio.gather(*pool_coroutines)
+
+        returned_file["tags"].extend(
+            [
+                {
+                    "category": "default",
+                    "names": [f'pool:{pool["id"]}'],
+                    "usages": pool["postCount"],
+                }
+                for pool in pools
+            ]
+        )
+
+        returned_file["pools"] = pools
+        returned_file["tagCount"] = len(file_tags)
 
     file_local_path = app.file_cache.local_path.get(file_id)
     if file_local_path is None:
@@ -793,109 +879,72 @@ async def fetch_file_entity(file_id: int, micro=False) -> dict:
         app.file_cache.local_path[file_id] = file_local_path
 
     file_mime = fetch_mimetype(file_local_path)
+    returned_file["mimeType"] = file_mime
 
-    canvas_size = app.file_cache.canvas_size.get(file_id)
-    file_type = app.file_cache.file_type.get(file_id)
+    if "type" in fields:
+        file_type = app.file_cache.file_type.get(file_id)
+        if not file_type:
+            if file_mime.startswith("image/"):
+                file_type = "image"
+                if file_mime == "image/gif":
+                    file_type = "animation"
 
-    if canvas_size is None and file_mime.startswith("image/"):
-        file_type = "image"
-        if file_mime == "image/gif":
-            file_type = "animation"
-        canvas_size = await app.loop.run_in_executor(
-            None, extract_canvas_size, file_local_path
-        )
-    elif canvas_size is None and file_mime.startswith("video/"):
-        file_type = "video"
-        proc = await asyncio.create_subprocess_shell(
-            " ".join(
-                [
-                    "ffprobe",
-                    "-v",
-                    "error",
-                    "-select_streams",
-                    "v:0",
-                    "-show_entries",
-                    "stream=width,height",
-                    "-of",
-                    "csv=s=x:p=0",
-                    shlex.quote(file_local_path),
-                ]
-            ),
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        out, err = await proc.communicate()
-        assert proc.returncode == 0
-        out, err = out.decode().strip(), err.decode()
-        log.info("out: %r, err: %r", out, err)
-        canvas_size = out.split("x")
-        if not out:
-            canvas_size = (None, None)
-    elif canvas_size is None and file_mime.startswith("audio/"):
-        canvas_size = (None, None)
-        file_type = "audio"
-    elif canvas_size is None:
-        canvas_size = (None, None)
-        file_type = "image"
+            elif file_mime.startswith("video/"):
+                file_type = "video"
+            elif file_mime.startswith("audio/"):
+                file_type = "audio"
+            else:
+                file_type = None
+        app.file_cache.file_type[file_id] = file_type
+        assert file_type in ("image", "animation", "video", "flash", "audio")
+        returned_file["type"] = file_type
 
-    log.info("file %d canvas size: %r", file_id, canvas_size)
+    if "canvasHeight" in fields or "canvasWidth" in fields:
+        canvas_size = app.file_cache.canvas_size.get(file_id)
 
-    assert len(canvas_size) == 2
-    assert file_type in ("image", "animation", "video", "flash", "audio")
-    app.file_cache.canvas_size[file_id] = canvas_size
-    app.file_cache.file_type[file_id] = file_type
+        if not canvas_size:
+            assert "type" in fields
+            if file_type in ("image", "animation"):
+                canvas_size = await app.loop.run_in_executor(
+                    None, extract_canvas_size, file_local_path
+                )
+            elif file_type == "video":
+                proc = await asyncio.create_subprocess_shell(
+                    " ".join(
+                        [
+                            "ffprobe",
+                            "-v",
+                            "error",
+                            "-select_streams",
+                            "v:0",
+                            "-show_entries",
+                            "stream=width,height",
+                            "-of",
+                            "csv=s=x:p=0",
+                            shlex.quote(file_local_path),
+                        ]
+                    ),
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+                out, err = await proc.communicate()
+                assert proc.returncode == 0
+                out, err = out.decode().strip(), err.decode()
+                log.info("out: %r, err: %r", out, err)
+                canvas_size = out.split("x")
+                if not out:
+                    canvas_size = (None, None)
+            elif file_type in ("audio", None):
+                canvas_size = (None, None)
+        app.file_cache.canvas_size[file_id] = canvas_size
+        returned_file["canvasWidth"] = int(canvas_size[0]) if canvas_size[0] else None
+        returned_file["canvasHeight"] = int(canvas_size[1]) if canvas_size[1] else None
 
-    pool_rows = await app.db.execute_fetchall(
-        "select pool_hash from pool_entries where file_hash = ?",
-        [file_id],
-    )
-    pool_coroutines = [fetch_pool_entity(row[0], micro=True) for row in pool_rows]
-    pools = await asyncio.gather(*pool_coroutines)
+        log.info("file %d calculate canvas size: %r", file_id, canvas_size)
+        assert len(canvas_size) == 2
 
-    return {
-        "version": 1,
-        "version": 1,
-        "id": file_id,
-        "creationTime": "1900-01-01T00:00:00Z",
-        "lastEditTime": "1900-01-01T00:00:00Z",
-        "safety": "safe",
-        "source": None,
-        "type": file_type,
-        "checksum": "test",
-        "checksumMD5": "test",
-        "canvasWidth": int(canvas_size[0]) if canvas_size[0] else None,
-        "canvasHeight": int(canvas_size[1]) if canvas_size[1] else None,
-        "contentUrl": f"api/_awtfdb_content/{file_id}",
-        "thumbnailUrl": f"api/_awtfdb_thumbnails/{file_id}",
-        "flags": ["loop"],
-        "tags": file_tags
-        + [
-            {
-                "category": "default",
-                "names": [f'pool:{pool["id"]}'],
-                "usages": pool["postCount"],
-            }
-            for pool in pools
-        ],
-        "relations": [],
-        "notes": [],
-        "user": {"name": "root", "avatarUrl": None},
-        "score": 0,
-        "ownScore": 0,
-        "ownFavorite": False,
-        "tagCount": len(file_tags),
-        "favoriteCount": 0,
-        "commentCount": 0,
-        "noteCount": 0,
-        "featureCount": 0,
-        "relationCount": 0,
-        "lastFeatureTime": "1900-01-01T00:00:00Z",
-        "favoritedBy": [],
-        "hasCustomThumbnail": True,
-        "mimeType": file_mime,
-        "comments": [],
-        "pools": pools,
-    }
+    log.info("file %d fetch fields %r", file_id, fields)
+    return returned_file
 
 
 @app.get("/post/<int:file_id>")
@@ -906,7 +955,7 @@ async def single_post_fetch(file_id: int):
 
 @app.get("/post/<int:file_id>/around/")
 async def single_post_fetch_around(file_id: int):
-    # GET /post/<id>
+    fields = request_fields()
     prev_cursor = await app.db.execute(
         """
         select file_hash
@@ -932,8 +981,8 @@ async def single_post_fetch_around(file_id: int):
     next_value = await next_cursor.fetchone()
     next_id = next_value[0] if next_value else None
     return {
-        "prev": await fetch_file_entity(prev_id) if prev_id else None,
-        "next": await fetch_file_entity(next_id) if next_id else None,
+        "prev": await fetch_file_entity(prev_id, fields=fields) if prev_id else None,
+        "next": await fetch_file_entity(next_id, fields=fields) if next_id else None,
     }
 
 
