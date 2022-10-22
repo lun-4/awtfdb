@@ -749,11 +749,31 @@ async def fetch_tag(core_hash) -> list:
             (core_hash,),
         )
 
-        usages_cursor = await app.db.execute(
-            "select count(*) from tag_files where core_hash = ?",
+        start_ts = time.monotonic()
+        log.info("fetch count %d", core_hash)
+        usages_from_metrics = await app.db.execute_fetchall(
+            """
+            select relationship_count
+            from metrics_tag_usage_values
+            where core_hash = ?
+            order by timestamp desc
+            limit 1
+            """,
             (core_hash,),
         )
-        usages = (await usages_cursor.fetchone())[0]
+        if not usages_from_metrics:
+            usages = (
+                await app.db.execute_fetchall(
+                    "select count(rowid) from tag_files where core_hash = ?",
+                    (core_hash,),
+                )
+            )[0][0]
+        else:
+            usages = usages_from_metrics[0][0]
+
+        end_ts = time.monotonic()
+        taken = round(end_ts - start_ts, 3)
+        log.info("count %d took %.2f secs", core_hash, taken)
 
         tag_entry = []
         async for named_tag in named_tag_cursor:
