@@ -735,11 +735,9 @@ def extract_canvas_size(path: Path) -> tuple:
 
 
 async def fetch_tag(core_hash) -> list:
-    log.info("fetch %d", core_hash)
 
     tag_entry = app.tag_cache.get(core_hash)
     if tag_entry is None:
-        log.info("fetch name %d", core_hash)
         named_tag_cursor = await app.db.execute(
             """
             select tag_text
@@ -750,7 +748,6 @@ async def fetch_tag(core_hash) -> list:
         )
 
         start_ts = time.monotonic()
-        log.info("fetch count %d", core_hash)
         usages_from_metrics = await app.db.execute_fetchall(
             """
             select relationship_count
@@ -762,6 +759,7 @@ async def fetch_tag(core_hash) -> list:
             (core_hash,),
         )
         if not usages_from_metrics:
+            log.info("tag %d has no metrics, calculating manually...", core_hash)
             usages = (
                 await app.db.execute_fetchall(
                     "select count(rowid) from tag_files where core_hash = ?",
@@ -770,10 +768,6 @@ async def fetch_tag(core_hash) -> list:
             )[0][0]
         else:
             usages = usages_from_metrics[0][0]
-
-        end_ts = time.monotonic()
-        taken = round(end_ts - start_ts, 3)
-        log.info("count %d took %.2f secs", core_hash, taken)
 
         tag_entry = []
         async for named_tag in named_tag_cursor:
@@ -793,7 +787,6 @@ async def fetch_tag(core_hash) -> list:
             }
         )
 
-    log.info("fetch ret %d", core_hash)
     return tags_result
 
 
@@ -858,7 +851,6 @@ async def fetch_file_entity(
 
         tags_coroutines = []
         async for row in file_tags_cursor:
-            log.info("coro %d", row[0])
             tags_coroutines.append(fetch_tag(row[0]))
         tags_results = await asyncio.gather(*tags_coroutines)
         for tag_result in tags_results:
