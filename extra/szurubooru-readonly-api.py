@@ -509,13 +509,24 @@ def get_extension(mimetype):
 
 
 MIME_REMAPPING = {"video/x-matroska": "video/mkv"}
+MIME_OPTIMIZATION = {
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png": "image/png",
+    ".mp4": "video/mp4",
+    ".gif": "image/gif",
+}
 
 
 def fetch_mimetype(file_path: str):
     mimetype = app.file_cache.mime_type.get(file_path)
     if not mimetype:
-        mimetype = magic.from_file(file_path, mime=True)
-        mimetype = MIME_REMAPPING.get(mimetype, mimetype)
+        path = Path(file_path)
+        if path.suffix in MIME_OPTIMIZATION:
+            mimetype = MIME_OPTIMIZATION[path.suffix]
+        else:
+            mimetype = magic.from_file(file_path, mime=True)
+            mimetype = MIME_REMAPPING.get(mimetype, mimetype)
         app.file_cache.mime_type[file_path] = mimetype
     return mimetype
 
