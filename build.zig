@@ -15,7 +15,6 @@ pub fn build(b: *std.build.Builder) void {
     const exe_tests = b.addTest("src/main.zig");
     exe_tests.setTarget(target);
     exe_tests.setBuildMode(mode);
-    exe_tests.use_stage1 = true;
     deps.addAllTo(exe_tests);
 
     const test_step = b.step("test", "Run unit tests");
@@ -25,7 +24,6 @@ pub fn build(b: *std.build.Builder) void {
     manage_exe.setTarget(target);
     manage_exe.setBuildMode(mode);
     manage_exe.install();
-    manage_exe.use_stage1 = true;
     deps.addAllTo(manage_exe);
 
     const watcher_exe = b.addExecutable("awtfdb-watcher", "src/rename_watcher_main.zig");
@@ -33,7 +31,6 @@ pub fn build(b: *std.build.Builder) void {
     watcher_exe.setBuildMode(mode);
     watcher_exe.install();
 
-    watcher_exe.use_stage1 = true;
     deps.addAllTo(watcher_exe);
 
     const include_exe = b.addExecutable("ainclude", "src/include_main.zig");
@@ -41,7 +38,6 @@ pub fn build(b: *std.build.Builder) void {
     include_exe.setBuildMode(mode);
     include_exe.install();
 
-    include_exe.use_stage1 = true;
     deps.addAllTo(include_exe);
 
     const find_exe = b.addExecutable("afind", "src/find_main.zig");
@@ -49,7 +45,6 @@ pub fn build(b: *std.build.Builder) void {
     find_exe.setBuildMode(mode);
     find_exe.install();
 
-    find_exe.use_stage1 = true;
     deps.addAllTo(find_exe);
 
     const ls_exe = b.addExecutable("als", "src/ls_main.zig");
@@ -57,35 +52,30 @@ pub fn build(b: *std.build.Builder) void {
     ls_exe.setBuildMode(mode);
     ls_exe.install();
 
-    ls_exe.use_stage1 = true;
     deps.addAllTo(ls_exe);
 
     const tags_exe = b.addExecutable("atags", "src/tags_main.zig");
     tags_exe.setTarget(target);
     tags_exe.setBuildMode(mode);
     tags_exe.install();
-    tags_exe.use_stage1 = true;
     deps.addAllTo(tags_exe);
 
     const rm_exe = b.addExecutable("arm", "src/rm_main.zig");
     rm_exe.setTarget(target);
     rm_exe.setBuildMode(mode);
     rm_exe.install();
-    rm_exe.use_stage1 = true;
     deps.addAllTo(rm_exe);
 
     const janitor_exe = b.addExecutable("awtfdb-janitor", "src/janitor_main.zig");
     janitor_exe.setTarget(target);
     janitor_exe.setBuildMode(mode);
     janitor_exe.install();
-    janitor_exe.use_stage1 = true;
     deps.addAllTo(janitor_exe);
 
     const metrics_exe = b.addExecutable("awtfdb-metrics", "src/metrics_main.zig");
     metrics_exe.setTarget(target);
     metrics_exe.setBuildMode(mode);
     metrics_exe.install();
-    metrics_exe.use_stage1 = true;
 
     // this is required for metrics so that the queries don't take too long
     //metrics_exe.build_mode = .ReleaseSafe;

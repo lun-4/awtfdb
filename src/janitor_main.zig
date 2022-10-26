@@ -5,7 +5,6 @@ const libpcre = @import("libpcre");
 const Context = manage_main.Context;
 
 const logger = std.log.scoped(.awtfdb_janitor);
-pub const io_mode = .evented;
 
 const VERSION = "0.0.1";
 const HELPTEXT =

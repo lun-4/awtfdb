@@ -3,8 +3,6 @@ const sqlite = @import("sqlite");
 const manage_main = @import("main.zig");
 const Context = manage_main.Context;
 
-pub const io_mode = .evented;
-
 const logger = std.log.scoped(.awtfdb_janitor);
 
 const VERSION = "0.0.1";
