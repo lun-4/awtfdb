@@ -1,7 +1,7 @@
 2
-git https://github.com/haze/tunez commit-bb790e8b904b75bed8d6bfd7b9640b0497a138a1
 git https://github.com/kivikakk/libpcre.zig commit-76688fbfb88be3d28fdada1ecbb87aacb6191f89
 git https://github.com/lun-4/expiring-hash-map.zig commit-7d5e56935723b9c4c7aab1591978844f0ee44f30
 git https://github.com/nektro/pcre-8.45 commit-10bc0a2fd91f3a40be9825738661f8748eb60e14
 git https://github.com/truemedian/hzzp commit-41df79629f7f084ead771d86a770b93e34adfaf2
-git https://github.com/lun-4/zig-sqlite commit-41487e0491163b73139dcf7f560405f9dd1210e9
+git https://github.com/lun-4/tunez commit-2f5aa39dba0e6f471f03f1a12ff0605aca93c5b6
+git https://github.com/lun-4/zig-sqlite commit-861491253ec61b43acf53dd813d1448ac078c5ad
