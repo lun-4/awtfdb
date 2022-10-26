@@ -127,15 +127,17 @@ pub fn main() anyerror!void {
             continue;
         }
 
-        var maybe_dir = std.fs.cwd().openIterableDir(query, .{}) catch |err| switch (err) {
-            error.FileNotFound => {
-                logger.err("path not found: {s}", .{query});
-                return err;
-            },
-            error.NotDir => blk: {
-                break :blk null;
-            },
-            else => return err,
+        var maybe_dir: ?std.fs.IterableDir = std.fs.cwd().openIterableDir(query, .{}) catch |err| blk: {
+            switch (err) {
+                error.FileNotFound => {
+                    logger.err("path not found: {s}", .{query});
+                    return err;
+                },
+                error.NotDir => {
+                    break :blk null;
+                },
+                else => return err,
+            }
         };
 
         if (maybe_dir) |dir| {

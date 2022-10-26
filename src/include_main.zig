@@ -100,8 +100,9 @@ fn utilAddTag(
     defer list.deinit();
 
     if (maybe_raw_tag) |raw_tag| {
-        _ = try utilAddScope(maybe_tag_scope, &list.writer());
-        _ = try utilAddRawTag(config, raw_tag, &list.writer());
+        var writer = list.writer();
+        _ = try utilAddScope(maybe_tag_scope, &writer);
+        _ = try utilAddRawTag(config, raw_tag, &writer);
         try output_tags_list.append(
             list.toOwnedSlice(),
         );
@@ -297,8 +298,9 @@ const RegexTagInferrer = struct {
                     var tag_text_list = std.ArrayList(u8).init(self.allocator);
                     defer tag_text_list.deinit();
 
-                    _ = try utilAddScope(self.config.tag_scope, &tag_text_list.writer());
-                    _ = try utilAddRawTag(self.config, raw_tag_text, &tag_text_list.writer());
+                    var writer = tag_text_list.writer();
+                    _ = try utilAddScope(self.config.tag_scope, &writer);
+                    _ = try utilAddRawTag(self.config, raw_tag_text, &writer);
 
                     try tags_to_add.append(tag_text_list.toOwnedSlice());
                 }
@@ -576,13 +578,13 @@ const MimeCookie = struct {
 
         logger.info("loading magic file at prefix {s}", .{path_cstr});
 
-        if (c.magic_load(cookie, path_cstr) == -1) {
+        if (c.magic_load(cookie, path_cstr.ptr) == -1) {
             const magic_error_value = c.magic_error(cookie);
             logger.err("failed to load magic file: {s}", .{magic_error_value});
             return error.MagicFileFail;
         }
 
-        if (c.magic_check(cookie, path_cstr) == -1) {
+        if (c.magic_check(cookie, path_cstr.ptr) == -1) {
             const magic_error_value = c.magic_error(cookie);
             logger.err("failed to check magic file: {s}", .{magic_error_value});
             return error.MagicFileFail;
@@ -596,7 +598,9 @@ const MimeCookie = struct {
     }
 
     pub fn inferFile(self: Self, path: [:0]const u8) ![]const u8 {
-        const mimetype = c.magic_file(self.cookie, path) orelse {
+        // TODO: remove ptrCast workaround for possible stage2 bug
+        // "error: expected type '[*c]const u8', found '[:0]u8'"
+        const mimetype = c.magic_file(self.cookie, path.ptr) orelse {
             const magic_error_value = c.magic_error(self.cookie);
             logger.err("failed to infer mimetype: {s}", .{magic_error_value});
             return error.MimetypeFail;
@@ -991,8 +995,10 @@ pub fn main() anyerror!void {
     defer file_ids_for_tagtree.deinit();
 
     for (given_args.include_paths.items) |path_to_include| {
-        var dir = std.fs.cwd().openIterableDir(path_to_include, .{}) catch |err| blk: {
-            if (err == error.NotDir) break :blk null;
+        var dir: ?std.fs.IterableDir = std.fs.cwd().openIterableDir(path_to_include, .{}) catch |err| blk: {
+            if (err == error.NotDir) {
+                break :blk null;
+            }
             logger.err("error while including path '{s}': {s}", .{ path_to_include, @errorName(err) });
             return err;
         };
