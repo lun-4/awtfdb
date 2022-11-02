@@ -423,6 +423,35 @@ pub fn main() anyerror!u8 {
 
     var counters: ErrorCounters = .{};
 
+    logger.info("running PRAGMA integrity_check", .{});
+    var stmt = try ctx.db.?.prepare("PRAGMA integrity_check;");
+    defer stmt.deinit();
+
+    var it = try stmt.iterator([]const u8, .{});
+    const val = (try it.nextAlloc(ctx.allocator, .{})) orelse return error.PossiblyFailedIntegrityCheck;
+    defer ctx.allocator.free(val);
+    logger.info("integrity check returned '{?s}'", .{val});
+    if (!std.mem.eql(u8, val, "ok")) {
+        while (try it.nextAlloc(ctx.allocator, .{})) |row| {
+            defer ctx.allocator.free(row);
+            logger.info("integrity check returned '{?s}'", .{row});
+        }
+        return error.FailedIntegrityCheck;
+    }
+    var maybe_row = try ctx.db.?.oneAlloc(struct {
+        source_table: []const u8,
+        invalid_rowid: ?i64,
+        referenced_table: []const u8,
+        foreign_key_constraint_index: i64,
+    }, ctx.allocator, "PRAGMA foreign_key_check", .{}, .{});
+    logger.info("foreign key check returned {?any}", .{maybe_row});
+
+    if (maybe_row) |row| {
+        defer allocator.free(row.source_table);
+        defer allocator.free(row.referenced_table);
+        return error.FailedForeignKeyCheck;
+    }
+
     var savepoint = try ctx.db.?.savepoint("janitor");
     errdefer savepoint.rollback();
     defer savepoint.commit();
