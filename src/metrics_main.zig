@@ -177,11 +177,38 @@ fn runMetricsTagUsage(ctx: *Context, metrics_timestamp: i64) !void {
     }
 }
 
+fn runTagSourceCounters(ctx: *Context, metrics_timestamp: i64) !void {
+    var stmt = try ctx.db.?.prepare(
+        \\ select distinct type, id,
+        \\  (select count(*) from tag_files where tag_source_type  = tag_sources.type and tag_source_id=tag_sources.id) AS relationship_count
+        \\  from tag_sources;
+    );
+    defer stmt.deinit();
+
+    var it = try stmt.iterator(struct {
+        tag_source_type: i64,
+        tag_source_id: i64,
+        relationship_count: i64,
+    }, .{});
+    var timer = try std.time.Timer.start();
+    while (try it.next(.{})) |row| {
+        const exec_time_ns = timer.lap();
+        logger.info("{} took {:.2}ms to fetch", .{ row, exec_time_ns / std.time.ns_per_ms });
+
+        try ctx.db.?.exec(
+            "insert into metrics_tag_source_usage (timestamp, tag_source_type, tag_source_id, relationship_count) values (?, ?, ?, ?)",
+            .{},
+            .{ metrics_timestamp, row.tag_source_type, row.tag_source_id, row.relationship_count },
+        );
+    }
+}
+
 fn runAllMetricsCounters(given_args: Args, ctx: *Context, metrics_timestamp: i64) !void {
     try runMetricsCounter(ctx, metrics_timestamp, "files", "metrics_count_files");
     try runMetricsCounter(ctx, metrics_timestamp, "tag_cores", "metrics_count_tag_cores");
     try runMetricsCounter(ctx, metrics_timestamp, "tag_names", "metrics_count_tag_names");
     try runMetricsCounter(ctx, metrics_timestamp, "tag_files", "metrics_count_tag_files");
+    try runTagSourceCounters(ctx, metrics_timestamp);
     if (given_args.full) {
         try runMetricsTagUsage(ctx, metrics_timestamp);
     }
@@ -300,4 +327,15 @@ test "metrics (tags and files)" {
     }
 
     try std.testing.expectEqual(@as(usize, 3), checked_count);
+
+    // fact on this test
+    // source type=0 and id=0 has 6 relationships
+
+    const source_usage = try ctx.db.?.one(i64,
+        \\ select relationship_count
+        \\ from metrics_tag_source_usage
+        \\ where timestamp = ? and tag_source_type = 0 and tag_source_id = 0
+    , .{}, .{last_metrics_tag_usage_timestamp});
+
+    try std.testing.expectEqual(@as(?i64, 6), source_usage);
 }

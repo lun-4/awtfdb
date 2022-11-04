@@ -250,6 +250,17 @@ pub const MIGRATIONS = .{
         \\ alter table tag_files_with_tag_sources rename to tag_files;
         ,
     },
+
+    .{
+        7, "add tag source metrics",
+        \\ create table metrics_tag_source_usage (
+        \\     timestamp int not null,
+        \\     tag_source_type int not null,
+        \\     tag_source_id int not null,
+        \\     relationship_count int not null,
+        \\     constraint relationship_count_not_negative check (relationship_count >= 0)
+        \\ ) strict;
+    },
 };
 
 pub const MIGRATION_LOG_TABLE =
