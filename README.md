@@ -6,16 +6,23 @@ understand what's up with it here: https://blog.l4.pm/the-system-is-the-solution
 
 ## project state
 
-v0.1 is released:
+v0.2 is released.
 
-this is the first proper release of it, where i plan to dogfood my own media
-libraries into the system to find out if all the tools are going to work as
-expected.
+i have been working on this since April 2022, and also been using it on a daily
+basis. the base is relatively solid enough, but there are unanswered design
+questions, see issues tab.
+
+here are my awtfdb statistics for the past 7 months (November 2022):
+ - i have indexed 18240 files.
+ - i have created 18338 tags.
+ - i have 367258 file<->tag mappings in the database.
+ - my database is 34MB.
 
 there is no specification yet that would enable others to contribute to the
 system by writing their own tools on top, but _that is planned_.
 
-you _can_ use this now, but the UX is very dependant on a developer's pov.
+this indexing system is very CLI based and there is a szurubooru frontend
+for better viewing. see `extra/` for that respective tooling.
 
 as this is v0.x, it is **NOT PRODUCTION READY**. **THERE IS NO WARRANTY PROVIDED
 BY ME. I WORK ON THIS PART TIME. BEWARE OF BUGS.**
@@ -24,12 +31,12 @@ BY ME. I WORK ON THIS PART TIME. BEWARE OF BUGS.**
 
 - almost everything is cross-platform, save for `awtfdb-watcher`
   - this was not tested as part of the v0.1 effort.
-- get [zig](https://github.com/ziglang/zig) (using recent unstable master)
+- get [zig](https://github.com/ziglang/zig) (tested with 0.11.0-dev.6+2943df016)
+  - i usually track zig master branch
   - yes that means things break from time to time
-- get [zigmod](https://github.com/nektro/zigmod) (tested with r80)
-- get libmagic
-- get libz
-- get graphicsmagick
+- get [zigmod](https://github.com/nektro/zigmod) (tested with r83)
+- get libmagic and development headers
+  - future work to not require this: https://github.com/lun-4/awtfdb/issues/44
 
 ```
 git clone https://github.com/lun-4/awtfdb
@@ -41,7 +48,8 @@ zig build
 ## install thing
 
 ```
-zig build install --prefix ~/.local
+# choose your own prefix thats on $PATH or something
+zig build install --prefix ~/.local/ --verbose -Drelease-safe=true
 ```
 
 ## using it
@@ -79,14 +87,16 @@ arm -r ~/my/folder
 
 ## roadmap for the thing
 
-WIP.
+fuck if i know.
 
 ## inspiration
 
 - hydrus
-- booru software
+- booru software (danbooru etc.)
 
-## design notes
+## (OLD-ISH) design notes
+
+(i leave them there for the funny)
 
 if i could make it a single phrase: awtfdb is an incremental non-destructive tagging system for your life's files full of compromises.
 
