@@ -1,7 +1,7 @@
-quart==0.17.0
+quart==0.18.3
 aiosqlite==0.17.0
 python-magic==0.4.27
-Pillow==9.1.1
+Pillow==9.3.0
 expiringdict==1.2.2
 # max perf
-uvloop==0.16.0
+uvloop==0.17.0
