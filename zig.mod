@@ -4,7 +4,7 @@ license: MIT
 description: The Anime Woman Tagged Files Database
 root_dependencies:
   - src: git https://github.com/lun-4/zig-sqlite branch-luna-stage2
-  - src: git https://github.com/kivikakk/libpcre.zig
+  - src: git https://github.com/lun-4/libpcre.zig branch-luna-pcre
   - src: git https://github.com/truemedian/hzzp
   - src: git https://github.com/lun-4/libmagic.zig
   - src: git https://github.com/lun-4/expiring-hash-map.zig
