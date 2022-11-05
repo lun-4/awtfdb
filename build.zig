@@ -53,8 +53,9 @@ const CustomHardLinkStep = struct {
         const builder = self.builder;
         const EXECS = .{
             "awtfdb-manage",
-            "ainclude",
             "awtfdb-watcher",
+            "awtfdb-janitor",
+            "ainclude",
             "afind",
             "als",
             "arm",
