@@ -6,9 +6,7 @@ root_dependencies:
   - src: git https://github.com/lun-4/zig-sqlite branch-luna-stage2
   - src: git https://github.com/kivikakk/libpcre.zig
   - src: git https://github.com/truemedian/hzzp
-  # TODO use statically linked libmagic with embedded magic file database
-  #- src: git https://github.com/lun-4/libmagic-5.41 branch-luna-built-541
-  - src: system_lib magic
+  - src: git https://github.com/lun-4/libmagic.zig
   - src: git https://github.com/lun-4/expiring-hash-map.zig
   - src: git https://github.com/lun-4/tunez branch-luna-stage2
     name: tunez
