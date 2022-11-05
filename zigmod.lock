@@ -1,7 +1,7 @@
 2
 git https://github.com/kivikakk/libpcre.zig commit-76688fbfb88be3d28fdada1ecbb87aacb6191f89
 git https://github.com/lun-4/expiring-hash-map.zig commit-7d5e56935723b9c4c7aab1591978844f0ee44f30
-git https://github.com/lun-4/libmagic.zig commit-1f1d3c5d566ebe5b229a7ba9354e0cdb357d5b5d
+git https://github.com/lun-4/libmagic.zig commit-085123ce9a9920ad2da8115819fff597c448ae52
 git https://github.com/nektro/pcre-8.45 commit-10bc0a2fd91f3a40be9825738661f8748eb60e14
 git https://github.com/truemedian/hzzp commit-4ecbaa41365030c946d9c3dc14c1b16e00245057
 git https://github.com/file/file tag-FILE5_42
