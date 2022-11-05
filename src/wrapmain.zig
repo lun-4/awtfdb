@@ -1,14 +1,19 @@
 const std = @import("std");
+const builtin = @import("builtin");
 
 const EXECUTABLES = .{
     .{ "awtfdb-manage", @import("main.zig").main },
     .{ "ainclude", @import("include_main.zig").main },
-    .{ "awtfdb-watcher", @import("rename_watcher_main.zig").main },
     .{ "afind", @import("find_main.zig").main },
     .{ "als", @import("ls_main.zig").main },
     .{ "arm", @import("rm_main.zig").main },
     .{ "atags", @import("tags_main.zig").main },
     .{ "awtfdb-metrics", @import("metrics_main.zig").main },
+} ++ switch (builtin.os.tag) {
+    .linux => .{
+        .{ "awtfdb-watcher", @import("rename_watcher_main.zig").main },
+    },
+    else => .{},
 };
 
 pub fn main() anyerror!u8 {

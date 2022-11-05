@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const sqlite = @import("sqlite");
 
 pub const AWTFDB_BLAKE3_CONTEXT = "awtfdb Sun Mar 20 16:58:11 AM +00 2022 main hash key";
@@ -2128,7 +2129,6 @@ test "tag sources" {
 
 test "everyone else" {
     std.testing.refAllDecls(@import("./include_main.zig"));
-    std.testing.refAllDecls(@import("./rename_watcher_main.zig"));
     std.testing.refAllDecls(@import("./find_main.zig"));
     std.testing.refAllDecls(@import("./ls_main.zig"));
     std.testing.refAllDecls(@import("./rm_main.zig"));
@@ -2136,4 +2136,8 @@ test "everyone else" {
     std.testing.refAllDecls(@import("./tags_main.zig"));
     std.testing.refAllDecls(@import("./metrics_main.zig"));
     std.testing.refAllDecls(@import("./test_migrations.zig"));
+
+    if (builtin.os.tag == .linux) {
+        std.testing.refAllDecls(@import("./rename_watcher_main.zig"));
+    }
 }
