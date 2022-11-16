@@ -44,3 +44,11 @@ now you can `/a/@filehash` (e.g `/a/@69`) and you'll have a folder
 containing a symbolic link to the original file in your filesystem.
 
 TODO: support `/a/tag1/tag2/tag3` akin to supertag or afind(1).
+
+## small but useful scripts
+
+`./extra/find_duplicates.py`: find duplicate files and claimable space in your disk
+
+`./extra/find_tag_typos.py`: find possible tag typos
+
+`./extra/find_tag_parents.py`: find possible tag parenting relationships
