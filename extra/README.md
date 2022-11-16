@@ -1,7 +1,11 @@
 # extra tools for awtfdb
 
+## tools to import data
+
 `./hydrus-import.sh`: import a folder containing a hydrus export full of files
 and their tag .txt files into the index.
+
+## szurubooru web ui frontend
 
 `./szurubooru-readonly-api.py`: visualize your awtfdb index using a szurubooru
 frontend.
@@ -26,3 +30,17 @@ docker run --add-host=host.docker.internal:host-gateway -e BACKEND_HOST=host.doc
 ```
 
 then enter `localhost:6969` in your browser and watch the magic happen.
+
+## fuse frontend
+
+```
+pip install fuse-python
+sudo mkdir /a
+sudo chown $USER /a
+python3 ./awtfdb-fuse.py -s -f /a
+```
+
+now you can `/a/@filehash` (e.g `/a/@69`) and you'll have a folder
+containing a symbolic link to the original file in your filesystem.
+
+TODO: support `/a/tag1/tag2/tag3` akin to supertag or afind(1).
