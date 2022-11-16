@@ -5,7 +5,11 @@
 import sys
 import sqlite3
 from pathlib import Path
-from Levenshtein import distance
+
+try:
+    from Levenshtein import distance
+except ImportError:
+    raise ImportError("please run `pip install python-Levenshtein`")
 
 
 def main():
