@@ -1,6 +1,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const sqlite = @import("sqlite");
+const AnimeSnowflake = @import("snowflake.zig");
 
 pub const AWTFDB_BLAKE3_CONTEXT = "awtfdb Sun Mar 20 16:58:11 AM +00 2022 main hash key";
 
@@ -28,7 +29,9 @@ const HELPTEXT =
     \\  awtfdb-manage jobs
 ;
 
-const MigrationOptions = struct {};
+const MigrationOptions = struct {
+    function: ?*const fn (*Context) anyerror!void = null,
+};
 
 pub const Migration = struct {
     version: usize,
@@ -262,6 +265,14 @@ pub const MIGRATIONS = .{
         \\     constraint relationship_count_not_negative check (relationship_count >= 0)
         \\ ) strict;
     },
+
+    .{
+        8, "migrate to snowflakes for local ids",
+        .{
+            .function = snowflakeIdMigration,
+        },
+        null,
+    },
 };
 
 pub const MIGRATION_LOG_TABLE =
@@ -293,6 +304,16 @@ pub const SystemTagSources = enum(usize) {
     /// to the parent tree entry that generated this entry
     tag_parenting = 1,
 };
+
+fn snowflakeIdMigration(self: *Context) !void {
+    _ = self;
+    logger.info("this migration may take a while!", .{});
+
+    // to convert from sqlite's PRIMARY KEY AUTOINCREMENT column towards a snowflake-ish,
+    // we need a timestamp and some random bits
+    //
+    // sqlite's int goes to pow(2, 63), as it's a 64bit signed integer
+}
 
 pub const Context = struct {
     home_path: ?[]const u8 = null,
@@ -1575,11 +1596,19 @@ pub const Context = struct {
 
                 if (current_version < migration.version) {
                     logger.info("running migration {d} '{s}'", .{ migration.version, migration.name });
-                    var diags = sqlite.Diagnostics{};
-                    self.db.?.execMulti(migration.sql.?, .{ .diags = &diags }) catch |err| {
-                        logger.err("unable to prepare statement, got error {s}. diagnostics: {s}", .{ @errorName(err), diags });
-                        return err;
-                    };
+
+                    if (migration.sql) |migration_sql| {
+                        var diags = sqlite.Diagnostics{};
+                        self.db.?.execMulti(migration_sql, .{ .diags = &diags }) catch |err| {
+                            logger.err(
+                                "unable to prepare statement, got error {s}. diagnostics: {s}",
+                                .{ @errorName(err), diags },
+                            );
+                            return err;
+                        };
+                    } else {
+                        try migration.options.function.?(self);
+                    }
 
                     try self.db.?.exec(
                         "INSERT INTO migration_logs (version, applied_at, description) values (?, ?, ?);",
@@ -2136,6 +2165,7 @@ test "everyone else" {
     std.testing.refAllDecls(@import("./tags_main.zig"));
     std.testing.refAllDecls(@import("./metrics_main.zig"));
     std.testing.refAllDecls(@import("./test_migrations.zig"));
+    std.testing.refAllDecls(@import("./snowflake.zig"));
 
     if (builtin.os.tag == .linux) {
         std.testing.refAllDecls(@import("./rename_watcher_main.zig"));
