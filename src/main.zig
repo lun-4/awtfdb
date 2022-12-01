@@ -225,8 +225,8 @@ pub const MIGRATIONS = .{
         \\    primary key (type, id)
         \\ ) strict;
         // tag_sources with type=0 must have synchronization with the SystemTagSources enum
-        \\ insert into tag_sources values (0, 0, "manual insertion");
-        \\ insert into tag_sources values (0, 1, "tag parenting");
+        \\ insert into tag_sources values (0, 0, 'manual insertion');
+        \\ insert into tag_sources values (0, 1, 'tag parenting');
         // ADD COLUMN tag_source_type (int)
         // ADD COLUMN tag_source_id (int)
         // ADD COLUMN parent_source_id (default null)

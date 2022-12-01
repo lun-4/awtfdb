@@ -1,6 +1,7 @@
 const std = @import("std");
 const sqlite = @import("sqlite");
 const manage_main = @import("./main.zig");
+const AnimeSnowflake = @import("./snowflake.zig").AnimeSnowflake;
 
 const Context = manage_main.Context;
 const Migration = manage_main.Migration;
@@ -14,8 +15,6 @@ var set_log = false;
 /// Inspired by manage_main.makeTestContext
 pub fn makeTestContext() !Context {
     if (!set_log) {
-        logger.warn("AAAAAA", .{});
-
         _ = sqlite.c.sqlite3_shutdown();
 
         const rc = sqlite.c.sqlite3_config(sqlite.c.SQLITE_CONFIG_LOG, manage_main.sqliteLog, @as(?*anyopaque, null));
@@ -164,12 +163,35 @@ test "validate snowflake migration works" {
     var ctx = try makeTestContext();
     defer ctx.deinit();
 
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var file = try tmp.dir.createFile("test_file", .{});
+    defer file.close();
+    _ = try file.write("awooga");
+
+    const file_realpath = try tmp.dir.realpathAlloc(ctx.allocator, "test_file");
+    defer ctx.allocator.free(file_realpath);
+
+    const query = try std.fmt.allocPrint(ctx.allocator,
+        \\insert into hashes (id, hash_data) values (1, X'7cecc98d9dc7503dcdad71adbbdf45d06667fd38c386f5d37489ea2c24d7a4dc');
+        \\insert into files (file_hash, local_path) values (1, '{s}');
+    , .{file_realpath});
+    defer ctx.allocator.free(query);
+    const query_cstr = try std.cstr.addNullByte(ctx.allocator, query);
+    defer ctx.allocator.free(query_cstr);
+    std.log.warn("query={s}", .{query});
+
     try loadMigrationUpTo(&ctx, 7);
-    try ctx.db.?.execMulti(
-        \\ insert into hashes (id, hash_data) values (1, X'7cecc98d9dc7503dcdad71adbbdf45d06667fd38c386f5d37489ea2c24d7a4dc');
-        \\ insert into files (file_hash, local_path) values (1, '/test.file');
-    , .{});
+    var diags = sqlite.Diagnostics{};
+    logger.warn("error before exec={s}", .{diags.message});
+    ctx.db.?.execMulti(query_cstr, .{ .diags = &diags }) catch |err| {
+        logger.warn("err={s}", .{diags});
+        return err;
+    };
+
     try loadSingleMigration(&ctx, 8);
-    const file_hash = try ctx.db.?.one(i64, "select file_hash from files where local_path = '/test.file'", .{}, .{});
-    try std.testing.expectEqual(@as(?i64, 1), file_hash);
+    const file_hash = try ctx.db.?.one(i64, "select file_hash from files where local_path = ?", .{}, .{file_realpath});
+    try std.testing.expect(file_hash != @as(i64, 1));
+    const snowflake = AnimeSnowflake{ .value = @intCast(u63, file_hash.?) };
+    try std.testing.expect(snowflake.fields.timestamp > 0);
 }
