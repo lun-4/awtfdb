@@ -2,22 +2,12 @@ const std = @import("std");
 
 // This is my own scheme so that it both has large enough time limits
 // and enough randomness to prevent collisions
+// AND it fits in sqlite rowids (64 bit signed ints)
 //
 // 50 bits for timestamp in seconds
 // 13 random bits
-
-fn binaryMask(comptime bit_start: usize, comptime bit_end: usize) i64 {
-    comptime var mask: i64 = 0;
-    comptime {
-        var count = bit_start;
-        while (count <= bit_end) : (count += 1) {
-            const set_bit = 1 << count;
-            mask |= set_bit;
-        }
-    }
-
-    return mask;
-}
+//
+// (1 bit goes away to the sign, so this is a 63 bit id scheme)
 
 const Fields = packed struct {
     timestamp: u50,
@@ -63,5 +53,25 @@ test "snowflake max" {
 
     const data = (AnimeSnowflake{ .value = snowflake_int }).fields;
     try std.testing.expectEqual(timestamp, data.timestamp);
+    try std.testing.expectEqual(random_bits, data.random_bits);
+}
+
+test "snowflake time" {
+    const timestamp: i64 = std.time.timestamp();
+
+    const random_bits: u13 = 69;
+
+    const snowflake = AnimeSnowflake{ .fields = .{
+        .timestamp = @intCast(u50, timestamp),
+        .random_bits = random_bits,
+    } };
+
+    try std.testing.expectEqual(timestamp, snowflake.fields.timestamp);
+    try std.testing.expectEqual(timestamp, (AnimeSnowflake{ .value = snowflake.value }).fields.timestamp);
+
+    const bitwised = snowflake.value & std.math.maxInt(u63) >> 13;
+    const data = (AnimeSnowflake{ .value = snowflake.value }).fields;
+    try std.testing.expectEqual(timestamp, data.timestamp);
+    try std.testing.expectEqual(timestamp, bitwised);
     try std.testing.expectEqual(random_bits, data.random_bits);
 }
