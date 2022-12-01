@@ -104,7 +104,7 @@ fn utilAddTag(
         _ = try utilAddScope(maybe_tag_scope, &writer);
         _ = try utilAddRawTag(config, raw_tag, &writer);
         try output_tags_list.append(
-            list.toOwnedSlice(),
+            try list.toOwnedSlice(),
         );
     }
 }
@@ -302,7 +302,7 @@ const RegexTagInferrer = struct {
                     _ = try utilAddScope(self.config.tag_scope, &writer);
                     _ = try utilAddRawTag(self.config, raw_tag_text, &writer);
 
-                    try tags_to_add.append(tag_text_list.toOwnedSlice());
+                    try tags_to_add.append(try tag_text_list.toOwnedSlice());
                 }
 
                 offset += full_match.end;

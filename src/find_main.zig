@@ -529,8 +529,8 @@ pub const SqlGiver = struct {
 
         return Result{ .Ok = .{
             .allocator = allocator,
-            .query = list.toOwnedSlice(),
-            .arguments = arguments.toOwnedSlice(),
+            .query = try list.toOwnedSlice(),
+            .arguments = try arguments.toOwnedSlice(),
         } };
     }
 };

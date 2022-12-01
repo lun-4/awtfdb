@@ -522,7 +522,7 @@ pub const Context = struct {
 
         return OwnedTagList{
             .allocator = allocator,
-            .items = list.toOwnedSlice(),
+            .items = try list.toOwnedSlice(),
         };
     }
 
@@ -897,7 +897,7 @@ pub const Context = struct {
             },
             .external => {
                 const maybe_row = try self.db.?.one(
-                    struct { @"type": i64, id: i64 },
+                    struct { type: i64, id: i64 },
                     "select type, id from tag_sources where type = ? and id = ?",
                     .{},
                     .{ @enumToInt(TagSourceType.external), id },
