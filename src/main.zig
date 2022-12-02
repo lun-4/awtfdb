@@ -311,23 +311,37 @@ pub fn ulidFromTimestamp(rand: std.rand.Random, timestamp: anytype) ulid.ULID {
         .randomnes = rand.int(u80),
     };
 }
+pub fn ulidFromBoth(timestamp: anytype, randomnes: u80) ulid.ULID {
+    return ulid.ULID{
+        .timestamp = std.math.cast(u48, timestamp) orelse @panic("time.milliTimestamp() is higher than 281474976710655"),
+        .randomnes = randomnes,
+    };
+}
 
 fn snowflakeIdMigration(self: *Context) !void {
     logger.info("this migration may take a while!", .{});
     logger.info("migrating files...", .{});
 
-    //try self.db.?.execMulti(
-    //    \\ CREATE TABLE IF NOT EXISTS "files_v2" (
-    //    \\     file_hash blob
-    //    \\        constraint files_v2_file_hash_fk references hashes (id) on delete restrict,
-    //    \\     local_path text not null
-    //    \\        constraint files_v2_local_path_uniq unique on conflict abort,
-    //    \\     constraint files_v2_pk primary key (file_hash, local_path)
-    //    \\ ) strict without rowid;
-    //, .{});
+    try self.db.?.execMulti(
+        \\ CREATE TABLE hashes_v2 (
+        \\     id text primary key,
+        \\     hash_data blob
+        \\        constraint hashes_length check (length(hash_data) == 32)
+        \\        constraint hashes_unique unique
+        \\ ) without rowid, strict;
+        \\
+        \\ CREATE TABLE IF NOT EXISTS files_v2 (
+        \\     file_hash text
+        \\        constraint files_v2_file_hash_fk references hashes_v2 (id) on delete restrict,
+        \\     local_path text not null
+        \\        constraint files_v2_local_path_uniq unique on conflict abort,
+        \\     constraint files_v2_pk primary key (file_hash, local_path)
+        \\ ) without rowid, strict;
+    , .{});
 
     var stmt = try self.db.?.prepare(
-        \\ select file_hash, local_path from files
+        \\ select file_hash, local_path, hashes.hash_data from files
+        \\ join hashes on files.file_hash = hashes.id
     );
     defer stmt.deinit();
 
@@ -341,21 +355,77 @@ fn snowflakeIdMigration(self: *Context) !void {
     );
     const random = rng.random();
 
-    var it = try stmt.iterator(struct { file_hash: i64, local_path: []const u8 }, .{});
+    var it = try stmt.iterator(struct {
+        file_hash: i64,
+        local_path: []const u8,
+        hash_data: sqlite.Blob,
+    }, .{});
     while (try it.nextAlloc(self.allocator, .{})) |data| {
         defer self.allocator.free(data.local_path);
-        logger.warn("file {d} {s}", .{ data.file_hash, data.local_path });
-        const stat = try std.fs.cwd().statFile(data.local_path);
+        defer self.allocator.free(data.hash_data.data);
 
-        const timestamp_as_milliseconds = @divTrunc(stat.mtime, std.time.ns_per_ms);
-        const new_id = ulidFromTimestamp(random, timestamp_as_milliseconds);
-        const new_id_str = try new_id.toString(self.allocator);
-        defer self.allocator.free(new_id_str);
-        logger.warn("new {s} {s}", .{ new_id_str, data.local_path });
-        const parsed_id = try ulid.ULID.parse(new_id_str);
-        try std.testing.expectEqual(new_id.timestamp, parsed_id.timestamp);
+        const maybe_existing_hash = try self.db.?.one([26]u8, "select id from hashes_v2 where hash_data = ?", .{}, .{data.hash_data});
+
+        logger.warn("file {d} {s}", .{ data.file_hash, data.local_path });
+        if (maybe_existing_hash) |existing_hash| {
+            logger.warn("existing as {s} {s}", .{ existing_hash, data.local_path });
+            try self.db.?.exec("insert into files_v2 (file_hash, local_path) VALUES (?, ?)", .{}, .{ existing_hash, data.local_path });
+        } else {
+            const stat = try std.fs.cwd().statFile(data.local_path);
+            const timestamp_as_milliseconds = @divTrunc(stat.mtime, std.time.ns_per_ms);
+            const new_ulid = ulidFromTimestamp(random, timestamp_as_milliseconds);
+            const new_id = ID.new(new_ulid.bytes());
+            const parsed_ulid = try ulid.ULID.parse(new_id.str());
+            try std.testing.expectEqual(new_ulid.timestamp, parsed_ulid.timestamp);
+
+            logger.warn("creating as {s} {s}", .{ new_id, data.local_path });
+            try self.db.?.exec(
+                "insert into hashes_v2 (id, hash_data) VALUES (?, ?)",
+                .{},
+                .{ new_id.sql(), data.hash_data },
+            );
+            const must_exist = try self.db.?.one(
+                [26]u8,
+                "select id from hashes_v2 where hash_data = ?",
+                .{},
+                .{data.hash_data},
+            );
+            try std.testing.expectEqualSlices(u8, new_id.str(), &(must_exist.?));
+            try self.db.?.exec(
+                "insert into files_v2 (file_hash, local_path) VALUES (?, ?)",
+                .{},
+                .{ new_id.sql(), data.local_path },
+            );
+        }
     }
 }
+
+const ID = struct {
+    data: [26]u8,
+    const Self = @This();
+
+    pub fn new(data: [26]u8) Self {
+        return Self{ .data = data };
+    }
+
+    pub fn ul(ulid_data: ulid.ULID) Self {
+        return Self{ .data = ulid_data.bytes() };
+    }
+
+    pub fn str(self: *const Self) []const u8 {
+        return &self.data;
+    }
+
+    pub fn sql(self: *const Self) sqlite.Text {
+        return sqlite.Text{ .data = &self.data };
+    }
+
+    pub fn format(self: Self, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
+        _ = fmt;
+        _ = options;
+        try writer.writeAll(&self.data);
+    }
+};
 
 pub const Context = struct {
     home_path: ?[]const u8 = null,

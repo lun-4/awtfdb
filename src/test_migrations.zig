@@ -2,6 +2,7 @@ const std = @import("std");
 const sqlite = @import("sqlite");
 const manage_main = @import("./main.zig");
 const AnimeSnowflake = @import("./snowflake.zig").AnimeSnowflake;
+const ulid = @import("ulid");
 
 const Context = manage_main.Context;
 const Migration = manage_main.Migration;
@@ -45,6 +46,33 @@ pub fn makeTestContext() !Context {
         },
         .threading_mode = .MultiThread,
     });
+
+    try ctx.loadDatabase(.{ .create = true });
+    return ctx;
+}
+
+/// Create a test context backed up by a real file, rather than memory.
+pub fn makeTestContextRealFile() !Context {
+    var tmp = std.testing.tmpDir(.{});
+    // lol, lmao, etc
+    //defer tmp.cleanup();
+
+    const homepath = try tmp.dir.realpath(".", &manage_main.test_db_path_buffer);
+
+    var file = try tmp.dir.createFile("test.db", .{});
+    defer file.close();
+    const dbpath = try tmp.dir.realpath("test.db", manage_main.test_db_path_buffer[homepath.len..]);
+
+    logger.warn("using test context database file '{s}'", .{dbpath});
+
+    var ctx = Context{
+        .args_it = undefined,
+        .stdout = undefined,
+        .db = null,
+        .allocator = std.testing.allocator,
+        .home_path = homepath,
+        .db_path = try std.testing.allocator.dupe(u8, dbpath),
+    };
 
     try ctx.loadDatabase(.{ .create = true });
     return ctx;
@@ -160,7 +188,7 @@ fn loadMigrationUpTo(ctx: *Context, comptime upper_index: usize) !void {
 }
 
 test "validate snowflake migration works" {
-    var ctx = try makeTestContext();
+    var ctx = try makeTestContextRealFile();
     defer ctx.deinit();
 
     var tmp = std.testing.tmpDir(.{});
@@ -192,9 +220,8 @@ test "validate snowflake migration works" {
     };
 
     try loadSingleMigration(&ctx, 8);
-    const file_hash = try ctx.db.?.one(i64, "select file_hash from files where local_path = ?", .{}, .{file_realpath});
-    try std.testing.expect(file_hash != @as(i64, 1));
-    const snowflake = AnimeSnowflake{ .value = @intCast(u63, file_hash.?) };
-    try std.testing.expect(snowflake.fields.timestamp > 0);
-    try std.testing.expectEqual(stat.ctime, snowflake.fields.timestamp);
+    const file_hash = (try ctx.db.?.one([26]u8, "select file_hash from files_v2 where local_path = ?", .{}, .{file_realpath})).?;
+    const new_file_hash = try ulid.ULID.parse(&file_hash);
+    //const snowflake = AnimeSnowflake{ .value = @intCast(u63, file_hash.?) };
+    try std.testing.expectEqual(@divTrunc(stat.mtime, std.time.ns_per_ms), new_file_hash.timestamp);
 }
