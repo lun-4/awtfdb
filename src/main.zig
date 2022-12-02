@@ -318,6 +318,32 @@ pub fn ulidFromBoth(timestamp: anytype, randomnes: u80) ulid.ULID {
     };
 }
 
+fn generateSqlReadonly(comptime table: []const u8) []const u8 {
+    comptime var result: []const u8 = undefined;
+    comptime var buffer: [8192]u8 = undefined;
+    comptime {
+        result = std.fmt.bufPrint(&buffer,
+            \\ CREATE TRIGGER IF NOT EXISTS {s}_v1_readonly_update
+            \\ BEFORE UPDATE ON {s}
+            \\ BEGIN
+            \\     SELECT raise(abort, 'this is a software bug, use {s}_v2 table');
+            \\ END;
+            \\
+            \\ CREATE TRIGGER IF NOT EXISTS {s}_v1_readonly_insert
+            \\ BEFORE INSERT ON {s}
+            \\ BEGIN
+            \\     SELECT raise(abort, 'this is a software bug, use {s}_v2 table');
+            \\ END;
+            \\
+            \\ CREATE TRIGGER IF NOT EXISTS {s}_v1_readonly_delete
+            \\ BEFORE DELETE ON {s}
+            \\ BEGIN
+            \\     SELECT raise(abort, 'this is a software bug, use {s}_v2 table');
+            \\ END;
+        , .{table} ** 9) catch unreachable;
+    }
+    return result;
+}
 fn snowflakeIdMigration(self: *Context) !void {
     logger.info("this migration may take a while!", .{});
     logger.info("migrating files...", .{});
@@ -337,6 +363,16 @@ fn snowflakeIdMigration(self: *Context) !void {
         \\        constraint files_v2_local_path_uniq unique on conflict abort,
         \\     constraint files_v2_pk primary key (file_hash, local_path)
         \\ ) without rowid, strict;
+        \\
+        // lock files v1
+        // TODO add this when done ++ comptime generateSqlReadonly("files") ++
+        \\ CREATE TABLE IF NOT EXISTS tag_cores_v2 (
+        \\      core_hash int
+        \\         constraint tag_cores_hash_fk references hashes (id) on delete restrict
+        \\         constraint tag_cores_pk primary key,
+        \\      core_data blob not null
+        \\  ) strict;
+        // TODO add this when done++ generateSqlReadonly("tag_cores")
     , .{});
 
     var stmt = try self.db.?.prepare(
@@ -345,10 +381,8 @@ fn snowflakeIdMigration(self: *Context) !void {
     );
     defer stmt.deinit();
 
-    // to convert from sqlite's PRIMARY KEY AUTOINCREMENT column towards a snowflake-ish,
-    // we need a timestamp and some random bits
-    //
-    // sqlite's int goes to pow(2, 63), as it's a 64bit signed integer
+    // to convert from sqlite's PRIMARY KEY AUTOINCREMENT column towards an ulid
+    // we need to convert from int primary key to text primary key
 
     var rng = std.rand.DefaultPrng.init(
         @truncate(u64, @intCast(u128, std.time.nanoTimestamp())),
@@ -364,14 +398,23 @@ fn snowflakeIdMigration(self: *Context) !void {
         defer self.allocator.free(data.local_path);
         defer self.allocator.free(data.hash_data.data);
 
-        const maybe_existing_hash = try self.db.?.one([26]u8, "select id from hashes_v2 where hash_data = ?", .{}, .{data.hash_data});
+        const maybe_existing_hash = try self.db.?.one(
+            [26]u8,
+            "select id from hashes_v2 where hash_data = ?",
+            .{},
+            .{data.hash_data},
+        );
 
         logger.warn("file {d} {s}", .{ data.file_hash, data.local_path });
         if (maybe_existing_hash) |existing_hash| {
             logger.warn("existing as {s} {s}", .{ existing_hash, data.local_path });
 
             const existing_id = ID.new(existing_hash);
-            try self.db.?.exec("insert into files_v2 (file_hash, local_path) VALUES (?, ?)", .{}, .{ existing_id.sql(), data.local_path });
+            try self.db.?.exec(
+                "insert into files_v2 (file_hash, local_path) VALUES (?, ?)",
+                .{},
+                .{ existing_id.sql(), data.local_path },
+            );
         } else {
             const stat = try std.fs.cwd().statFile(data.local_path);
             const timestamp_as_milliseconds = @divTrunc(stat.mtime, std.time.ns_per_ms);
@@ -400,6 +443,41 @@ fn snowflakeIdMigration(self: *Context) !void {
             );
         }
     }
+
+    // migrate tag cores
+
+    var stmt_tag_cores = try self.db.?.prepare(
+        \\ select core_hash, core_data, hashes.hash_data from tag_cores
+        \\ join hashes on tag_cores.core_hash = hashes.id
+    );
+    defer stmt_tag_cores.deinit();
+
+    const TAG_CORE_EPOCH = 1644980400 * std.time.ms_per_s;
+
+    var it_tag_cores = try stmt.iterator(struct {
+        core_hash: i64,
+        core_data: sqlite.Blob,
+        hash_data: sqlite.Blob,
+    }, .{});
+    while (try it_tag_cores.nextAlloc(self.allocator, .{})) |data_v1| {
+        logger.info("processing tag core {any}", .{data_v1});
+        // keep them in order
+        defer self.allocator.free(data_v1.core_data.data);
+        defer self.allocator.free(data_v1.hash_data.data);
+
+        const core_timestamp = TAG_CORE_EPOCH + data_v1.core_hash;
+        _ = core_timestamp;
+
+        //const maybe_existing_hash = try self.db.?.one(
+        //    [26]u8,
+        //    "select id from hashes_v2 where hash_data = ?",
+        //    .{},
+        //    .{data.hash_data},
+        //);
+    }
+
+    // migrate tag names
+    // migrate tag files
 }
 
 const ID = struct {

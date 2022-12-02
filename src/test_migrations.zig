@@ -215,6 +215,7 @@ test "validate snowflake migration works" {
     defer ctx.allocator.free(file3_realpath);
 
     const stat = try tmp.dir.statFile("test_file");
+    const stat3 = try tmp.dir.statFile("test_file3");
 
     const query = try std.fmt.allocPrint(ctx.allocator,
         \\insert into hashes (id, hash_data) values (1, X'7cecc98d9dc7503dcdad71adbbdf45d06667fd38c386f5d37489ea2c24d7a4dc');
@@ -237,8 +238,15 @@ test "validate snowflake migration works" {
     };
 
     try loadSingleMigration(&ctx, 8);
+
     const file_hash = (try ctx.db.?.one([26]u8, "select file_hash from files_v2 where local_path = ?", .{}, .{file_realpath})).?;
     const new_file_hash = try ulid.ULID.parse(&file_hash);
-    //const snowflake = AnimeSnowflake{ .value = @intCast(u63, file_hash.?) };
     try std.testing.expectEqual(@divTrunc(stat.mtime, std.time.ns_per_ms), new_file_hash.timestamp);
+
+    const file2_hash = (try ctx.db.?.one([26]u8, "select file_hash from files_v2 where local_path = ?", .{}, .{file2_realpath})).?;
+    try std.testing.expectEqualSlices(u8, &file_hash, &file2_hash);
+
+    const file3_hash = (try ctx.db.?.one([26]u8, "select file_hash from files_v2 where local_path = ?", .{}, .{file3_realpath})).?;
+    const new_file3_hash = try ulid.ULID.parse(&file3_hash);
+    try std.testing.expectEqual(@divTrunc(stat3.mtime, std.time.ns_per_ms), new_file3_hash.timestamp);
 }
