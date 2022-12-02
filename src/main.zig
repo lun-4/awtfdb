@@ -369,7 +369,9 @@ fn snowflakeIdMigration(self: *Context) !void {
         logger.warn("file {d} {s}", .{ data.file_hash, data.local_path });
         if (maybe_existing_hash) |existing_hash| {
             logger.warn("existing as {s} {s}", .{ existing_hash, data.local_path });
-            try self.db.?.exec("insert into files_v2 (file_hash, local_path) VALUES (?, ?)", .{}, .{ existing_hash, data.local_path });
+
+            const existing_id = ID.new(existing_hash);
+            try self.db.?.exec("insert into files_v2 (file_hash, local_path) VALUES (?, ?)", .{}, .{ existing_id.sql(), data.local_path });
         } else {
             const stat = try std.fs.cwd().statFile(data.local_path);
             const timestamp_as_milliseconds = @divTrunc(stat.mtime, std.time.ns_per_ms);

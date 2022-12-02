@@ -197,15 +197,32 @@ test "validate snowflake migration works" {
     defer file.close();
     _ = try file.write("awooga");
 
+    var file2 = try tmp.dir.createFile("test_file2", .{});
+    defer file2.close();
+    _ = try file2.write("awooga3");
+
+    var file3 = try tmp.dir.createFile("test_file3", .{});
+    defer file3.close();
+    _ = try file3.write("awooga3");
+
     const file_realpath = try tmp.dir.realpathAlloc(ctx.allocator, "test_file");
     defer ctx.allocator.free(file_realpath);
+
+    const file2_realpath = try tmp.dir.realpathAlloc(ctx.allocator, "test_file2");
+    defer ctx.allocator.free(file2_realpath);
+
+    const file3_realpath = try tmp.dir.realpathAlloc(ctx.allocator, "test_file3");
+    defer ctx.allocator.free(file3_realpath);
 
     const stat = try tmp.dir.statFile("test_file");
 
     const query = try std.fmt.allocPrint(ctx.allocator,
         \\insert into hashes (id, hash_data) values (1, X'7cecc98d9dc7503dcdad71adbbdf45d06667fd38c386f5d37489ea2c24d7a4dc');
+        \\insert into hashes (id, hash_data) values (2, X'39f2c50b236858c0e4a536f0c1de75acb2a2dd709958b05bb511667a818da73a');
         \\insert into files (file_hash, local_path) values (1, '{s}');
-    , .{file_realpath});
+        \\insert into files (file_hash, local_path) values (1, '{s}');
+        \\insert into files (file_hash, local_path) values (2, '{s}');
+    , .{ file_realpath, file2_realpath, file3_realpath });
     defer ctx.allocator.free(query);
     const query_cstr = try std.cstr.addNullByte(ctx.allocator, query);
     defer ctx.allocator.free(query_cstr);
