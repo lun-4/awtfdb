@@ -11,3 +11,4 @@ root_dependencies:
   - src: git https://github.com/lun-4/tunez branch-luna-stage2
     name: tunez
     main: src/main.zig
+  - src: git https://github.com/lun-4/zig-ulid branch-no-alloc

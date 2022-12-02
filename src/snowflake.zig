@@ -17,6 +17,17 @@ const Fields = packed struct {
 pub const AnimeSnowflake = packed union {
     value: u63,
     fields: Fields,
+
+    const Self = @This();
+
+    pub fn fromTimestamp(timestamp: u50) Self {
+        var rng = std.rand.DefaultPrng.init(
+            @truncate(u64, @intCast(u128, std.time.nanoTimestamp())),
+        );
+        const random = rng.random();
+        const random_bits = random.int(u13);
+        return Self{ .fields = .{ .timestamp = timestamp, .random_bits = random_bits } };
+    }
 };
 
 comptime {
@@ -70,6 +81,7 @@ test "snowflake time" {
     try std.testing.expectEqual(timestamp, (AnimeSnowflake{ .value = snowflake.value }).fields.timestamp);
 
     const bitwised = snowflake.value & std.math.maxInt(u63) >> 13;
+    //@compileLog(std.math.maxInt(u63));
     const data = (AnimeSnowflake{ .value = snowflake.value }).fields;
     try std.testing.expectEqual(timestamp, data.timestamp);
     try std.testing.expectEqual(timestamp, bitwised);

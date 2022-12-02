@@ -1,7 +1,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const sqlite = @import("sqlite");
-const AnimeSnowflake = @import("snowflake.zig");
+const ulid = @import("ulid");
 
 pub const AWTFDB_BLAKE3_CONTEXT = "awtfdb Sun Mar 20 16:58:11 AM +00 2022 main hash key";
 
@@ -305,14 +305,56 @@ pub const SystemTagSources = enum(usize) {
     tag_parenting = 1,
 };
 
+pub fn ulidFromTimestamp(rand: std.rand.Random, timestamp: anytype) ulid.ULID {
+    return ulid.ULID{
+        .timestamp = std.math.cast(u48, timestamp) orelse @panic("time.milliTimestamp() is higher than 281474976710655"),
+        .randomnes = rand.int(u80),
+    };
+}
+
 fn snowflakeIdMigration(self: *Context) !void {
-    _ = self;
     logger.info("this migration may take a while!", .{});
+    logger.info("migrating files...", .{});
+
+    //try self.db.?.execMulti(
+    //    \\ CREATE TABLE IF NOT EXISTS "files_v2" (
+    //    \\     file_hash blob
+    //    \\        constraint files_v2_file_hash_fk references hashes (id) on delete restrict,
+    //    \\     local_path text not null
+    //    \\        constraint files_v2_local_path_uniq unique on conflict abort,
+    //    \\     constraint files_v2_pk primary key (file_hash, local_path)
+    //    \\ ) strict without rowid;
+    //, .{});
+
+    var stmt = try self.db.?.prepare(
+        \\ select file_hash, local_path from files
+    );
+    defer stmt.deinit();
 
     // to convert from sqlite's PRIMARY KEY AUTOINCREMENT column towards a snowflake-ish,
     // we need a timestamp and some random bits
     //
     // sqlite's int goes to pow(2, 63), as it's a 64bit signed integer
+
+    var rng = std.rand.DefaultPrng.init(
+        @truncate(u64, @intCast(u128, std.time.nanoTimestamp())),
+    );
+    const random = rng.random();
+
+    var it = try stmt.iterator(struct { file_hash: i64, local_path: []const u8 }, .{});
+    while (try it.nextAlloc(self.allocator, .{})) |data| {
+        defer self.allocator.free(data.local_path);
+        logger.warn("file {d} {s}", .{ data.file_hash, data.local_path });
+        const stat = try std.fs.cwd().statFile(data.local_path);
+
+        const timestamp_as_milliseconds = @divTrunc(stat.mtime, std.time.ns_per_ms);
+        const new_id = ulidFromTimestamp(random, timestamp_as_milliseconds);
+        const new_id_str = try new_id.toString(self.allocator);
+        defer self.allocator.free(new_id_str);
+        logger.warn("new {s} {s}", .{ new_id_str, data.local_path });
+        const parsed_id = try ulid.ULID.parse(new_id_str);
+        try std.testing.expectEqual(new_id.timestamp, parsed_id.timestamp);
+    }
 }
 
 pub const Context = struct {

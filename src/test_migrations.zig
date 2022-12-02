@@ -172,6 +172,8 @@ test "validate snowflake migration works" {
     const file_realpath = try tmp.dir.realpathAlloc(ctx.allocator, "test_file");
     defer ctx.allocator.free(file_realpath);
 
+    const stat = try tmp.dir.statFile("test_file");
+
     const query = try std.fmt.allocPrint(ctx.allocator,
         \\insert into hashes (id, hash_data) values (1, X'7cecc98d9dc7503dcdad71adbbdf45d06667fd38c386f5d37489ea2c24d7a4dc');
         \\insert into files (file_hash, local_path) values (1, '{s}');
@@ -194,4 +196,5 @@ test "validate snowflake migration works" {
     try std.testing.expect(file_hash != @as(i64, 1));
     const snowflake = AnimeSnowflake{ .value = @intCast(u63, file_hash.?) };
     try std.testing.expect(snowflake.fields.timestamp > 0);
+    try std.testing.expectEqual(stat.ctime, snowflake.fields.timestamp);
 }
