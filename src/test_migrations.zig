@@ -218,17 +218,26 @@ test "validate snowflake migration works" {
     const stat3 = try tmp.dir.statFile("test_file3");
 
     const AMOGUS = "424242424269696969420420420420";
+    const AMOGUS2 = "420696969696942042069696969696";
 
     const query = try std.fmt.allocPrint(ctx.allocator,
         \\insert into hashes (id, hash_data) values (1, X'7cecc98d9dc7503dcdad71adbbdf45d06667fd38c386f5d37489ea2c24d7a4dc');
         \\insert into hashes (id, hash_data) values (2, X'39f2c50b236858c0e4a536f0c1de75acb2a2dd709958b05bb511667a818da73a');
         \\insert into hashes (id, hash_data) values (3, X'f45d9c5ac7426d38c89f49ef4f6cb0f69ca58f968d03eb6a81b5c6eeb5ac7d03');
+        \\insert into hashes (id, hash_data) values (4, X'c3ef18ab3140c21152699955202659b5ad79ab48452ec554e8d4401f72f4cdb5');
         \\insert into files (file_hash, local_path) values (1, '{s}');
         \\insert into files (file_hash, local_path) values (1, '{s}');
         \\insert into files (file_hash, local_path) values (2, '{s}');
         \\insert into tag_cores (core_hash, core_data) values (3, x'{s}');
         \\insert into tag_names (core_hash, tag_text, tag_language) values (3, 'amongus', 'en');
-    , .{ file_realpath, file2_realpath, file3_realpath, AMOGUS });
+        \\insert into tag_cores (core_hash, core_data) values (4, x'{s}');
+        \\insert into tag_names (core_hash, tag_text, tag_language) values (4, 'amongus2', 'en');
+        \\insert into tag_files (file_hash, core_hash) values (1, 3);
+        \\insert into tag_files (file_hash, core_hash) values (2, 3);
+        \\insert into tag_implications (rowid, parent_tag, child_tag) values (1, 3, 4);
+        \\insert into tag_files (file_hash, core_hash, parent_source_id) values (1, 4, 1);
+        \\insert into tag_files (file_hash, core_hash, parent_source_id) values (2, 4, 1);
+    , .{ file_realpath, file2_realpath, file3_realpath, AMOGUS, AMOGUS2 });
     defer ctx.allocator.free(query);
     const query_cstr = try std.cstr.addNullByte(ctx.allocator, query);
     defer ctx.allocator.free(query_cstr);
@@ -273,4 +282,12 @@ test "validate snowflake migration works" {
     )).?;
     defer ctx.allocator.free(name_data);
     try std.testing.expectEqualStrings("amongus", name_data);
+
+    const tagfile_count = (try ctx.db.?.one(
+        i64,
+        "select count(*) from tag_files_v2 where core_hash = ?",
+        .{},
+        .{manage_main.ID.ul(new_core_hash).sql()},
+    )).?;
+    try std.testing.expectEqual(@as(i64, 2), tagfile_count);
 }

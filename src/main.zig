@@ -344,10 +344,19 @@ fn generateSqlReadonly(comptime table: []const u8) []const u8 {
     }
     return result;
 }
+
+fn assertSameCount(self: *Context, comptime table1: []const u8, comptime table2: []const u8) !void {
+    const table1_count = try self.db.?.one(usize, "select count(*) from " ++ table1, .{}, .{});
+    const table2_count = try self.db.?.one(usize, "select count(*) from " ++ table2, .{}, .{});
+    try std.testing.expectEqual(table1_count, table2_count);
+}
+
 fn snowflakeIdMigration(self: *Context) !void {
     logger.info("this migration may take a while!", .{});
 
-    try self.db.?.execMulti(
+    var diags = sqlite.Diagnostics{};
+
+    self.db.?.execMulti(
         \\ CREATE TABLE hashes_v2 (
         \\     id text primary key,
         \\     hash_data blob
@@ -377,7 +386,32 @@ fn snowflakeIdMigration(self: *Context) !void {
         \\         constraint tag_names_v2_core_fk references tag_cores_v2 (core_hash) on delete restrict,
         \\ 	constraint tag_names_v2_pk primary key (tag_text, tag_language)
         \\  ) without rowid, strict;
-    , .{});
+        \\
+        \\CREATE TABLE IF NOT EXISTS tag_implications_v2 (
+        \\     child_tag text not null
+        \\        constraint tag_implications_v2_child_fk references tag_cores_v2 (core_hash) on delete cascade,
+        \\     parent_tag text not null
+        \\        constraint tag_implications_v2_parent_fk references tag_cores_v2 (core_hash) on delete cascade,
+        \\     constraint tag_implications_v2_pk primary key (child_tag, parent_tag)
+        \\) strict;
+        \\
+        \\CREATE TABLE IF NOT EXISTS tag_files_v2 (
+        \\     file_hash text not null
+        \\        constraint tag_files_file_fk references hashes_v2 (id) on delete cascade,
+        \\     core_hash text not null
+        \\        constraint tag_files_core_fk references tag_cores_v2 (core_hash) on delete cascade,
+        \\     tag_source_type int default 0,
+        \\     tag_source_id int default 0,
+        \\     parent_source_id int default null,
+        \\      constraint tag_files_tag_source_fk
+        \\       foreign key (tag_source_type, tag_source_id)
+        \\       references tag_sources (type, id) on delete restrict,
+        \\      constraint tag_files_pk primary key (file_hash, core_hash)
+        \\ ) without rowid, strict;
+    , .{ .diags = &diags }) catch |err| {
+        logger.err("diags={}", .{diags});
+        return err;
+    };
 
     var stmt = try self.db.?.prepare(
         \\ select file_hash, local_path, hashes.hash_data from files
@@ -449,6 +483,8 @@ fn snowflakeIdMigration(self: *Context) !void {
         }
     }
 
+    try assertSameCount(self, "files", "files_v2");
+
     // migrate tag cores
 
     var stmt_tag_cores = try self.db.?.prepare(
@@ -496,6 +532,7 @@ fn snowflakeIdMigration(self: *Context) !void {
             .{ new_id.sql(), data_v1.core_data },
         );
     }
+    try assertSameCount(self, "tag_cores", "tag_cores_v2");
 
     // migrate tag names
 
@@ -523,6 +560,86 @@ fn snowflakeIdMigration(self: *Context) !void {
             .{ new_id.sql(), row.tag_language, row.tag_text },
         );
     }
+    try assertSameCount(self, "tag_names", "tag_names_v2");
+
+    var stmt_tag_implications = try self.db.?.prepare(
+        \\ select rowid, child_tag, parent_tag
+        \\ from tag_implications
+    );
+    defer stmt_tag_implications.deinit();
+    var it_tag_implications = try stmt_tag_implications.iterator(struct {
+        rowid: i64,
+        child_tag: i64,
+        parent_tag: i64,
+    }, .{});
+    logger.info("migrating tag_implications...", .{});
+    while (try it_tag_implications.next(.{})) |row| {
+        const new_child_tag = try snowflakeNewHash(self, row.child_tag);
+        const new_parent_tag = try snowflakeNewHash(self, row.parent_tag);
+        logger.warn("implication {d}->{d} => {}->{}", .{ row.parent_tag, row.child_tag, new_child_tag, new_parent_tag });
+        try self.db.?.exec(
+            "insert into tag_implications_v2 (rowid, child_tag, parent_tag) VALUES (?,?, ?)",
+            .{},
+            .{ row.rowid, new_child_tag.sql(), new_parent_tag.sql() },
+        );
+    }
+    try assertSameCount(self, "tag_implications", "tag_implications_v2");
+
+    var stmt_tag_files = try self.db.?.prepare(
+        \\ select file_hash, core_hash, tag_source_type, tag_source_id, parent_source_id
+        \\ from tag_files
+    );
+    defer stmt_tag_files.deinit();
+    var it_tag_files = try stmt_tag_files.iterator(struct {
+        file_hash: i64,
+        core_hash: i64,
+        tag_source_type: i64,
+        tag_source_id: i64,
+        parent_source_id: ?i64,
+    }, .{});
+    logger.info("migrating tag_files...", .{});
+    while (try it_tag_files.next(.{})) |row| {
+        const new_file_hash = try snowflakeNewHash(self, row.file_hash);
+        const new_core_hash = try snowflakeNewHash(self, row.core_hash);
+
+        if (row.parent_source_id) |parent_source_id| {
+            // assert it exists in tag_implications_v2
+            logger.warn("verify source id {d}", .{parent_source_id});
+            _ = (try self.db.?.one(
+                ID.SQL,
+                "select parent_tag from tag_implications_v2 where rowid = ?",
+                .{},
+                .{parent_source_id},
+            )) orelse {
+                return error.InconsistentSemantics;
+            };
+        }
+
+        logger.warn(
+            "insert tag files {} {} {d} {d} {?d}",
+            .{ new_file_hash, new_core_hash, row.tag_source_type, row.tag_source_id, row.parent_source_id },
+        );
+        try self.db.?.exec(
+            "insert into tag_files_v2 (file_hash, core_hash, tag_source_type, tag_source_id, parent_source_id) VALUES (?, ?, ?, ?, ?)",
+            .{},
+            .{ new_file_hash.sql(), new_core_hash.sql(), row.tag_source_type, row.tag_source_id, row.parent_source_id },
+        );
+    }
+    try assertSameCount(self, "tag_files", "tag_files_v2");
+}
+
+fn snowflakeNewHash(self: *Context, old_hash: i64) !ID {
+    const new_file_hash_id = (try self.db.?.one(
+        ID.SQL,
+        \\ select hashes_v2.id
+        \\ from hashes
+        \\ join hashes_v2 on hashes.hash_data = hashes_v2.hash_data
+        \\ where hashes.id = ?
+    ,
+        .{},
+        .{old_hash},
+    )).?;
+    return ID.new(new_file_hash_id);
 }
 
 pub const ID = struct {
