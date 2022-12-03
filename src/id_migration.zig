@@ -299,7 +299,7 @@ fn migratePools(self: *Context) !void {
         const parsed_ulid = try ulid.ULID.parse(new_id.str());
         try std.testing.expectEqual(new_ulid.timestamp, parsed_ulid.timestamp);
 
-        logger.warn("pool creating as {s} {x}", .{ new_id, std.fmt.fmtSliceHexLower(row.hash_data.data) });
+        logger.warn("pool creating as {s} {s} {x}", .{ row.title, new_id, std.fmt.fmtSliceHexLower(row.hash_data.data) });
         try self.db.?.exec(
             "insert into hashes_v2 (id, hash_data) VALUES (?, ?)",
             .{},
@@ -330,9 +330,34 @@ fn migratePoolEntries(self: *Context) !void {
         const new_pool_hash = try snowflakeNewHash(self, row.pool_hash);
 
         const args = .{ new_file_hash.sql(), new_pool_hash.sql(), row.entry_index };
-        logger.warn("creating tag name {} {} {d}", args);
+        logger.warn("creating pool entry {} {} {d}", args);
         try self.db.?.exec(
             "insert into pool_entries_v2 (file_hash,pool_hash,entry_index) VALUES (?, ?, ?)",
+            .{},
+            args,
+        );
+    }
+}
+
+fn migrateTagUsageCounts(self: *Context) !void {
+    var stmt = try self.db.?.prepare(
+        \\ select timestamp, core_hash, relationship_count
+        \\ from metrics_tag_usage_values
+    );
+    defer stmt.deinit();
+
+    var it = try stmt.iterator(struct {
+        timestamp: i64,
+        core_hash: i64,
+        relationship_count: i64,
+    }, .{});
+    while (try it.nextAlloc(self.allocator, .{})) |row| {
+        const new_core_hash = try snowflakeNewHash(self, row.core_hash);
+
+        const args = .{ row.timestamp, new_core_hash.sql(), row.relationship_count };
+        logger.warn("creating metricsc entry {d} {} {d}", args);
+        try self.db.?.exec(
+            "insert into metrics_tag_usage_values_v2 (timestamp, core_hash, relationship_count) VALUES (?, ?, ?)",
             .{},
             args,
         );
@@ -345,7 +370,7 @@ fn migrateSingleTable(
     comptime new_table: []const u8,
     function: *const fn (*Context) anyerror!void,
 ) !void {
-    logger.warn("migrating {s} to {s}...", .{ old_table, new_table });
+    logger.info("migrating {s} to {s}...", .{ old_table, new_table });
     try function(self);
     try assertSameCount(self, old_table, new_table);
 }
@@ -427,6 +452,14 @@ pub fn migrate(self: *Context) !void {
         \\     -- prevent inconsistent pool due to bug in entry index selection
         \\     constraint pool_unique_index unique (pool_hash, entry_index)
         \\ ) without rowid, strict;
+        \\
+        \\CREATE TABLE metrics_tag_usage_values_v2 (
+        \\     timestamp integer,
+        \\     core_hash text not null,
+        \\     relationship_count int not null,
+        \\     constraint relationship_count_not_negative check (relationship_count >= 0),
+        \\     constraint metrics_tag_usage_values_pk primary key (timestamp, core_hash)
+        \\ ) without rowid, strict;
     , .{ .diags = &diags }) catch |err| {
         logger.err("diags={}", .{diags});
         return err;
@@ -442,6 +475,7 @@ pub fn migrate(self: *Context) !void {
     try migrateSingleTable(self, "tag_files", "tag_files_v2", migrateTagFiles);
     try migrateSingleTable(self, "pools", "pools_v2", migratePools);
     try migrateSingleTable(self, "pool_entries", "pool_entries_v2", migratePoolEntries);
+    try migrateSingleTable(self, "metrics_tag_usage_values", "metrics_tag_usage_values_v2", migrateTagUsageCounts);
 }
 
 fn snowflakeNewHash(self: *Context, old_hash: i64) !ID {

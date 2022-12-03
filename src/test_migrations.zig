@@ -241,6 +241,9 @@ test "validate snowflake migration works" {
         \\insert into pools (pool_hash, pool_core_data, title) values (5, X'c840ae7bc4a42b59c65abcba425595e2e758f89a0ea654ea7e1c87a4162afd90c840ae7bc4a42b59c65abcba425595e2e758f89a0ea654ea7e1c87a4162afd90', 'among us chronicles');
         \\insert into pool_entries (file_hash, pool_hash, entry_index) values (1, 5, 0);
         \\insert into pool_entries (file_hash, pool_hash, entry_index) values (2, 5, 1);
+        \\insert into metrics_tag_usage_timestamps (timestamp) values (0);
+        \\insert into metrics_tag_usage_values (timestamp, core_hash, relationship_count) values (0, 3, 2);
+        \\insert into metrics_tag_usage_values (timestamp, core_hash, relationship_count) values (0, 4, 2);
     , .{ file_realpath, file2_realpath, file3_realpath, AMOGUS, AMOGUS2 });
     defer ctx.allocator.free(query);
     const query_cstr = try std.cstr.addNullByte(ctx.allocator, query);
