@@ -313,6 +313,32 @@ fn migratePools(self: *Context) !void {
     }
 }
 
+fn migratePoolEntries(self: *Context) !void {
+    var stmt = try self.db.?.prepare(
+        \\ select file_hash, pool_hash, entry_index
+        \\ from pool_entries
+    );
+    defer stmt.deinit();
+
+    var it = try stmt.iterator(struct {
+        file_hash: i64,
+        pool_hash: i64,
+        entry_index: i64,
+    }, .{});
+    while (try it.nextAlloc(self.allocator, .{})) |row| {
+        const new_file_hash = try snowflakeNewHash(self, row.file_hash);
+        const new_pool_hash = try snowflakeNewHash(self, row.pool_hash);
+
+        const args = .{ new_file_hash.sql(), new_pool_hash.sql(), row.entry_index };
+        logger.warn("creating tag name {} {} {d}", args);
+        try self.db.?.exec(
+            "insert into pool_entries_v2 (file_hash,pool_hash,entry_index) VALUES (?, ?, ?)",
+            .{},
+            args,
+        );
+    }
+}
+
 fn migrateSingleTable(
     self: *Context,
     comptime old_table: []const u8,
@@ -389,6 +415,18 @@ pub fn migrate(self: *Context) !void {
         \\        constraint pool_core_data check (length(pool_core_data) >= 64),
         \\     title text not null
         \\ ) without rowid, strict;
+        \\
+        \\CREATE TABLE pool_entries_v2 (
+        \\     file_hash text not null
+        \\        -- cant reference files.file_hash due to composite primary key
+        \\        constraint pool_entries_file_fk references hashes_v2 (id) on delete cascade,
+        \\     pool_hash text not null
+        \\        constraint pool_entries_pool_fk references pools_v2 (pool_hash) on delete cascade,
+        \\     entry_index int not null,
+        \\     constraint pool_entries_pk primary key (file_hash, pool_hash),
+        \\     -- prevent inconsistent pool due to bug in entry index selection
+        \\     constraint pool_unique_index unique (pool_hash, entry_index)
+        \\ ) without rowid, strict;
     , .{ .diags = &diags }) catch |err| {
         logger.err("diags={}", .{diags});
         return err;
@@ -403,8 +441,7 @@ pub fn migrate(self: *Context) !void {
     try migrateSingleTable(self, "tag_implications", "tag_implications_v2", migrateTagImplications);
     try migrateSingleTable(self, "tag_files", "tag_files_v2", migrateTagFiles);
     try migrateSingleTable(self, "pools", "pools_v2", migratePools);
-    //try migrateSingleTable(self, "pool_entries", "pool_entries_v2", migratePoolEntries);
-
+    try migrateSingleTable(self, "pool_entries", "pool_entries_v2", migratePoolEntries);
 }
 
 fn snowflakeNewHash(self: *Context, old_hash: i64) !ID {
