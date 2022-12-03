@@ -40,76 +40,12 @@ fn assertSameCount(self: *Context, comptime table1: []const u8, comptime table2:
     try std.testing.expectEqual(table1_count, table2_count);
 }
 
-pub fn migrate(self: *Context) !void {
-    logger.info("this migration may take a while!", .{});
-
-    var diags = sqlite.Diagnostics{};
-
-    self.db.?.execMulti(
-        \\ CREATE TABLE hashes_v2 (
-        \\     id text primary key,
-        \\     hash_data blob
-        \\        constraint hashes_length check (length(hash_data) == 32)
-        \\        constraint hashes_unique unique
-        \\ ) without rowid, strict;
-        \\
-        \\ CREATE TABLE IF NOT EXISTS files_v2 (
-        \\     file_hash text
-        \\        constraint files_v2_file_hash_fk references hashes_v2 (id) on delete restrict,
-        \\     local_path text not null
-        \\        constraint files_v2_local_path_uniq unique on conflict abort,
-        \\     constraint files_v2_pk primary key (file_hash, local_path)
-        \\ ) without rowid, strict;
-        \\
-        // TODO rename old tables with some '++ comptime renameTable("files", "_old_files_int_id") ++'
-        \\ CREATE TABLE IF NOT EXISTS tag_cores_v2 (
-        \\      core_hash text primary key
-        \\         constraint tag_cores_v2_hash_fk references hashes_v2 (id) on delete restrict,
-        \\      core_data blob not null
-        \\  ) without rowid, strict;
-        \\
-        \\ CREATE TABLE IF NOT EXISTS tag_names_v2 (
-        \\ 	tag_text text not null,
-        \\ 	tag_language text not null,
-        \\      core_hash text
-        \\         constraint tag_names_v2_core_fk references tag_cores_v2 (core_hash) on delete restrict,
-        \\ 	constraint tag_names_v2_pk primary key (tag_text, tag_language)
-        \\  ) without rowid, strict;
-        \\
-        \\CREATE TABLE IF NOT EXISTS tag_implications_v2 (
-        \\     child_tag text not null
-        \\        constraint tag_implications_v2_child_fk references tag_cores_v2 (core_hash) on delete cascade,
-        \\     parent_tag text not null
-        \\        constraint tag_implications_v2_parent_fk references tag_cores_v2 (core_hash) on delete cascade,
-        \\     constraint tag_implications_v2_pk primary key (child_tag, parent_tag)
-        \\) strict;
-        \\
-        \\CREATE TABLE IF NOT EXISTS tag_files_v2 (
-        \\     file_hash text not null
-        \\        constraint tag_files_file_fk references hashes_v2 (id) on delete cascade,
-        \\     core_hash text not null
-        \\        constraint tag_files_core_fk references tag_cores_v2 (core_hash) on delete cascade,
-        \\     tag_source_type int default 0,
-        \\     tag_source_id int default 0,
-        \\     parent_source_id int default null,
-        \\      constraint tag_files_tag_source_fk
-        \\       foreign key (tag_source_type, tag_source_id)
-        \\       references tag_sources (type, id) on delete restrict,
-        \\      constraint tag_files_pk primary key (file_hash, core_hash)
-        \\ ) without rowid, strict;
-    , .{ .diags = &diags }) catch |err| {
-        logger.err("diags={}", .{diags});
-        return err;
-    };
-
+fn migrateFiles(self: *Context) !void {
     var stmt = try self.db.?.prepare(
         \\ select file_hash, local_path, hashes.hash_data from files
         \\ join hashes on files.file_hash = hashes.id
     );
     defer stmt.deinit();
-
-    // to convert from sqlite's PRIMARY KEY AUTOINCREMENT column towards an ulid
-    // we need to convert from int primary key to text primary key
 
     var rng = std.rand.DefaultPrng.init(
         @truncate(u64, @intCast(u128, std.time.nanoTimestamp())),
@@ -173,8 +109,13 @@ pub fn migrate(self: *Context) !void {
     }
 
     try assertSameCount(self, "files", "files_v2");
+}
 
-    // migrate tag cores
+fn migrateCores(self: *Context) !void {
+    var rng = std.rand.DefaultPrng.init(
+        @truncate(u64, @intCast(u128, std.time.nanoTimestamp())),
+    );
+    const random = rng.random();
 
     var stmt_tag_cores = try self.db.?.prepare(
         \\ select core_hash, core_data, hashes.hash_data from tag_cores
@@ -222,9 +163,9 @@ pub fn migrate(self: *Context) !void {
         );
     }
     try assertSameCount(self, "tag_cores", "tag_cores_v2");
+}
 
-    // migrate tag names
-
+fn migrateTagNames(self: *Context) !void {
     var stmt_tag_names = try self.db.?.prepare(
         \\ select hashes_v2.id AS new_core_id, tag_language, tag_text from tag_names
         \\ join hashes on tag_names.core_hash = hashes.id
@@ -249,8 +190,9 @@ pub fn migrate(self: *Context) !void {
             .{ new_id.sql(), row.tag_language, row.tag_text },
         );
     }
-    try assertSameCount(self, "tag_names", "tag_names_v2");
+}
 
+fn migrateTagImplications(self: *Context) !void {
     var stmt_tag_implications = try self.db.?.prepare(
         \\ select rowid, child_tag, parent_tag
         \\ from tag_implications
@@ -272,8 +214,9 @@ pub fn migrate(self: *Context) !void {
             .{ row.rowid, new_child_tag.sql(), new_parent_tag.sql() },
         );
     }
-    try assertSameCount(self, "tag_implications", "tag_implications_v2");
+}
 
+fn migrateTagFiles(self: *Context) !void {
     var stmt_tag_files = try self.db.?.prepare(
         \\ select file_hash, core_hash, tag_source_type, tag_source_id, parent_source_id
         \\ from tag_files
@@ -314,7 +257,88 @@ pub fn migrate(self: *Context) !void {
             .{ new_file_hash.sql(), new_core_hash.sql(), row.tag_source_type, row.tag_source_id, row.parent_source_id },
         );
     }
-    try assertSameCount(self, "tag_files", "tag_files_v2");
+}
+
+fn migrateSingleTable(
+    self: *Context,
+    comptime old_table: []const u8,
+    comptime new_table: []const u8,
+    function: *const fn (*Context) anyerror!void,
+) !void {
+    try function(self);
+    try assertSameCount(self, old_table, new_table);
+}
+
+pub fn migrate(self: *Context) !void {
+    logger.info("this migration may take a while!", .{});
+
+    var diags = sqlite.Diagnostics{};
+
+    self.db.?.execMulti(
+        \\ CREATE TABLE hashes_v2 (
+        \\     id text primary key,
+        \\     hash_data blob
+        \\        constraint hashes_length check (length(hash_data) == 32)
+        \\        constraint hashes_unique unique
+        \\ ) without rowid, strict;
+        \\
+        \\ CREATE TABLE IF NOT EXISTS files_v2 (
+        \\     file_hash text
+        \\        constraint files_v2_file_hash_fk references hashes_v2 (id) on delete restrict,
+        \\     local_path text not null
+        \\        constraint files_v2_local_path_uniq unique on conflict abort,
+        \\     constraint files_v2_pk primary key (file_hash, local_path)
+        \\ ) without rowid, strict;
+        \\
+        // TODO rename old tables with some '++ comptime renameTable("files", "_old_files_int_id") ++'
+        \\ CREATE TABLE IF NOT EXISTS tag_cores_v2 (
+        \\      core_hash text primary key
+        \\         constraint tag_cores_v2_hash_fk references hashes_v2 (id) on delete restrict,
+        \\      core_data blob not null
+        \\  ) without rowid, strict;
+        \\
+        \\ CREATE TABLE IF NOT EXISTS tag_names_v2 (
+        \\ 	tag_text text not null,
+        \\ 	tag_language text not null,
+        \\      core_hash text
+        \\         constraint tag_names_v2_core_fk references tag_cores_v2 (core_hash) on delete restrict,
+        \\ 	constraint tag_names_v2_pk primary key (tag_text, tag_language)
+        \\  ) without rowid, strict;
+        \\
+        \\CREATE TABLE IF NOT EXISTS tag_implications_v2 (
+        \\     child_tag text not null
+        \\        constraint tag_implications_v2_child_fk references tag_cores_v2 (core_hash) on delete cascade,
+        \\     parent_tag text not null
+        \\        constraint tag_implications_v2_parent_fk references tag_cores_v2 (core_hash) on delete cascade,
+        \\     constraint tag_implications_v2_pk primary key (child_tag, parent_tag)
+        \\) strict;
+        \\
+        \\CREATE TABLE IF NOT EXISTS tag_files_v2 (
+        \\     file_hash text not null
+        \\        constraint tag_files_file_fk references hashes_v2 (id) on delete cascade,
+        \\     core_hash text not null
+        \\        constraint tag_files_core_fk references tag_cores_v2 (core_hash) on delete cascade,
+        \\     tag_source_type int default 0,
+        \\     tag_source_id int default 0,
+        \\     parent_source_id int default null,
+        \\      constraint tag_files_tag_source_fk
+        \\       foreign key (tag_source_type, tag_source_id)
+        \\       references tag_sources (type, id) on delete restrict,
+        \\      constraint tag_files_pk primary key (file_hash, core_hash)
+        \\ ) without rowid, strict;
+    , .{ .diags = &diags }) catch |err| {
+        logger.err("diags={}", .{diags});
+        return err;
+    };
+
+    // to convert from sqlite's PRIMARY KEY AUTOINCREMENT column towards an ulid
+    // we need to convert from int primary key to text primary key
+
+    try migrateSingleTable(self, "files", "files_v2", migrateFiles);
+    try migrateSingleTable(self, "tag_cores", "tag_cores_v2", migrateCores);
+    try migrateSingleTable(self, "tag_names", "tag_names_v2", migrateTagNames);
+    try migrateSingleTable(self, "tag_implications", "tag_implications_v2", migrateTagImplications);
+    try migrateSingleTable(self, "tag_files", "tag_files_v2", migrateTagFiles);
 }
 
 fn snowflakeNewHash(self: *Context, old_hash: i64) !ID {
