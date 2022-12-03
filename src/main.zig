@@ -367,9 +367,8 @@ fn snowflakeIdMigration(self: *Context) !void {
         // lock files v1
         // TODO add this when done ++ comptime generateSqlReadonly("files") ++
         \\ CREATE TABLE IF NOT EXISTS tag_cores_v2 (
-        \\      core_hash int
-        \\         constraint tag_cores_hash_fk references hashes (id) on delete restrict
-        \\         constraint tag_cores_pk primary key,
+        \\      core_hash text primary key
+        \\         constraint tag_cores_v2_hash_fk references hashes_v2 (id) on delete restrict,
         \\      core_data blob not null
         \\  ) strict;
         // TODO add this when done++ generateSqlReadonly("tag_cores")
@@ -423,7 +422,7 @@ fn snowflakeIdMigration(self: *Context) !void {
             const parsed_ulid = try ulid.ULID.parse(new_id.str());
             try std.testing.expectEqual(new_ulid.timestamp, parsed_ulid.timestamp);
 
-            logger.warn("creating as {s} {s}", .{ new_id, data.local_path });
+            logger.warn("creating as {s} {s} {s}", .{ new_id, std.fmt.fmtSliceHexLower(data.hash_data.data), data.local_path });
             try self.db.?.exec(
                 "insert into hashes_v2 (id, hash_data) VALUES (?, ?)",
                 .{},
@@ -454,26 +453,41 @@ fn snowflakeIdMigration(self: *Context) !void {
 
     const TAG_CORE_EPOCH = 1644980400 * std.time.ms_per_s;
 
-    var it_tag_cores = try stmt.iterator(struct {
+    var it_tag_cores = try stmt_tag_cores.iterator(struct {
         core_hash: i64,
         core_data: sqlite.Blob,
         hash_data: sqlite.Blob,
     }, .{});
     while (try it_tag_cores.nextAlloc(self.allocator, .{})) |data_v1| {
-        logger.info("processing tag core {any}", .{data_v1});
+        logger.warn("processing tag core {d} {x} {x}", .{
+            data_v1.core_hash,
+            std.fmt.fmtSliceHexLower(data_v1.core_data.data),
+            std.fmt.fmtSliceHexLower(data_v1.hash_data.data),
+        });
         // keep them in order
         defer self.allocator.free(data_v1.core_data.data);
         defer self.allocator.free(data_v1.hash_data.data);
 
         const core_timestamp = TAG_CORE_EPOCH + data_v1.core_hash;
-        _ = core_timestamp;
 
-        //const maybe_existing_hash = try self.db.?.one(
-        //    [26]u8,
-        //    "select id from hashes_v2 where hash_data = ?",
-        //    .{},
-        //    .{data.hash_data},
-        //);
+        // tag core data is unique so we do not implement UPSERT
+
+        const new_ulid = ulidFromTimestamp(random, core_timestamp);
+        const new_id = ID.new(new_ulid.bytes());
+        const parsed_ulid = try ulid.ULID.parse(new_id.str());
+        try std.testing.expectEqual(new_ulid.timestamp, parsed_ulid.timestamp);
+
+        logger.warn("tag core creating as {s} {x}", .{ new_id, std.fmt.fmtSliceHexLower(data_v1.hash_data.data) });
+        try self.db.?.exec(
+            "insert into hashes_v2 (id, hash_data) VALUES (?, ?)",
+            .{},
+            .{ new_id.sql(), data_v1.hash_data },
+        );
+        try self.db.?.exec(
+            "insert into tag_cores_v2 (core_hash, core_data) VALUES (?, ?)",
+            .{},
+            .{ new_id.sql(), data_v1.core_data },
+        );
     }
 
     // migrate tag names

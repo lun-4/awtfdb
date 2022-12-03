@@ -217,13 +217,17 @@ test "validate snowflake migration works" {
     const stat = try tmp.dir.statFile("test_file");
     const stat3 = try tmp.dir.statFile("test_file3");
 
+    const AMOGUS = "424242424269696969420420420420";
+
     const query = try std.fmt.allocPrint(ctx.allocator,
         \\insert into hashes (id, hash_data) values (1, X'7cecc98d9dc7503dcdad71adbbdf45d06667fd38c386f5d37489ea2c24d7a4dc');
         \\insert into hashes (id, hash_data) values (2, X'39f2c50b236858c0e4a536f0c1de75acb2a2dd709958b05bb511667a818da73a');
+        \\insert into hashes (id, hash_data) values (3, X'f45d9c5ac7426d38c89f49ef4f6cb0f69ca58f968d03eb6a81b5c6eeb5ac7d03');
         \\insert into files (file_hash, local_path) values (1, '{s}');
         \\insert into files (file_hash, local_path) values (1, '{s}');
         \\insert into files (file_hash, local_path) values (2, '{s}');
-    , .{ file_realpath, file2_realpath, file3_realpath });
+        \\insert into tag_cores (core_hash, core_data) values (3, x'{s}');
+    , .{ file_realpath, file2_realpath, file3_realpath, AMOGUS });
     defer ctx.allocator.free(query);
     const query_cstr = try std.cstr.addNullByte(ctx.allocator, query);
     defer ctx.allocator.free(query_cstr);
@@ -249,4 +253,8 @@ test "validate snowflake migration works" {
     const file3_hash = (try ctx.db.?.one([26]u8, "select file_hash from files_v2 where local_path = ?", .{}, .{file3_realpath})).?;
     const new_file3_hash = try ulid.ULID.parse(&file3_hash);
     try std.testing.expectEqual(@divTrunc(stat3.mtime, std.time.ns_per_ms), new_file3_hash.timestamp);
+
+    const core_hash = (try ctx.db.?.one([26]u8, "select core_hash from tag_cores_v2 where hex(core_data) = ?", .{}, .{sqlite.Text{ .data = AMOGUS }})).?;
+    const new_core_hash = try ulid.ULID.parse(&core_hash);
+    try std.testing.expect(new_core_hash.timestamp > 1000);
 }
