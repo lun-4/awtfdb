@@ -373,6 +373,12 @@ fn migrateSingleTable(
     logger.info("migrating {s} to {s}...", .{ old_table, new_table });
     try function(self);
     try assertSameCount(self, old_table, new_table);
+
+    const renamed_table = old_table ++ "_v1";
+
+    const query = "ALTER TABLE " ++ old_table ++ " RENAME TO " ++ renamed_table ++ ";" ++ comptime generateSqlReadonly(renamed_table);
+    logger.warn("readonly table query {s}", .{query});
+    try self.db.?.exec(query, .{}, .{});
 }
 
 pub fn migrate(self: *Context) !void {
