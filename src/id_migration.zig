@@ -259,12 +259,67 @@ fn migrateTagFiles(self: *Context) !void {
     }
 }
 
+fn migratePools(self: *Context) !void {
+    var rng = std.rand.DefaultPrng.init(@truncate(u64, @intCast(u128, std.time.nanoTimestamp())));
+    const random = rng.random();
+
+    var stmt = try self.db.?.prepare(
+        \\ select pool_hash, hashes.hash_data, pool_core_data, title
+        \\ from pools
+        \\ join hashes on hashes.id = pool_hash
+    );
+    defer stmt.deinit();
+
+    const POOL_CORE_EPOCH = 1658545200 * std.time.ms_per_s;
+
+    var it = try stmt.iterator(struct {
+        pool_hash: i64,
+        hash_data: sqlite.Blob,
+        pool_core_data: sqlite.Blob,
+        title: []const u8,
+    }, .{});
+    while (try it.nextAlloc(self.allocator, .{})) |row| {
+        logger.warn("process pool {d} {x} {s}", .{
+            row.pool_hash,
+            std.fmt.fmtSliceHexLower(row.pool_core_data.data),
+            row.title,
+        });
+
+        defer self.allocator.free(row.hash_data.data);
+        defer self.allocator.free(row.pool_core_data.data);
+        defer self.allocator.free(row.title);
+
+        const timestamp = POOL_CORE_EPOCH + row.pool_hash;
+
+        // core data is unique so we do not implement UPSERT
+
+        const new_ulid = main.ulidFromTimestamp(random, timestamp);
+        const new_id = ID.ul(new_ulid);
+        // TODO move this to ulid test
+        const parsed_ulid = try ulid.ULID.parse(new_id.str());
+        try std.testing.expectEqual(new_ulid.timestamp, parsed_ulid.timestamp);
+
+        logger.warn("pool creating as {s} {x}", .{ new_id, std.fmt.fmtSliceHexLower(row.hash_data.data) });
+        try self.db.?.exec(
+            "insert into hashes_v2 (id, hash_data) VALUES (?, ?)",
+            .{},
+            .{ new_id.sql(), row.hash_data },
+        );
+        try self.db.?.exec(
+            "insert into pools_v2 (pool_hash, pool_core_data, title) VALUES (?, ?, ?)",
+            .{},
+            .{ new_id.sql(), row.pool_core_data, row.title },
+        );
+    }
+}
+
 fn migrateSingleTable(
     self: *Context,
     comptime old_table: []const u8,
     comptime new_table: []const u8,
     function: *const fn (*Context) anyerror!void,
 ) !void {
+    logger.warn("migrating {s} to {s}...", .{ old_table, new_table });
     try function(self);
     try assertSameCount(self, old_table, new_table);
 }
@@ -326,6 +381,14 @@ pub fn migrate(self: *Context) !void {
         \\       references tag_sources (type, id) on delete restrict,
         \\      constraint tag_files_pk primary key (file_hash, core_hash)
         \\ ) without rowid, strict;
+        \\
+        \\CREATE TABLE pools_v2 (
+        \\     pool_hash text primary key
+        \\        constraint pools_hash_fk references hashes_v2 (id) on delete restrict,
+        \\     pool_core_data blob not null
+        \\        constraint pool_core_data check (length(pool_core_data) >= 64),
+        \\     title text not null
+        \\ ) without rowid, strict;
     , .{ .diags = &diags }) catch |err| {
         logger.err("diags={}", .{diags});
         return err;
@@ -339,6 +402,9 @@ pub fn migrate(self: *Context) !void {
     try migrateSingleTable(self, "tag_names", "tag_names_v2", migrateTagNames);
     try migrateSingleTable(self, "tag_implications", "tag_implications_v2", migrateTagImplications);
     try migrateSingleTable(self, "tag_files", "tag_files_v2", migrateTagFiles);
+    try migrateSingleTable(self, "pools", "pools_v2", migratePools);
+    //try migrateSingleTable(self, "pool_entries", "pool_entries_v2", migratePoolEntries);
+
 }
 
 fn snowflakeNewHash(self: *Context, old_hash: i64) !ID {

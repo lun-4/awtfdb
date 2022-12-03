@@ -225,6 +225,7 @@ test "validate snowflake migration works" {
         \\insert into hashes (id, hash_data) values (2, X'39f2c50b236858c0e4a536f0c1de75acb2a2dd709958b05bb511667a818da73a');
         \\insert into hashes (id, hash_data) values (3, X'f45d9c5ac7426d38c89f49ef4f6cb0f69ca58f968d03eb6a81b5c6eeb5ac7d03');
         \\insert into hashes (id, hash_data) values (4, X'c3ef18ab3140c21152699955202659b5ad79ab48452ec554e8d4401f72f4cdb5');
+        \\insert into hashes (id, hash_data) values (5, X'8ac1f7439d2de6eb4b48eddfc680cab6d79fd4dde30f834f66ac7b823a9c6a9c');
         \\insert into files (file_hash, local_path) values (1, '{s}');
         \\insert into files (file_hash, local_path) values (1, '{s}');
         \\insert into files (file_hash, local_path) values (2, '{s}');
@@ -237,6 +238,9 @@ test "validate snowflake migration works" {
         \\insert into tag_implications (rowid, parent_tag, child_tag) values (1, 3, 4);
         \\insert into tag_files (file_hash, core_hash, parent_source_id) values (1, 4, 1);
         \\insert into tag_files (file_hash, core_hash, parent_source_id) values (2, 4, 1);
+        \\insert into pools (pool_hash, pool_core_data, title) values (5, X'c840ae7bc4a42b59c65abcba425595e2e758f89a0ea654ea7e1c87a4162afd90c840ae7bc4a42b59c65abcba425595e2e758f89a0ea654ea7e1c87a4162afd90', 'among us chronicles');
+        \\insert into pool_entries (file_hash, pool_hash, entry_index) values (1, 5, 0);
+        \\insert into pool_entries (file_hash, pool_hash, entry_index) values (2, 5, 1);
     , .{ file_realpath, file2_realpath, file3_realpath, AMOGUS, AMOGUS2 });
     defer ctx.allocator.free(query);
     const query_cstr = try std.cstr.addNullByte(ctx.allocator, query);
