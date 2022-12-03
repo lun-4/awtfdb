@@ -267,7 +267,7 @@ pub const MIGRATIONS = .{
     },
 
     .{
-        8, "migrate to snowflakes for local ids",
+        8, "migrate to ulids for local ids",
         .{
             .function = snowflakeIdMigration,
         },
@@ -346,7 +346,6 @@ fn generateSqlReadonly(comptime table: []const u8) []const u8 {
 }
 fn snowflakeIdMigration(self: *Context) !void {
     logger.info("this migration may take a while!", .{});
-    logger.info("migrating files...", .{});
 
     try self.db.?.execMulti(
         \\ CREATE TABLE hashes_v2 (
@@ -364,14 +363,20 @@ fn snowflakeIdMigration(self: *Context) !void {
         \\     constraint files_v2_pk primary key (file_hash, local_path)
         \\ ) without rowid, strict;
         \\
-        // lock files v1
-        // TODO add this when done ++ comptime generateSqlReadonly("files") ++
+        // TODO rename old tables with some '++ comptime renameTable("files", "_old_files_int_id") ++'
         \\ CREATE TABLE IF NOT EXISTS tag_cores_v2 (
         \\      core_hash text primary key
         \\         constraint tag_cores_v2_hash_fk references hashes_v2 (id) on delete restrict,
         \\      core_data blob not null
-        \\  ) strict;
-        // TODO add this when done++ generateSqlReadonly("tag_cores")
+        \\  ) without rowid, strict;
+        \\
+        \\ CREATE TABLE IF NOT EXISTS tag_names_v2 (
+        \\ 	tag_text text not null,
+        \\ 	tag_language text not null,
+        \\      core_hash text
+        \\         constraint tag_names_v2_core_fk references tag_cores_v2 (core_hash) on delete restrict,
+        \\ 	constraint tag_names_v2_pk primary key (tag_text, tag_language)
+        \\  ) without rowid, strict;
     , .{});
 
     var stmt = try self.db.?.prepare(
@@ -393,12 +398,13 @@ fn snowflakeIdMigration(self: *Context) !void {
         local_path: []const u8,
         hash_data: sqlite.Blob,
     }, .{});
+    logger.info("migrating files...", .{});
     while (try it.nextAlloc(self.allocator, .{})) |data| {
         defer self.allocator.free(data.local_path);
         defer self.allocator.free(data.hash_data.data);
 
         const maybe_existing_hash = try self.db.?.one(
-            [26]u8,
+            ID.SQL,
             "select id from hashes_v2 where hash_data = ?",
             .{},
             .{data.hash_data},
@@ -429,7 +435,7 @@ fn snowflakeIdMigration(self: *Context) !void {
                 .{ new_id.sql(), data.hash_data },
             );
             const must_exist = try self.db.?.one(
-                [26]u8,
+                ID.SQL,
                 "select id from hashes_v2 where hash_data = ?",
                 .{},
                 .{data.hash_data},
@@ -458,6 +464,7 @@ fn snowflakeIdMigration(self: *Context) !void {
         core_data: sqlite.Blob,
         hash_data: sqlite.Blob,
     }, .{});
+    logger.info("migrating tag cores...", .{});
     while (try it_tag_cores.nextAlloc(self.allocator, .{})) |data_v1| {
         logger.warn("processing tag core {d} {x} {x}", .{
             data_v1.core_hash,
@@ -491,11 +498,36 @@ fn snowflakeIdMigration(self: *Context) !void {
     }
 
     // migrate tag names
-    // migrate tag files
+
+    var stmt_tag_names = try self.db.?.prepare(
+        \\ select hashes_v2.id AS new_core_id, tag_language, tag_text from tag_names
+        \\ join hashes on tag_names.core_hash = hashes.id
+        \\ join hashes_v2 on hashes.hash_data = hashes_v2.hash_data;
+    );
+    defer stmt_tag_names.deinit();
+    var it_tag_names = try stmt_tag_names.iterator(struct {
+        new_core_id: ID.SQL,
+        tag_language: []const u8,
+        tag_text: []const u8,
+    }, .{});
+    logger.info("migrating tag names...", .{});
+    while (try it_tag_names.nextAlloc(self.allocator, .{})) |row| {
+        defer self.allocator.free(row.tag_language);
+        defer self.allocator.free(row.tag_text);
+
+        const new_id = ID.new(row.new_core_id);
+        logger.warn("creating tag name {s} {s} {s}", .{ new_id, row.tag_language, row.tag_text });
+        try self.db.?.exec(
+            "insert into tag_names_v2 (core_hash, tag_language, tag_text) VALUES (?, ?, ?)",
+            .{},
+            .{ new_id.sql(), row.tag_language, row.tag_text },
+        );
+    }
 }
 
-const ID = struct {
+pub const ID = struct {
     data: [26]u8,
+    const SQL = [26]u8;
     const Self = @This();
 
     pub fn new(data: [26]u8) Self {

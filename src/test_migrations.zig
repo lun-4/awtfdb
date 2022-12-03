@@ -227,6 +227,7 @@ test "validate snowflake migration works" {
         \\insert into files (file_hash, local_path) values (1, '{s}');
         \\insert into files (file_hash, local_path) values (2, '{s}');
         \\insert into tag_cores (core_hash, core_data) values (3, x'{s}');
+        \\insert into tag_names (core_hash, tag_text, tag_language) values (3, 'amongus', 'en');
     , .{ file_realpath, file2_realpath, file3_realpath, AMOGUS });
     defer ctx.allocator.free(query);
     const query_cstr = try std.cstr.addNullByte(ctx.allocator, query);
@@ -254,7 +255,22 @@ test "validate snowflake migration works" {
     const new_file3_hash = try ulid.ULID.parse(&file3_hash);
     try std.testing.expectEqual(@divTrunc(stat3.mtime, std.time.ns_per_ms), new_file3_hash.timestamp);
 
-    const core_hash = (try ctx.db.?.one([26]u8, "select core_hash from tag_cores_v2 where hex(core_data) = ?", .{}, .{sqlite.Text{ .data = AMOGUS }})).?;
+    const core_hash = (try ctx.db.?.one(
+        [26]u8,
+        "select core_hash from tag_cores_v2 where hex(core_data) = ?",
+        .{},
+        .{sqlite.Text{ .data = AMOGUS }},
+    )).?;
     const new_core_hash = try ulid.ULID.parse(&core_hash);
     try std.testing.expect(new_core_hash.timestamp > 1000);
+
+    const name_data = (try ctx.db.?.oneAlloc(
+        []const u8,
+        ctx.allocator,
+        "select tag_text from tag_names_v2 where core_hash = ?",
+        .{},
+        .{manage_main.ID.ul(new_core_hash).sql()},
+    )).?;
+    defer ctx.allocator.free(name_data);
+    try std.testing.expectEqualStrings("amongus", name_data);
 }
