@@ -750,7 +750,7 @@ pub const Context = struct {
                         \\values (?, ?, ?, ?, ?) on conflict do nothing
                     ,
                         .{},
-                        .{ core_hash.id, self.hash.id, @enumToInt(source.kind), source.id, parent_source_id },
+                        .{ core_hash.id.sql(), self.hash.id.sql(), @enumToInt(source.kind), source.id, parent_source_id },
                     );
                 } else {
                     try self.ctx.db.?.exec(
@@ -758,7 +758,7 @@ pub const Context = struct {
                         \\values (?, ?, ?, ?) on conflict do nothing
                     ,
                         .{},
-                        .{ core_hash.id, self.hash.id, @enumToInt(source.kind), source.id },
+                        .{ core_hash.id.sql(), self.hash.id.sql(), @enumToInt(source.kind), source.id },
                     );
                 }
             } else {
@@ -769,7 +769,7 @@ pub const Context = struct {
                 try self.ctx.db.?.exec(
                     "insert into tag_files (core_hash, file_hash) values (?, ?) on conflict do nothing",
                     .{},
-                    .{ core_hash.id, self.hash.id },
+                    .{ core_hash.id.sql(), self.hash.id.sql() },
                 );
             }
         }
@@ -778,7 +778,7 @@ pub const Context = struct {
             try self.ctx.db.?.exec(
                 "delete from tag_files where core_hash = ? and file_hash = ?",
                 .{},
-                .{ core_hash.id, self.hash.id },
+                .{ core_hash.id.sql(), self.hash.id.sql() },
             );
             logger.debug("remove file {s} (hash {s}) with tag core hash {d}", .{ self.local_path, self.hash, core_hash.id });
         }
@@ -788,7 +788,7 @@ pub const Context = struct {
             try self.ctx.db.?.exec(
                 "update files set local_path = ? where file_hash = ? and local_path = ?",
                 .{},
-                .{ new_local_path, self.hash.id, self.local_path },
+                .{ new_local_path, self.hash.id.sql(), self.local_path },
             );
 
             self.ctx.allocator.free(self.local_path);
@@ -850,7 +850,7 @@ pub const Context = struct {
 
             const rows = try stmt.all(
                 struct {
-                    id: i64,
+                    id: ID.SQL,
                     hash_data: sqlite.Blob,
                     tag_source_type: i64,
                     tag_source_id: i64,
@@ -858,7 +858,7 @@ pub const Context = struct {
                 },
                 allocator,
                 .{},
-                .{self.hash.id},
+                .{self.hash.id.sql()},
             );
             defer {
                 for (rows) |row| allocator.free(row.hash_data.data);
@@ -884,7 +884,7 @@ pub const Context = struct {
                 try list.append(file_tag);
             }
 
-            return list.toOwnedSlice();
+            return try list.toOwnedSlice();
         }
 
         pub fn printTagsTo(
@@ -1846,7 +1846,7 @@ test "basic db initialization" {
 }
 
 test "tag creation" {
-    var ctx = try makeTestContextRealFile();
+    var ctx = try makeTestContext();
     defer ctx.deinit();
 
     var tag = try ctx.createNamedTag("test_tag", "en", null);
