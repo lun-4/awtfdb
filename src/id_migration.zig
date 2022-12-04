@@ -12,19 +12,19 @@ fn generateSqlReadonly(comptime table: []const u8) []const u8 {
     comptime var buffer: [8192]u8 = undefined;
     comptime {
         result = std.fmt.bufPrint(&buffer,
-            \\ CREATE TRIGGER IF NOT EXISTS {s}_v1_readonly_update
+            \\ CREATE TRIGGER IF NOT EXISTS {s}_readonly_update
             \\ BEFORE UPDATE ON {s}
             \\ BEGIN
             \\     SELECT raise(abort, 'this is a software bug, use {s}_v2 table');
             \\ END;
             \\
-            \\ CREATE TRIGGER IF NOT EXISTS {s}_v1_readonly_insert
+            \\ CREATE TRIGGER IF NOT EXISTS {s}_readonly_insert
             \\ BEFORE INSERT ON {s}
             \\ BEGIN
             \\     SELECT raise(abort, 'this is a software bug, use {s}_v2 table');
             \\ END;
             \\
-            \\ CREATE TRIGGER IF NOT EXISTS {s}_v1_readonly_delete
+            \\ CREATE TRIGGER IF NOT EXISTS {s}_readonly_delete
             \\ BEFORE DELETE ON {s}
             \\ BEGIN
             \\     SELECT raise(abort, 'this is a software bug, use {s}_v2 table');
@@ -364,6 +364,13 @@ fn migrateTagUsageCounts(self: *Context) !void {
     }
 }
 
+fn lockTable(self: *Context, comptime old_table: []const u8) !void {
+    const renamed_table = old_table ++ "_v1";
+    const query = "ALTER TABLE " ++ old_table ++ " RENAME TO " ++ renamed_table ++ ";" ++ comptime generateSqlReadonly(renamed_table);
+    //logger.warn("readonly table query {s}", .{query});
+    try self.db.?.exec(query, .{}, .{});
+}
+
 fn migrateSingleTable(
     self: *Context,
     comptime old_table: []const u8,
@@ -374,11 +381,7 @@ fn migrateSingleTable(
     try function(self);
     try assertSameCount(self, old_table, new_table);
 
-    const renamed_table = old_table ++ "_v1";
-
-    const query = "ALTER TABLE " ++ old_table ++ " RENAME TO " ++ renamed_table ++ ";" ++ comptime generateSqlReadonly(renamed_table);
-    logger.warn("readonly table query {s}", .{query});
-    try self.db.?.exec(query, .{}, .{});
+    try lockTable(self, old_table);
 }
 
 pub fn migrate(self: *Context) !void {
@@ -473,7 +476,7 @@ pub fn migrate(self: *Context) !void {
 
     // to convert from sqlite's PRIMARY KEY AUTOINCREMENT column towards an ulid
     // we need to convert from int primary key to text primary key
-
+    try lockTable(self, "hashes");
     try migrateSingleTable(self, "files", "files_v2", migrateFiles);
     try migrateSingleTable(self, "tag_cores", "tag_cores_v2", migrateCores);
     try migrateSingleTable(self, "tag_names", "tag_names_v2", migrateTagNames);
