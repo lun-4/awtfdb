@@ -322,7 +322,6 @@ pub fn ulidFromBoth(timestamp: anytype, randomnes: u80) ulid.ULID {
 pub const ID = struct {
     data: [26]u8,
     pub const SQL = [26]u8;
-    pub const BaseType = sqlite.Text;
     const Self = @This();
 
     pub fn generate() Self {
@@ -347,10 +346,6 @@ pub const ID = struct {
     }
 
     pub fn sql(self: *const Self) sqlite.Text {
-        return sqlite.Text{ .data = &self.data };
-    }
-
-    pub fn bindField(self: *const Self) !sqlite.Text {
         return sqlite.Text{ .data = &self.data };
     }
 
@@ -512,13 +507,13 @@ pub const Context = struct {
                 \\ where core_hash = ?
             ,
                 .{},
-                .{self.core.id},
+                .{self.core.id.sql()},
             );
             const deleted_tag_count = db.rowsAffected();
 
-            try db.exec("delete from tag_cores where core_hash = ?", .{}, .{self.core.id});
+            try db.exec("delete from tag_cores where core_hash = ?", .{}, .{self.core.id.sql()});
             std.debug.assert(db.rowsAffected() == 1);
-            try db.exec("delete from hashes where id = ?", .{}, .{self.core.id});
+            try db.exec("delete from hashes where id = ?", .{}, .{self.core.id.sql()});
             std.debug.assert(db.rowsAffected() == 1);
 
             return deleted_tag_count;
@@ -552,7 +547,7 @@ pub const Context = struct {
             NamedTagValue,
             allocator,
             .{},
-            .{core_hash.id},
+            .{core_hash.id.sql()},
         );
         defer allocator.free(named_tag_values);
 
@@ -677,32 +672,36 @@ pub const Context = struct {
 
             const hash_blob = sqlite.Blob{ .data = &core_hash_bytes };
             const hash_id = ID.generate();
-            try self.db.?.exec(
-                "insert into hashes_v2 (id, hash_data) values (?, ?)",
-                .{},
-                .{ hash_id, hash_blob },
-            );
 
             // core_hash_bytes is passed by reference here, so we don't
             // have to worry about losing it to undefined memory hell.
             core_hash = .{ .id = hash_id, .hash_data = core_hash_bytes };
+            try self.db.?.exec(
+                "insert into hashes (id, hash_data) values (?, ?)",
+                .{},
+                .{ core_hash.id.sql(), hash_blob },
+            );
+
+            const id_data = try self.db.?.one(ID.SQL, "select id from hashes where hash_data= ?", .{}, .{hash_blob});
+            const id = ID.new(id_data.?);
+            std.log.warn("id = {}", .{id});
 
             const core_data_blob = sqlite.Blob{ .data = &core_data };
             try self.db.?.exec(
                 "insert into tag_cores (core_hash, core_data) values (?, ?)",
                 .{},
-                .{ core_hash.id, core_data_blob },
+                .{ core_hash.id.sql(), core_data_blob },
             );
 
-            logger.debug("created tag core with hash {s}", .{core_hash});
+            logger.warn("created tag core with hash {s}", .{core_hash});
         }
 
         try self.db.?.exec(
             "insert into tag_names (core_hash, tag_text, tag_language) values (?, ?, ?)",
             .{},
-            .{ core_hash.id, text, language },
+            .{ core_hash.id.sql(), text, language },
         );
-        logger.debug("created name tag with value {s} language {s} core {s}", .{ text, language, core_hash });
+        logger.warn("created name tag with value {s} language {s} core {s}", .{ text, language, core_hash });
 
         return Tag{
             .core = core_hash,
