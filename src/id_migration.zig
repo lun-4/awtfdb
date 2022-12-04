@@ -371,6 +371,11 @@ fn lockTable(self: *Context, comptime old_table: []const u8) !void {
     try self.db.?.exec(query, .{}, .{});
 }
 
+fn renameToOriginal(self: *Context, comptime new_table: []const u8, comptime old_table: []const u8) !void {
+    const query = "ALTER TABLE " ++ new_table ++ " RENAME TO " ++ old_table ++ ";";
+    try self.db.?.exec(query, .{}, .{});
+}
+
 fn migrateSingleTable(
     self: *Context,
     comptime old_table: []const u8,
@@ -380,8 +385,8 @@ fn migrateSingleTable(
     logger.info("migrating {s} to {s}...", .{ old_table, new_table });
     try function(self);
     try assertSameCount(self, old_table, new_table);
-
     try lockTable(self, old_table);
+    try renameToOriginal(self, new_table, old_table);
 }
 
 pub fn migrate(self: *Context) !void {
@@ -483,8 +488,12 @@ pub fn migrate(self: *Context) !void {
     try migrateSingleTable(self, "tag_files", "tag_files_v2", migrateTagFiles);
     try migrateSingleTable(self, "pools", "pools_v2", migratePools);
     try migrateSingleTable(self, "pool_entries", "pool_entries_v2", migratePoolEntries);
+
     try migrateSingleTable(self, "metrics_tag_usage_values", "metrics_tag_usage_values_v2", migrateTagUsageCounts);
-    try lockTable(self, "hashes");
+    {
+        try lockTable(self, "hashes");
+        try renameToOriginal(self, "hashes_v2", "hashes");
+    }
 }
 
 fn snowflakeNewHash(self: *Context, old_hash: i64) !ID {
