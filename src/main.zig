@@ -648,6 +648,16 @@ pub const Context = struct {
     // TODO add sources to tag cores (needs a new Hash struct dedicated to it
     // as things like files use Hash but do not have tag sources)
 
+    fn createHash(self: *Self, hash_blob: sqlite.Blob) !ID {
+        const id = ID.generate();
+        try self.db.?.exec(
+            "insert into hashes (id, hash_data) values (?, ?)",
+            .{},
+            .{ id.sql(), hash_blob },
+        );
+        return id;
+    }
+
     pub fn createNamedTag(
         self: *Self,
         text: []const u8,
@@ -671,16 +681,11 @@ pub const Context = struct {
             defer savepoint.commit();
 
             const hash_blob = sqlite.Blob{ .data = &core_hash_bytes };
-            const hash_id = ID.generate();
 
             // core_hash_bytes is passed by reference here, so we don't
             // have to worry about losing it to undefined memory hell.
+            const hash_id = try self.createHash(hash_blob);
             core_hash = .{ .id = hash_id, .hash_data = core_hash_bytes };
-            try self.db.?.exec(
-                "insert into hashes (id, hash_data) values (?, ?)",
-                .{},
-                .{ core_hash.id.sql(), hash_blob },
-            );
 
             const id_data = try self.db.?.one(ID.SQL, "select id from hashes where hash_data= ?", .{}, .{hash_blob});
             const id = ID.new(id_data.?);
@@ -795,7 +800,7 @@ pub const Context = struct {
             try self.ctx.db.?.exec(
                 "delete from files where file_hash = ? and local_path = ?",
                 .{},
-                .{ self.hash.id, self.local_path },
+                .{ self.hash.id.sql(), self.local_path },
             );
 
             // NOTE how that we don't delete it from hashes table.
@@ -978,6 +983,16 @@ pub const Context = struct {
         insert_new_hash: bool = true,
     };
 
+    fn fetchHashId(self: *Self, blob: sqlite.Blob) !?ID {
+        const maybe_id_bytes = try self.db.?.one(
+            ID.SQL,
+            "select id from hashes where hash_data = ?",
+            .{},
+            .{blob},
+        );
+        return if (maybe_id_bytes) |id_bytes| ID.new(id_bytes) else null;
+    }
+
     /// if the file is not indexed and options.insert_new_hash is false,
     /// do not rely on the returned hash's id object making any sense.
     pub fn calculateHash(self: *Self, file: std.fs.File, options: CalculateHashOptions) !Hash {
@@ -994,24 +1009,14 @@ pub const Context = struct {
         hasher.final(&file_hash.hash_data);
 
         const hash_blob = sqlite.Blob{ .data = &file_hash.hash_data };
-        const maybe_hash_id = try self.db.?.one(
-            i64,
-            "select id from hashes where hash_data = ?",
-            .{},
-            .{hash_blob},
-        );
+        const maybe_hash_id = try self.fetchHashId(hash_blob);
         if (maybe_hash_id) |hash_id| {
             file_hash.id = hash_id;
         } else {
             if (options.insert_new_hash) {
-                file_hash.id = (try self.db.?.one(
-                    i64,
-                    "insert into hashes (hash_data) values (?) returning id",
-                    .{},
-                    .{hash_blob},
-                )).?;
+                file_hash.id = try self.createHash(hash_blob);
             } else {
-                file_hash.id = -1;
+                file_hash.id = .{ .data = undefined };
             }
         }
 
@@ -1026,24 +1031,14 @@ pub const Context = struct {
         hasher.final(&hash_entry.hash_data);
 
         const hash_blob = sqlite.Blob{ .data = &hash_entry.hash_data };
-        const maybe_hash_id = try self.db.?.one(
-            i64,
-            "select id from hashes where hash_data = ?",
-            .{},
-            .{hash_blob},
-        );
+        const maybe_hash_id = try self.fetchHashId(hash_blob);
         if (maybe_hash_id) |hash_id| {
             hash_entry.id = hash_id;
         } else {
             if (options.insert_new_hash) {
-                hash_entry.id = (try self.db.?.one(
-                    i64,
-                    "insert into hashes (hash_data) values (?) returning id",
-                    .{},
-                    .{hash_blob},
-                )).?;
+                hash_entry.id = try self.createHash(hash_blob);
             } else {
-                hash_entry.id = -1;
+                hash_entry.id = .{ .data = undefined };
             }
         }
 
@@ -1058,7 +1053,7 @@ pub const Context = struct {
         try self.db.?.exec(
             "insert into files (file_hash, local_path) values (?, ?) on conflict do nothing",
             .{},
-            .{ file_hash.id, absolute_local_path },
+            .{ file_hash.id.sql(), absolute_local_path },
         );
         logger.debug("created file entry hash={s} path={s}", .{
             absolute_local_path,
@@ -1090,7 +1085,7 @@ pub const Context = struct {
 
     // TODO create fetchFileFromHash that receives full hash object and automatically
     // prefers hash instead of id-search
-    pub fn fetchFile(self: *Self, hash_id: i64) !?File {
+    pub fn fetchFile(self: *Self, hash_id: ID) !?File {
         var maybe_local_path = try self.db.?.oneAlloc(
             struct {
                 local_path: []const u8,
@@ -1104,7 +1099,7 @@ pub const Context = struct {
             \\ where files.file_hash = ?
         ,
             .{},
-            .{hash_id},
+            .{hash_id.sql()},
         );
 
         if (maybe_local_path) |*local_path| {
@@ -1112,7 +1107,7 @@ pub const Context = struct {
             defer self.allocator.free(local_path.hash_data.data);
 
             const almost_good_hash = HashSQL{
-                .id = hash_id,
+                .id = hash_id.data,
                 .hash_data = local_path.hash_data,
             };
             return File{
@@ -1125,7 +1120,7 @@ pub const Context = struct {
         }
     }
 
-    pub fn fetchFileExact(self: *Self, hash_id: i64, given_local_path: []const u8) !?File {
+    pub fn fetchFileExact(self: *Self, hash_id: ID, given_local_path: []const u8) !?File {
         var maybe_local_path = try self.db.?.oneAlloc(
             struct {
                 local_path: []const u8,
@@ -1139,7 +1134,7 @@ pub const Context = struct {
             \\ where files.file_hash = ? and files.local_path = ?
         ,
             .{},
-            .{ hash_id, given_local_path },
+            .{ hash_id.sql(), given_local_path },
         );
 
         if (maybe_local_path) |*local_path| {
@@ -1147,7 +1142,7 @@ pub const Context = struct {
             defer self.allocator.free(local_path.hash_data.data);
 
             const almost_good_hash = HashSQL{
-                .id = hash_id,
+                .id = hash_id.data,
                 .hash_data = local_path.hash_data,
             };
             return File{
@@ -1851,7 +1846,7 @@ test "basic db initialization" {
 }
 
 test "tag creation" {
-    var ctx = try makeTestContext();
+    var ctx = try makeTestContextRealFile();
     defer ctx.deinit();
 
     var tag = try ctx.createNamedTag("test_tag", "en", null);
