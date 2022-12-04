@@ -762,7 +762,7 @@ pub fn main() anyerror!void {
                 continue;
             },
             .FetchPool => {
-                given_args.pool = ID.new(arg[0..26].*);
+                given_args.pool = ID.fromString(arg);
                 state = .None;
                 continue;
             },

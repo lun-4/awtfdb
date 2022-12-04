@@ -336,6 +336,9 @@ pub const ID = struct {
     pub fn new(data: [26]u8) Self {
         return Self{ .data = data };
     }
+    pub fn fromString(data: []const u8) Self {
+        return Self.new(data[0..26].*);
+    }
 
     pub fn ul(ulid_data: ulid.ULID) Self {
         return Self{ .data = ulid_data.bytes() };
