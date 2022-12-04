@@ -2,6 +2,7 @@ const std = @import("std");
 const sqlite = @import("sqlite");
 const manage_main = @import("main.zig");
 const Context = manage_main.Context;
+const ID = manage_main.ID;
 const tunez = @import("tunez");
 
 const libpcre = @import("libpcre");
@@ -681,7 +682,7 @@ pub const Args = struct {
     default_tags: StringList,
     wanted_inferrers: ConfigList,
     include_paths: StringList,
-    pool: ?i64 = null,
+    pool: ?ID = null,
     strict: bool = false,
 
     pub fn deinit(self: *@This()) void {
@@ -761,7 +762,7 @@ pub fn main() anyerror!void {
                 continue;
             },
             .FetchPool => {
-                given_args.pool = try std.fmt.parseInt(i64, arg, 10);
+                given_args.pool = ID.new(arg[0..26].*);
                 state = .None;
                 continue;
             },
@@ -893,7 +894,7 @@ pub fn main() anyerror!void {
         .mime => |*mime_ctx| MimeTagInferrer.deinit(mime_ctx),
     };
 
-    var file_ids_for_tagtree = std.ArrayList(i64).init(allocator);
+    var file_ids_for_tagtree = std.ArrayList(ID).init(allocator);
     defer file_ids_for_tagtree.deinit();
 
     for (given_args.include_paths.items) |path_to_include| {

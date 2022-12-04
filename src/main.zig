@@ -1161,7 +1161,7 @@ pub const Context = struct {
         var maybe_local_path = try self.db.?.oneAlloc(
             struct {
                 local_path: []const u8,
-                hash_id: i64,
+                hash_id: ID.SQL,
             },
             self.allocator,
             \\ select local_path, hashes.id
@@ -1179,7 +1179,7 @@ pub const Context = struct {
                 .ctx = self,
                 .local_path = local_path.local_path,
                 .hash = Hash{
-                    .id = local_path.hash_id,
+                    .id = ID.new(local_path.hash_id),
                     .hash_data = hash_data,
                 },
             };
@@ -2151,9 +2151,9 @@ test "file pools" {
         defer ctx.allocator.free(file_hashes);
 
         try std.testing.expectEqual(@as(usize, 3), file_hashes.len);
-        try std.testing.expect(file_hashes[0].id == indexed_file1.hash.id);
-        try std.testing.expect(file_hashes[1].id == indexed_file3.hash.id);
-        try std.testing.expect(file_hashes[2].id == indexed_file2.hash.id);
+        try std.testing.expect(std.meta.eql(file_hashes[0].id, indexed_file1.hash.id));
+        try std.testing.expect(std.meta.eql(file_hashes[1].id, indexed_file3.hash.id));
+        try std.testing.expect(std.meta.eql(file_hashes[2].id, indexed_file2.hash.id));
     }
 }
 
