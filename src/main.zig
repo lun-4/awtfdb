@@ -337,6 +337,7 @@ pub const ID = struct {
         return Self{ .data = data };
     }
     pub fn fromString(data: []const u8) Self {
+        std.debug.assert(data.len == 26);
         return Self.new(data[0..26].*);
     }
 
@@ -1403,7 +1404,7 @@ pub const Context = struct {
             try self.ctx.db.?.exec(
                 "delete from pools where pool_hash = ?",
                 .{},
-                .{self.hash.id},
+                .{self.hash.id.sql()},
             );
         }
 
