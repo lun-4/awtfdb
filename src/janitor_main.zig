@@ -3,6 +3,7 @@ const sqlite = @import("sqlite");
 const manage_main = @import("main.zig");
 const libpcre = @import("libpcre");
 const Context = manage_main.Context;
+const ID = manage_main.ID;
 
 const logger = std.log.scoped(.awtfdb_janitor);
 
@@ -73,13 +74,14 @@ pub fn janitorCheckCores(
         \\ order by core_hash asc
     );
     defer cores_stmt.deinit();
-    // FIXME MERGE BLOCKER add janitor test
+
     var cores_iter = try cores_stmt.iterator(struct {
-        core_hash: i64,
+        core_hash: ID.SQL,
         core_data: sqlite.Blob,
     }, .{});
     while (try cores_iter.nextAlloc(ctx.allocator, .{})) |core_with_blob| {
         defer ctx.allocator.free(core_with_blob.core_data.data);
+        const core_hash = ID.new(core_with_blob.core_hash);
 
         const calculated_hash = try ctx.calculateHashFromMemory(
             core_with_blob.core_data.data,
@@ -87,14 +89,14 @@ pub fn janitorCheckCores(
         );
 
         var hash_with_blob = (try ctx.db.?.oneAlloc(
-            Context.HashWithBlob,
+            Context.HashSQL,
             ctx.allocator,
             \\ select id, hash_data
             \\ from hashes
             \\ where id = ?
         ,
             .{},
-            .{core_with_blob.core_hash},
+            .{core_hash.sql()},
         )).?;
         defer ctx.allocator.free(hash_with_blob.hash_data.data);
 
@@ -106,7 +108,7 @@ pub fn janitorCheckCores(
 
             logger.err(
                 "hashes are incorrect for tag core {d} ({s} != {s})",
-                .{ core_with_blob.core_hash, calculated_hash, upstream_hash },
+                .{ core_hash, calculated_hash, upstream_hash },
             );
 
             if (given_args.repair) {
@@ -131,37 +133,46 @@ pub fn janitorCheckUnusedHashes(
         \\ order by id asc
     );
     defer hashes_stmt.deinit();
-    var hashes_iter = try hashes_stmt.iterator(i64, .{});
-    while (try hashes_iter.next(.{})) |hash_id| {
+    var hashes_iter = try hashes_stmt.iterator(ID.SQL, .{});
+    while (try hashes_iter.next(.{})) |hash_id_sql| {
+        const hash_id = ID.new(hash_id_sql);
+        const doublecheck_id_sql = (try ctx.db.?.one(
+            ID.SQL,
+            "select id from hashes where id = ?",
+            .{},
+            .{hash_id.sql()},
+        )).?;
+        try std.testing.expectEqualStrings(&hash_id_sql, &doublecheck_id_sql);
+
         const core_count = (try ctx.db.?.one(
-            i64,
+            usize,
             \\ select count(*) from tag_cores
             \\ where core_hash = ?
         ,
             .{},
-            .{hash_id},
+            .{hash_id.sql()},
         )).?;
 
         if (core_count > 0) continue;
 
         const file_count = (try ctx.db.?.one(
-            i64,
+            usize,
             \\ select count(*) from files
             \\ where file_hash = ?
         ,
             .{},
-            .{hash_id},
+            .{hash_id.sql()},
         )).?;
 
         if (file_count > 0) continue;
 
         const pool_count = (try ctx.db.?.one(
-            i64,
+            usize,
             \\ select count(*) from pools
             \\ where pool_hash = ?
         ,
             .{},
-            .{hash_id},
+            .{hash_id.sql()},
         )).?;
 
         if (pool_count > 0) continue;
@@ -176,7 +187,7 @@ pub fn janitorCheckUnusedHashes(
                 \\ where id = ?
             ,
                 .{},
-                .{hash_id},
+                .{hash_id.sql()},
             );
             logger.info("deleted hash {d}", .{hash_id});
         }
@@ -196,7 +207,7 @@ pub fn janitorCheckFiles(
     defer stmt.deinit();
 
     const FileRow = struct {
-        file_hash: i64,
+        file_hash: ID.SQL,
         local_path: []const u8,
     };
     var iter = try stmt.iterator(
@@ -207,7 +218,9 @@ pub fn janitorCheckFiles(
     while (try iter.nextAlloc(ctx.allocator, .{})) |row| {
         defer ctx.allocator.free(row.local_path);
 
-        const indexed_file = (try ctx.fetchFileExact(row.file_hash, row.local_path)) orelse return error.InconsistentIndex;
+        const file_hash = ID.new(row.file_hash);
+
+        const indexed_file = (try ctx.fetchFileExact(file_hash, row.local_path)) orelse return error.InconsistentIndex;
         defer indexed_file.deinit();
 
         var file = std.fs.openFileAbsolute(row.local_path, .{ .mode = .read_only }) catch |err| switch (err) {
@@ -216,13 +229,13 @@ pub fn janitorCheckFiles(
                 counters.file_not_found.total += 1;
 
                 const repeated_count = (try ctx.db.?.one(
-                    i64,
+                    usize,
                     \\ select count(*)
                     \\ from files
                     \\ where file_hash = ?
                 ,
                     .{},
-                    .{row.file_hash},
+                    .{file_hash.sql()},
                 )).?;
 
                 std.debug.assert(repeated_count != 0);
@@ -231,7 +244,7 @@ pub fn janitorCheckFiles(
                     // repair action: delete old entry to keep index consistent
                     logger.warn(
                         "found {d} files with same hash, assuming a file move happened for {d}",
-                        .{ repeated_count, row.file_hash },
+                        .{ repeated_count, file_hash },
                     );
 
                     if (given_args.repair) {
@@ -290,7 +303,7 @@ pub fn janitorCheckFiles(
 
                 logger.err(
                     "hashes are incorrect for file {d} (wanted '{s}', got '{s}')",
-                    .{ row.file_hash, calculated_hash, indexed_file.hash },
+                    .{ file_hash, calculated_hash, indexed_file.hash },
                 );
 
                 if (given_args.repair) {
@@ -319,7 +332,7 @@ pub fn janitorCheckFiles(
                             \\ where file_hash = ?
                         ,
                             .{},
-                            .{ preexisting_hash_id, row.file_hash },
+                            .{ preexisting_hash_id, file_hash.sql() },
                         );
                     } else {
                         try ctx.db.?.exec(
@@ -328,7 +341,7 @@ pub fn janitorCheckFiles(
                             \\ where id = ?
                         ,
                             .{},
-                            .{ hash_blob, row.file_hash },
+                            .{ hash_blob, file_hash.sql() },
                         );
                     }
                 }
@@ -484,4 +497,29 @@ pub fn main() anyerror!u8 {
         return 2;
     }
     return 0;
+}
+
+test "janitor functionality" {
+    var ctx = try manage_main.makeTestContext();
+    defer ctx.deinit();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var file = try tmp.dir.createFile("test_file", .{});
+    defer file.close();
+    _ = try file.write("awooga");
+
+    var indexed_file = try ctx.createFileFromDir(tmp.dir, "test_file");
+    defer indexed_file.deinit();
+
+    var tag = try ctx.createNamedTag("test_tag", "en", null);
+    try indexed_file.addTag(tag.core, .{});
+
+    var counters: ErrorCounters = .{};
+
+    var given_args = Args{ .only = undefined };
+
+    try janitorCheckFiles(&ctx, &counters, given_args);
+    try janitorCheckCores(&ctx, &counters, given_args);
+    try janitorCheckUnusedHashes(&ctx, &counters, given_args);
 }
