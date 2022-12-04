@@ -9,20 +9,18 @@ const Migration = manage_main.Migration;
 
 const logger = std.log.scoped(.migration_tests);
 
-var set_log = false;
-
 /// Make test context without any migrations loaded for proper testing.
 ///
 /// Inspired by manage_main.makeTestContext
 pub fn makeTestContext() !Context {
-    if (!set_log) {
+    if (!manage_main.test_set_log) {
         _ = sqlite.c.sqlite3_shutdown();
 
         const rc = sqlite.c.sqlite3_config(sqlite.c.SQLITE_CONFIG_LOG, manage_main.sqliteLog, @as(?*anyopaque, null));
-        set_log = true;
+        manage_main.test_set_log = true;
         if (rc != sqlite.c.SQLITE_OK) {
             logger.err("failed to configure ({}): {d} '{s}'", .{
-                set_log, rc, sqlite.c.sqlite3_errstr(rc),
+                manage_main.test_set_log, rc, sqlite.c.sqlite3_errstr(rc),
             });
             return error.ConfigFail;
         }

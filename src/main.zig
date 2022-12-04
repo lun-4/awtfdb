@@ -1763,7 +1763,23 @@ pub fn main() anyerror!void {
 
 pub var test_db_path_buffer: [std.os.PATH_MAX]u8 = undefined;
 
+pub var test_set_log = false;
+
 pub fn makeTestContext() !Context {
+    if (!test_set_log) {
+        _ = sqlite.c.sqlite3_shutdown();
+
+        const rc = sqlite.c.sqlite3_config(sqlite.c.SQLITE_CONFIG_LOG, sqliteLog, @as(?*anyopaque, null));
+        test_set_log = true;
+        if (rc != sqlite.c.SQLITE_OK) {
+            logger.err("failed to configure ({}): {d} '{s}'", .{
+                test_set_log, rc, sqlite.c.sqlite3_errstr(rc),
+            });
+            return error.ConfigFail;
+        }
+        _ = sqlite.c.sqlite3_initialize();
+    }
+
     const homepath = try std.fs.cwd().realpath(".", &test_db_path_buffer);
     var ctx = Context{
         .args_it = undefined,
