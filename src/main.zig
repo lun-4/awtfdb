@@ -983,7 +983,7 @@ pub const Context = struct {
         insert_new_hash: bool = true,
     };
 
-    fn fetchHashId(self: *Self, blob: sqlite.Blob) !?ID {
+    pub fn fetchHashId(self: *Self, blob: sqlite.Blob) !?ID {
         const maybe_id_bytes = try self.db.?.one(
             ID.SQL,
             "select id from hashes where hash_data = ?",
