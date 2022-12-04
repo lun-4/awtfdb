@@ -3,6 +3,7 @@ const sqlite = @import("sqlite");
 const manage_main = @import("main.zig");
 const libpcre = @import("libpcre");
 const Context = manage_main.Context;
+const ID = manage_main.ID;
 
 const logger = std.log.scoped(.arm);
 
@@ -116,7 +117,7 @@ pub fn main() anyerror!void {
             },
 
             .FetchPool => {
-                const pool_id = try std.fmt.parseInt(i64, arg, 10);
+                const pool_id = ID.fromString(arg);
                 given_args.pool = (try ctx.fetchPool(pool_id)) orelse return error.PoolNotFound;
                 state = .None;
                 continue;
