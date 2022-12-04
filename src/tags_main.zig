@@ -725,10 +725,9 @@ const ListParent = struct {
         defer stmt.deinit();
         var entries = try stmt.all(struct {
             rowid: i64,
-            // FIXME MERGE BLOCKER: we need tests for this
-            parent_tag_id: i64,
+            parent_tag_id: ID.SQL,
             parent_tag: []const u8,
-            child_tag_id: i64,
+            child_tag_id: ID.SQL,
             child_tag: []const u8,
         }, self.ctx.allocator, .{}, .{});
         defer {
@@ -799,17 +798,18 @@ const RemoveParent = struct {
     pub fn run(self: *Self) !void {
         var stdout = std.io.getStdOut().writer();
 
-        // FIXME MERGE BLOCKER add test for this
-
+        // parent_relationship is only used on that stdout call as
+        // information for the user, so it can't be tested until we have
+        // stdout capturing.
         const parent_relationship = (try self.ctx.db.?.one(
-            struct { child_tag: i64, parent_tag: i64 },
+            struct { child_tag: ID.SQL, parent_tag: ID.SQL },
             "select child_tag, parent_tag from tag_implications where rowid = ?",
             .{},
             .{self.config.rowid.?},
         )) orelse return error.InvalidParentId;
 
         try stdout.print(
-            "the parent relationship is between tags {d} -> {d}\n",
+            "the parent relationship is between tags {s} -> {s}\n",
             .{ parent_relationship.parent_tag, parent_relationship.child_tag },
         );
 
@@ -974,6 +974,13 @@ fn parentTestSetup(
     const tag_tree_entry2_id = try ctx.createTagParent(child_tag, parent_tag2);
     const tag_tree_entry3_id = try ctx.createTagParent(parent_tag2, parent_tag3);
     try ctx.processTagTree(.{});
+
+    // always run ListParent so that it compiles
+    // TODO write test for ListParent (capture stdout??)
+    var action = try ListParent.init(ctx, {});
+    defer action.deinit();
+    try action.run();
+
     return ParentTestSetupResult{
         .tag_tree_entry_id = tag_tree_entry_id,
         .tag_tree_entry2_id = tag_tree_entry2_id,
