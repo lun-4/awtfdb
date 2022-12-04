@@ -2222,9 +2222,10 @@ test "everyone else" {
     std.testing.refAllDecls(@import("./rm_main.zig"));
     //std.testing.refAllDecls(@import("./hydrus_api_main.zig"));
     std.testing.refAllDecls(@import("./tags_main.zig"));
+    std.testing.refAllDecls(@import("./janitor_main.zig"));
     std.testing.refAllDecls(@import("./metrics_main.zig"));
     std.testing.refAllDecls(@import("./test_migrations.zig"));
-    //std.testing.refAllDecls(@import("./snowflake.zig"));
+    std.testing.refAllDecls(@import("./snowflake.zig"));
 
     if (builtin.os.tag == .linux) {
         std.testing.refAllDecls(@import("./rename_watcher_main.zig"));

@@ -425,11 +425,12 @@ pub fn migrate(self: *Context) !void {
         \\  ) without rowid, strict;
         \\
         \\CREATE TABLE IF NOT EXISTS tag_implications_v2 (
+        \\     rowid integer primary key,
         \\     child_tag text not null
         \\        constraint tag_implications_v2_child_fk references tag_cores_v2 (core_hash) on delete cascade,
         \\     parent_tag text not null
         \\        constraint tag_implications_v2_parent_fk references tag_cores_v2 (core_hash) on delete cascade,
-        \\     constraint tag_implications_v2_pk primary key (child_tag, parent_tag)
+        \\     constraint tag_implications_v2_uniq unique (child_tag, parent_tag)
         \\) strict;
         \\
         \\CREATE TABLE IF NOT EXISTS tag_files_v2 (
@@ -440,9 +441,15 @@ pub fn migrate(self: *Context) !void {
         \\     tag_source_type int default 0,
         \\     tag_source_id int default 0,
         \\     parent_source_id int default null,
+        \\
         \\      constraint tag_files_tag_source_fk
         \\       foreign key (tag_source_type, tag_source_id)
         \\       references tag_sources (type, id) on delete restrict,
+        \\
+        \\      constraint tag_files_parent_source_id_fk
+        \\       foreign key (parent_source_id)
+        \\       references tag_implications_v2 (rowid) on delete restrict,
+        \\
         \\      constraint tag_files_pk primary key (file_hash, core_hash)
         \\ ) without rowid, strict;
         \\
