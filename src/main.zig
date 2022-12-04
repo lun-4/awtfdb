@@ -1220,19 +1220,16 @@ pub const Context = struct {
             i64,
             "insert into tag_implications (child_tag, parent_tag) values (?, ?) returning rowid",
             .{},
-            .{
-                child_tag.core.id,
-                parent_tag.core.id,
-            },
+            .{ child_tag.core.id.sql(), parent_tag.core.id.sql() },
         )).?;
     }
 
-    fn processSingleFileIntoTagTree(self: *Self, file_hash: i64, treemap: TagTreeMap) !void {
+    fn processSingleFileIntoTagTree(self: *Self, file_hash: ID, treemap: TagTreeMap) !void {
         var file = (try self.fetchFile(file_hash)).?;
         defer file.deinit();
 
         const TagEntry = struct {
-            tag_id: i64,
+            tag_id: ID,
             parent_entry_id: i64,
         };
         const TagSet = std.AutoHashMap(TagEntry, void);
@@ -1284,7 +1281,7 @@ pub const Context = struct {
             // (prevent db locking i/o)
             var already_has_it = false;
             for (file_tags) |file_tag| {
-                if (tag_entry.tag_id == file_tag.core.id) already_has_it = true;
+                if (std.meta.eql(tag_entry.tag_id, file_tag.core.id)) already_has_it = true;
             }
             if (already_has_it) continue;
 
@@ -1300,11 +1297,11 @@ pub const Context = struct {
         ///
         /// Useful if you are ainclude(1) and don't want to process the entire
         /// file database.
-        files: ?[]const i64 = null,
+        files: ?[]ID = null,
     };
 
-    const TagTreeEntry = struct { tag_id: i64, row_id: i64 };
-    const TagTreeMap = std.AutoHashMap(i64, []TagTreeEntry);
+    const TagTreeEntry = struct { tag_id: ID, row_id: i64 };
+    const TagTreeMap = std.AutoHashMap(ID, []TagTreeEntry);
 
     pub fn processTagTree(self: *Self, options: ProcessTagTreeOptions) !void {
         logger.info("processing tag tree...", .{});
@@ -1314,7 +1311,7 @@ pub const Context = struct {
         );
         defer tree_stmt.deinit();
         var tree_rows = try tree_stmt.all(
-            struct { row_id: i64, child_tag: i64, parent_tag: i64 },
+            struct { row_id: i64, child_tag: ID.SQL, parent_tag: ID.SQL },
             self.allocator,
             .{},
             .{},
@@ -1329,24 +1326,25 @@ pub const Context = struct {
         }
 
         for (tree_rows) |tree_row| {
-            const maybe_parents = treemap.get(tree_row.child_tag);
+            const child_tag = ID.new(tree_row.child_tag);
+            const maybe_parents = treemap.get(child_tag);
             if (maybe_parents) |parents| {
                 // realloc
                 var new_parents = try self.allocator.alloc(TagTreeEntry, parents.len + 1);
                 std.mem.copy(TagTreeEntry, new_parents, parents);
                 new_parents[new_parents.len - 1] = .{
-                    .tag_id = tree_row.parent_tag,
+                    .tag_id = ID.new(tree_row.parent_tag),
                     .row_id = tree_row.row_id,
                 };
                 self.allocator.free(parents);
-                try treemap.put(tree_row.child_tag, new_parents);
+                try treemap.put(child_tag, new_parents);
             } else {
                 var new_parents = try self.allocator.alloc(TagTreeEntry, 1);
                 new_parents[0] = .{
-                    .tag_id = tree_row.parent_tag,
+                    .tag_id = ID.new(tree_row.parent_tag),
                     .row_id = tree_row.row_id,
                 };
-                try treemap.put(tree_row.child_tag, new_parents);
+                try treemap.put(child_tag, new_parents);
             }
         }
 
@@ -1362,7 +1360,7 @@ pub const Context = struct {
             defer stmt.deinit();
 
             const FileRow = struct {
-                file_hash: i64,
+                file_hash: ID.SQL,
             };
             var iter = try stmt.iterator(
                 FileRow,
@@ -1370,7 +1368,7 @@ pub const Context = struct {
             );
 
             while (try iter.next(.{})) |file_row| {
-                const file_hash = file_row.file_hash;
+                const file_hash = ID.new(file_row.file_hash);
                 try self.processSingleFileIntoTagTree(file_hash, treemap);
             }
         }
@@ -2030,21 +2028,21 @@ test "tag parenting" {
     var saw_parent3 = false;
 
     for (file_tags) |file_tag| {
-        if (file_tag.core.id == parent_tag.core.id) {
+        if (std.meta.eql(file_tag.core.id, parent_tag.core.id)) {
             try std.testing.expectEqual(TagSourceType.system, file_tag.source.kind);
             try std.testing.expectEqual(@as(i64, @enumToInt(SystemTagSources.tag_parenting)), file_tag.source.id);
             try std.testing.expectEqual(tag_tree_entry_id, file_tag.parent_source_id.?);
             saw_parent = true;
         }
-        if (file_tag.core.id == parent_tag2.core.id) {
+        if (std.meta.eql(file_tag.core.id, parent_tag2.core.id)) {
             try std.testing.expectEqual(tag_tree_entry2_id, file_tag.parent_source_id.?);
             saw_parent2 = true;
         }
-        if (file_tag.core.id == parent_tag3.core.id) {
+        if (std.meta.eql(file_tag.core.id, parent_tag3.core.id)) {
             try std.testing.expectEqual(tag_tree_entry3_id, file_tag.parent_source_id.?);
             saw_parent3 = true;
         }
-        if (file_tag.core.id == child_tag.core.id) saw_child = true;
+        if (std.meta.eql(file_tag.core.id, child_tag.core.id)) saw_child = true;
     }
 
     try std.testing.expect(saw_parent);
