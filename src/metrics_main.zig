@@ -122,27 +122,6 @@ pub fn main() anyerror!u8 {
     return 0;
 }
 
-// FIXME MERGE BLOCKER add test for this
-fn runMetricsTagUsageSingleCore(
-    tag_files_stmt: *sqlite.DynamicStatement,
-    core_hash: i64,
-) callconv(.Async) anyerror!i64 {
-    suspend {}
-
-    var timer = try std.time.Timer.start();
-
-    const tag_files_count = (try tag_files_stmt.one(i64, .{}, .{core_hash})).?;
-    tag_files_stmt.reset();
-
-    const core_count_time_taken_ns = timer.lap();
-    logger.info(
-        "core {d} has {d} files (took {:.2}ms)",
-        .{ core_hash, tag_files_count, core_count_time_taken_ns / std.time.ns_per_ms },
-    );
-
-    return tag_files_count;
-}
-
 fn runMetricsTagUsage(ctx: *Context, metrics_timestamp: Timestamp) !void {
     try ctx.db.?.exec(
         "insert into metrics_tag_usage_timestamps (timestamp) values (?)",
