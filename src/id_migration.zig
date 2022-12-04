@@ -390,7 +390,7 @@ pub fn migrate(self: *Context) !void {
     var diags = sqlite.Diagnostics{};
 
     self.db.?.execMulti(
-        \\ CREATE TABLE hashes_v2 (
+        \\ CREATE TABLE IF NOT EXISTS hashes_v2 (
         \\     id text primary key,
         \\     hash_data blob
         \\        constraint hashes_length check (length(hash_data) == 32)
@@ -476,7 +476,6 @@ pub fn migrate(self: *Context) !void {
 
     // to convert from sqlite's PRIMARY KEY AUTOINCREMENT column towards an ulid
     // we need to convert from int primary key to text primary key
-    try lockTable(self, "hashes");
     try migrateSingleTable(self, "files", "files_v2", migrateFiles);
     try migrateSingleTable(self, "tag_cores", "tag_cores_v2", migrateCores);
     try migrateSingleTable(self, "tag_names", "tag_names_v2", migrateTagNames);
@@ -485,6 +484,7 @@ pub fn migrate(self: *Context) !void {
     try migrateSingleTable(self, "pools", "pools_v2", migratePools);
     try migrateSingleTable(self, "pool_entries", "pool_entries_v2", migratePoolEntries);
     try migrateSingleTable(self, "metrics_tag_usage_values", "metrics_tag_usage_values_v2", migrateTagUsageCounts);
+    try lockTable(self, "hashes");
 }
 
 fn snowflakeNewHash(self: *Context, old_hash: i64) !ID {
