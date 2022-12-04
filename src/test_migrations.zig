@@ -258,20 +258,20 @@ test "validate snowflake migration works" {
 
     try loadSingleMigration(&ctx, 8);
 
-    const file_hash = (try ctx.db.?.one([26]u8, "select file_hash from files_v2 where local_path = ?", .{}, .{file_realpath})).?;
+    const file_hash = (try ctx.db.?.one([26]u8, "select file_hash from files where local_path = ?", .{}, .{file_realpath})).?;
     const new_file_hash = try ulid.ULID.parse(&file_hash);
     try std.testing.expectEqual(@divTrunc(stat.mtime, std.time.ns_per_ms), new_file_hash.timestamp);
 
-    const file2_hash = (try ctx.db.?.one([26]u8, "select file_hash from files_v2 where local_path = ?", .{}, .{file2_realpath})).?;
+    const file2_hash = (try ctx.db.?.one([26]u8, "select file_hash from files where local_path = ?", .{}, .{file2_realpath})).?;
     try std.testing.expectEqualSlices(u8, &file_hash, &file2_hash);
 
-    const file3_hash = (try ctx.db.?.one([26]u8, "select file_hash from files_v2 where local_path = ?", .{}, .{file3_realpath})).?;
+    const file3_hash = (try ctx.db.?.one([26]u8, "select file_hash from files where local_path = ?", .{}, .{file3_realpath})).?;
     const new_file3_hash = try ulid.ULID.parse(&file3_hash);
     try std.testing.expectEqual(@divTrunc(stat3.mtime, std.time.ns_per_ms), new_file3_hash.timestamp);
 
     const core_hash = (try ctx.db.?.one(
         [26]u8,
-        "select core_hash from tag_cores_v2 where hex(core_data) = ?",
+        "select core_hash from tag_cores where hex(core_data) = ?",
         .{},
         .{sqlite.Text{ .data = AMOGUS }},
     )).?;
@@ -281,7 +281,7 @@ test "validate snowflake migration works" {
     const name_data = (try ctx.db.?.oneAlloc(
         []const u8,
         ctx.allocator,
-        "select tag_text from tag_names_v2 where core_hash = ?",
+        "select tag_text from tag_names where core_hash = ?",
         .{},
         .{manage_main.ID.ul(new_core_hash).sql()},
     )).?;
@@ -290,7 +290,7 @@ test "validate snowflake migration works" {
 
     const tagfile_count = (try ctx.db.?.one(
         i64,
-        "select count(*) from tag_files_v2 where core_hash = ?",
+        "select count(*) from tag_files where core_hash = ?",
         .{},
         .{manage_main.ID.ul(new_core_hash).sql()},
     )).?;
