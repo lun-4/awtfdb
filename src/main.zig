@@ -1390,7 +1390,7 @@ pub const Context = struct {
                 usize,
                 "select max(entry_index) from pool_entries where pool_hash = ?",
                 .{},
-                .{self.hash.id},
+                .{self.hash.id.sql()},
             );
 
             return if (maybe_max_index) |max_index| max_index + 1 else 0;
@@ -1404,33 +1404,33 @@ pub const Context = struct {
             );
         }
 
-        pub fn addFile(self: PoolSelf, file_id: i64) !void {
+        pub fn addFile(self: PoolSelf, file_id: ID) !void {
             const index = try self.availableIndex();
             logger.warn("adding file {d} to pool {d} index {d}", .{ file_id, self.hash.id, index });
             try self.ctx.db.?.exec(
                 "insert into pool_entries (file_hash, pool_hash, entry_index) values (?, ?, ?)",
                 .{},
-                .{ file_id, self.hash.id, index },
+                .{ file_id.sql(), self.hash.id.sql(), index },
             );
         }
 
-        pub fn removeFile(self: PoolSelf, file_id: i64) !void {
+        pub fn removeFile(self: PoolSelf, file_id: ID) !void {
             try self.ctx.db.?.exec(
                 "delete from pool_entries where file_hash = ? and pool_hash = ?",
                 .{},
-                .{ file_id, self.hash.id },
+                .{ file_id.sql(), self.hash.id.sql() },
             );
         }
 
         pub fn addFileAtIndex(
             self: PoolSelf,
-            new_file_id: i64,
+            new_file_id: ID,
             index: usize,
         ) !void {
             var all_file_hashes = try self.fetchFiles(self.ctx.allocator);
             defer self.ctx.allocator.free(all_file_hashes);
 
-            var all_hash_ids = std.ArrayList(i64).init(self.ctx.allocator);
+            var all_hash_ids = std.ArrayList(ID).init(self.ctx.allocator);
             defer all_hash_ids.deinit();
             for (all_file_hashes) |hash| try all_hash_ids.append(hash.id);
 
@@ -1450,12 +1450,16 @@ pub const Context = struct {
                 errdefer savepoint.rollback();
                 defer savepoint.commit();
 
-                try self.ctx.db.?.exec("delete from pool_entries where pool_hash = ?", .{}, .{self.hash.id});
+                try self.ctx.db.?.exec(
+                    "delete from pool_entries where pool_hash = ?",
+                    .{},
+                    .{self.hash.id.sql()},
+                );
                 for (all_hash_ids.items) |pool_file_id, pool_index| {
                     try self.ctx.db.?.exec(
                         "insert into pool_entries (file_hash, pool_hash, entry_index) values (?, ?, ?)",
                         .{},
-                        .{ pool_file_id, self.hash.id, pool_index },
+                        .{ pool_file_id.sql(), self.hash.id.sql(), pool_index },
                     );
                 }
             }
@@ -1482,7 +1486,7 @@ pub const Context = struct {
                 HashSQL,
                 allocator,
                 .{},
-                .{self.hash.id},
+                .{self.hash.id.sql()},
             );
             defer {
                 for (internal_hashes) |hash| allocator.free(hash.hash_data.data);
@@ -1496,7 +1500,7 @@ pub const Context = struct {
                 try list.append(hash.toRealHash());
             }
 
-            return list.toOwnedSlice();
+            return try list.toOwnedSlice();
         }
     };
 
@@ -1515,12 +1519,7 @@ pub const Context = struct {
         defer savepoint.commit();
 
         const hash_blob = sqlite.Blob{ .data = &core_hash_bytes };
-        const core_hash_id = (try self.db.?.one(
-            i64,
-            "insert into hashes (hash_data) values (?) returning id",
-            .{},
-            .{hash_blob},
-        )).?;
+        const core_hash_id = try self.createHash(hash_blob);
 
         // core_hash_bytes is passed by reference here, so we don't
         // have to worry about losing it to undefined memory hell.
@@ -1529,7 +1528,7 @@ pub const Context = struct {
         try self.db.?.exec(
             "insert into pools (pool_hash, pool_core_data, title) values (?, ?, ?)",
             .{},
-            .{ core_hash_id, core_data_blob, title },
+            .{ core_hash_id.sql(), core_data_blob, title },
         );
 
         var pool_hash = Hash{ .id = core_hash_id, .hash_data = core_hash_bytes };
@@ -1541,7 +1540,7 @@ pub const Context = struct {
         };
     }
 
-    pub fn fetchPool(self: *Self, hash_id: i64) !?Pool {
+    pub fn fetchPool(self: *Self, hash_id: ID) !?Pool {
         var maybe_pool = try self.db.?.oneAlloc(
             struct {
                 title: []const u8,
@@ -1555,7 +1554,7 @@ pub const Context = struct {
             \\ where pools.pool_hash = ?
         ,
             .{},
-            .{hash_id},
+            .{hash_id.sql()},
         );
 
         if (maybe_pool) |*pool| {
@@ -1563,7 +1562,7 @@ pub const Context = struct {
             defer self.allocator.free(pool.hash_data.data);
 
             const almost_good_hash = HashSQL{
-                .id = hash_id,
+                .id = hash_id.data,
                 .hash_data = pool.hash_data,
             };
             return Pool{
@@ -2102,9 +2101,9 @@ test "file pools" {
         defer ctx.allocator.free(file_hashes);
 
         try std.testing.expectEqual(@as(usize, 3), file_hashes.len);
-        try std.testing.expect(file_hashes[0].id == indexed_file3.hash.id);
-        try std.testing.expect(file_hashes[1].id == indexed_file1.hash.id);
-        try std.testing.expect(file_hashes[2].id == indexed_file2.hash.id);
+        try std.testing.expect(std.meta.eql(file_hashes[0].id, indexed_file3.hash.id));
+        try std.testing.expect(std.meta.eql(file_hashes[1].id, indexed_file1.hash.id));
+        try std.testing.expect(std.meta.eql(file_hashes[2].id, indexed_file2.hash.id));
     }
 
     // remove one, assert it remains in order
@@ -2115,8 +2114,8 @@ test "file pools" {
         defer ctx.allocator.free(file_hashes);
 
         try std.testing.expectEqual(@as(usize, 2), file_hashes.len);
-        try std.testing.expect(file_hashes[0].id == indexed_file3.hash.id);
-        try std.testing.expect(file_hashes[1].id == indexed_file2.hash.id);
+        try std.testing.expect(std.meta.eql(file_hashes[0].id, indexed_file3.hash.id));
+        try std.testing.expect(std.meta.eql(file_hashes[1].id, indexed_file2.hash.id));
     }
 
     // add it again, see it at end
@@ -2127,9 +2126,9 @@ test "file pools" {
         defer ctx.allocator.free(file_hashes);
 
         try std.testing.expectEqual(@as(usize, 3), file_hashes.len);
-        try std.testing.expect(file_hashes[0].id == indexed_file3.hash.id);
-        try std.testing.expect(file_hashes[1].id == indexed_file2.hash.id);
-        try std.testing.expect(file_hashes[2].id == indexed_file1.hash.id);
+        try std.testing.expect(std.meta.eql(file_hashes[0].id, indexed_file3.hash.id));
+        try std.testing.expect(std.meta.eql(file_hashes[1].id, indexed_file2.hash.id));
+        try std.testing.expect(std.meta.eql(file_hashes[2].id, indexed_file1.hash.id));
     }
 
     // remove one, assert it remains in order
@@ -2140,8 +2139,8 @@ test "file pools" {
         defer ctx.allocator.free(file_hashes);
 
         try std.testing.expectEqual(@as(usize, 2), file_hashes.len);
-        try std.testing.expect(file_hashes[0].id == indexed_file3.hash.id);
-        try std.testing.expect(file_hashes[1].id == indexed_file2.hash.id);
+        try std.testing.expect(std.meta.eql(file_hashes[0].id, indexed_file3.hash.id));
+        try std.testing.expect(std.meta.eql(file_hashes[1].id, indexed_file2.hash.id));
     }
 
     // add it IN A SPECIFIED INDEX, see it at end
