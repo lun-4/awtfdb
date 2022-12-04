@@ -73,6 +73,7 @@ pub fn janitorCheckCores(
         \\ order by core_hash asc
     );
     defer cores_stmt.deinit();
+    // FIXME MERGE BLOCKER add janitor test
     var cores_iter = try cores_stmt.iterator(struct {
         core_hash: i64,
         core_data: sqlite.Blob,

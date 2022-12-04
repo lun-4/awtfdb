@@ -415,7 +415,7 @@ const RemoveAction = struct {
             );
 
             const deleted_name_count = (try self.ctx.db.?.one(
-                i64,
+                usize,
                 \\ delete from tag_names
                 \\ where tag_text = ?
                 \\ and tag_language = ?
@@ -437,7 +437,7 @@ const RemoveAction = struct {
 
         {
             const referenced_files = (try self.ctx.db.?.one(
-                i64,
+                usize,
                 "select count(*) from tag_files where core_hash = ?",
                 .{},
                 .{core_hash_id.?.sql()},
@@ -450,13 +450,13 @@ const RemoveAction = struct {
             .{amount},
         );
 
-        var deleted_count: ?i64 = null;
+        var deleted_count: ?usize = null;
 
         if (self.config.tag_core) |tag_core_hex_string| {
             var core = try consumeCoreHash(self.ctx, &raw_core_hash_buffer, tag_core_hex_string);
             // TODO fix deleted_count here
             deleted_count = (try self.ctx.db.?.one(
-                i64,
+                usize,
                 \\ delete from tag_names
                 \\ where core_hash = ?
                 \\ returning (
@@ -472,7 +472,7 @@ const RemoveAction = struct {
             try self.ctx.db.?.exec("delete from hashes where id = ?", .{}, .{core.id.sql()});
         } else if (self.config.tag) |tag_text| {
             deleted_count = (try self.ctx.db.?.one(
-                i64,
+                usize,
                 \\ delete from tag_names
                 \\ where tag_text = ? and tag_language = ?
                 \\ returning (
@@ -725,6 +725,7 @@ const ListParent = struct {
         defer stmt.deinit();
         var entries = try stmt.all(struct {
             rowid: i64,
+            // FIXME MERGE BLOCKER: we need tests for this
             parent_tag_id: i64,
             parent_tag: []const u8,
             child_tag_id: i64,
@@ -798,6 +799,8 @@ const RemoveParent = struct {
     pub fn run(self: *Self) !void {
         var stdout = std.io.getStdOut().writer();
 
+        // FIXME MERGE BLOCKER add test for this
+
         const parent_relationship = (try self.ctx.db.?.one(
             struct { child_tag: i64, parent_tag: i64 },
             "select child_tag, parent_tag from tag_implications where rowid = ?",
@@ -811,7 +814,7 @@ const RemoveParent = struct {
         );
 
         const tag_file_count = (try self.ctx.db.?.one(
-            i64,
+            usize,
             "select count(*) from tag_files where parent_source_id = ?",
             .{},
             .{self.config.rowid.?},
@@ -844,7 +847,7 @@ const RemoveParent = struct {
             if (self.config.delete_file_entries) {
                 logger.info("REMOVING all tag file entries that were made by this parent...", .{});
                 const deleted_tag_file_count = (try self.ctx.db.?.one(
-                    i64,
+                    usize,
                     \\ delete from tag_files
                     \\ where
                     \\ 	parent_source_id = ?
@@ -867,7 +870,7 @@ const RemoveParent = struct {
             } else {
                 logger.info("UPDATING all tag file entries that were made by this parent and setting to null...", .{});
                 const updated_tag_file_count = (try self.ctx.db.?.one(
-                    i64,
+                    usize,
                     \\ update tag_files
                     \\ set
                     \\ 	parent_source_id = null,

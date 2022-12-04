@@ -124,8 +124,8 @@ test "single migration test" {
     defer ctx.deinit();
 
     try loadSingleMigration(&ctx, 1);
-    const count = try ctx.db.?.one(i64, "select count(*) from hashes", .{}, .{});
-    try std.testing.expectEqual(@as(?i64, 0), count);
+    const count = try ctx.db.?.one(usize, "select count(*) from hashes", .{}, .{});
+    try std.testing.expectEqual(@as(?usize, 0), count);
 }
 
 test "validate migration 2 works" {
@@ -289,10 +289,10 @@ test "validate snowflake migration works" {
     try std.testing.expectEqualStrings("amongus", name_data);
 
     const tagfile_count = (try ctx.db.?.one(
-        i64,
+        usize,
         "select count(*) from tag_files where core_hash = ?",
         .{},
         .{manage_main.ID.ul(new_core_hash).sql()},
     )).?;
-    try std.testing.expectEqual(@as(i64, 2), tagfile_count);
+    try std.testing.expectEqual(@as(usize, 2), tagfile_count);
 }

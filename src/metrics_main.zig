@@ -30,9 +30,11 @@ const Args = struct {
 
 const METRICS_COUNT_TABLES = .{ "metrics_count_files", "metrics_count_tag_cores", "metrics_count_tag_names" };
 
+const Timestamp = i64;
+
 fn runMetricsCounter(
     ctx: *Context,
-    metrics_timestamp: i64,
+    metrics_timestamp: Timestamp,
     comptime input_table: []const u8,
     comptime output_metrics_table: []const u8,
 ) !void {
@@ -120,14 +122,7 @@ pub fn main() anyerror!u8 {
     return 0;
 }
 
-const TagUsageResult = struct {
-    core_hash: i64,
-    relationship_count: i64,
-};
-
-const TagUsageInputChannel = std.event.Channel(i64);
-const TagUsageResultChannel = std.event.Channel(TagUsageResult);
-
+// FIXME MERGE BLOCKER add test for this
 fn runMetricsTagUsageSingleCore(
     tag_files_stmt: *sqlite.DynamicStatement,
     core_hash: i64,
@@ -148,7 +143,7 @@ fn runMetricsTagUsageSingleCore(
     return tag_files_count;
 }
 
-fn runMetricsTagUsage(ctx: *Context, metrics_timestamp: i64) !void {
+fn runMetricsTagUsage(ctx: *Context, metrics_timestamp: Timestamp) !void {
     try ctx.db.?.exec(
         "insert into metrics_tag_usage_timestamps (timestamp) values (?)",
         .{},
@@ -164,7 +159,7 @@ fn runMetricsTagUsage(ctx: *Context, metrics_timestamp: i64) !void {
     );
     defer stmt.deinit();
 
-    var it = try stmt.iterator(struct { core_hash: ID.SQL, relationship_count: i64 }, .{});
+    var it = try stmt.iterator(struct { core_hash: ID.SQL, relationship_count: usize }, .{});
     var timer = try std.time.Timer.start();
     while (try it.next(.{})) |row| {
         const exec_time_ns = timer.lap();
@@ -180,7 +175,7 @@ fn runMetricsTagUsage(ctx: *Context, metrics_timestamp: i64) !void {
     }
 }
 
-fn runTagSourceCounters(ctx: *Context, metrics_timestamp: i64) !void {
+fn runTagSourceCounters(ctx: *Context, metrics_timestamp: Timestamp) !void {
     var stmt = try ctx.db.?.prepare(
         \\ select distinct type, id,
         \\  (select count(*) from tag_files where tag_source_type  = tag_sources.type and tag_source_id=tag_sources.id) AS relationship_count
@@ -191,7 +186,7 @@ fn runTagSourceCounters(ctx: *Context, metrics_timestamp: i64) !void {
     var it = try stmt.iterator(struct {
         tag_source_type: i64,
         tag_source_id: i64,
-        relationship_count: i64,
+        relationship_count: usize,
     }, .{});
     var timer = try std.time.Timer.start();
     while (try it.next(.{})) |row| {
@@ -206,7 +201,7 @@ fn runTagSourceCounters(ctx: *Context, metrics_timestamp: i64) !void {
     }
 }
 
-fn runAllMetricsCounters(given_args: Args, ctx: *Context, metrics_timestamp: i64) !void {
+fn runAllMetricsCounters(given_args: Args, ctx: *Context, metrics_timestamp: Timestamp) !void {
     try runMetricsCounter(ctx, metrics_timestamp, "files", "metrics_count_files");
     try runMetricsCounter(ctx, metrics_timestamp, "tag_cores", "metrics_count_tag_cores");
     try runMetricsCounter(ctx, metrics_timestamp, "tag_names", "metrics_count_tag_names");
@@ -234,8 +229,8 @@ test "metrics (tags)" {
 
     // fact on this test: names > cores
 
-    const last_metrics_tag_core = (try ctx.db.?.one(i64, "select value from metrics_count_tag_cores", .{}, .{})).?;
-    const last_metrics_tag_name = (try ctx.db.?.one(i64, "select value from metrics_count_tag_names", .{}, .{})).?;
+    const last_metrics_tag_core = (try ctx.db.?.one(usize, "select value from metrics_count_tag_cores", .{}, .{})).?;
+    const last_metrics_tag_name = (try ctx.db.?.one(usize, "select value from metrics_count_tag_names", .{}, .{})).?;
 
     try std.testing.expect(last_metrics_tag_name > last_metrics_tag_core);
 }
@@ -289,19 +284,19 @@ test "metrics (tags and files)" {
     try runAllMetricsCounters(.{ .full = true }, &ctx, std.time.timestamp());
 
     // fact on this test: there are 6 file<->tag relations
-    const last_metrics_tag_file = (try ctx.db.?.one(i64, "select value from metrics_count_tag_files", .{}, .{})).?;
-    try std.testing.expectEqual(@as(i64, 6), last_metrics_tag_file);
+    const last_metrics_tag_file = (try ctx.db.?.one(usize, "select value from metrics_count_tag_files", .{}, .{})).?;
+    try std.testing.expectEqual(@as(usize, 6), last_metrics_tag_file);
 
     // fact on this test: there are 3 files
-    const last_metrics_file = (try ctx.db.?.one(i64, "select value from metrics_count_files", .{}, .{})).?;
-    try std.testing.expectEqual(@as(i64, 3), last_metrics_file);
+    const last_metrics_file = (try ctx.db.?.one(usize, "select value from metrics_count_files", .{}, .{})).?;
+    try std.testing.expectEqual(@as(usize, 3), last_metrics_file);
 
     // fact on this test:
     // 	tag1 has 3 relationships,
     // 	tag2 has 1 relationship,
     // 	tag3 has 2 relationships
 
-    const last_metrics_tag_usage_timestamp = (try ctx.db.?.one(i64, "select timestamp from metrics_tag_usage_timestamps", .{}, .{})).?;
+    const last_metrics_tag_usage_timestamp = (try ctx.db.?.one(usize, "select timestamp from metrics_tag_usage_timestamps", .{}, .{})).?;
 
     var metrics_tag_usage_values_stmt = try ctx.db.?.prepare(
         \\ select core_hash, relationship_count
@@ -335,11 +330,11 @@ test "metrics (tags and files)" {
     // fact on this test
     // source type=0 and id=0 has 6 relationships
 
-    const source_usage = try ctx.db.?.one(i64,
+    const source_usage = try ctx.db.?.one(usize,
         \\ select relationship_count
         \\ from metrics_tag_source_usage
         \\ where timestamp = ? and tag_source_type = 0 and tag_source_id = 0
     , .{}, .{last_metrics_tag_usage_timestamp});
 
-    try std.testing.expectEqual(@as(?i64, 6), source_usage);
+    try std.testing.expectEqual(@as(?usize, 6), source_usage);
 }

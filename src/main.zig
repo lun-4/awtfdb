@@ -4,6 +4,8 @@ const sqlite = @import("sqlite");
 const ulid = @import("ulid");
 const IdMigration = @import("id_migration.zig");
 
+const RowID = i64;
+
 pub const AWTFDB_BLAKE3_CONTEXT = "awtfdb Sun Mar 20 16:58:11 AM +00 2022 main hash key";
 
 const HELPTEXT =
@@ -1234,7 +1236,7 @@ pub const Context = struct {
 
         const TagEntry = struct {
             tag_id: ID,
-            parent_entry_id: i64,
+            parent_entry_id: RowID,
         };
         const TagSet = std.AutoHashMap(TagEntry, void);
         var tags_to_add = TagSet.init(self.allocator);
@@ -1304,7 +1306,7 @@ pub const Context = struct {
         files: ?[]ID = null,
     };
 
-    const TagTreeEntry = struct { tag_id: ID, row_id: i64 };
+    const TagTreeEntry = struct { tag_id: ID, row_id: RowID };
     const TagTreeMap = std.AutoHashMap(ID, []TagTreeEntry);
 
     pub fn processTagTree(self: *Self, options: ProcessTagTreeOptions) !void {
@@ -1315,7 +1317,7 @@ pub const Context = struct {
         );
         defer tree_stmt.deinit();
         var tree_rows = try tree_stmt.all(
-            struct { row_id: i64, child_tag: ID.SQL, parent_tag: ID.SQL },
+            struct { row_id: RowID, child_tag: ID.SQL, parent_tag: ID.SQL },
             self.allocator,
             .{},
             .{},
@@ -2222,7 +2224,7 @@ test "everyone else" {
     std.testing.refAllDecls(@import("./tags_main.zig"));
     std.testing.refAllDecls(@import("./metrics_main.zig"));
     std.testing.refAllDecls(@import("./test_migrations.zig"));
-    std.testing.refAllDecls(@import("./snowflake.zig"));
+    //std.testing.refAllDecls(@import("./snowflake.zig"));
 
     if (builtin.os.tag == .linux) {
         std.testing.refAllDecls(@import("./rename_watcher_main.zig"));

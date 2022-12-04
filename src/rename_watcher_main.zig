@@ -288,7 +288,7 @@ const RenameContext = struct {
         // find out if the target newpath is a folder or not by searching
         // if there are multiple entries with it already
         var newpath_count = (try self.ctx.db.?.one(
-            i64,
+            usize,
             \\ select count(*)
             \\ from files
             \\ where local_path LIKE ? || '%'
