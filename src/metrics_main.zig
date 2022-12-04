@@ -2,6 +2,7 @@ const std = @import("std");
 const sqlite = @import("sqlite");
 const manage_main = @import("main.zig");
 const Context = manage_main.Context;
+const ID = manage_main.ID;
 
 const logger = std.log.scoped(.awtfdb_janitor);
 
@@ -163,16 +164,18 @@ fn runMetricsTagUsage(ctx: *Context, metrics_timestamp: i64) !void {
     );
     defer stmt.deinit();
 
-    var it = try stmt.iterator(struct { core_hash: i64, relationship_count: i64 }, .{});
+    var it = try stmt.iterator(struct { core_hash: ID.SQL, relationship_count: i64 }, .{});
     var timer = try std.time.Timer.start();
     while (try it.next(.{})) |row| {
         const exec_time_ns = timer.lap();
         logger.info("{} took {:.2}ms to fetch", .{ row, exec_time_ns / std.time.ns_per_ms });
 
+        const core_hash = ID.new(row.core_hash);
+
         try ctx.db.?.exec(
             "insert into metrics_tag_usage_values (timestamp, core_hash, relationship_count) values (?, ?, ?)",
             .{},
-            .{ metrics_timestamp, row.core_hash, row.relationship_count },
+            .{ metrics_timestamp, core_hash.sql(), row.relationship_count },
         );
     }
 }
@@ -308,7 +311,7 @@ test "metrics (tags and files)" {
     defer metrics_tag_usage_values_stmt.deinit();
 
     var it = try metrics_tag_usage_values_stmt.iterator(
-        struct { core_hash: i64, relationship_count: usize },
+        struct { core_hash: ID.SQL, relationship_count: usize },
         .{last_metrics_tag_usage_timestamp},
     );
 
@@ -316,11 +319,12 @@ test "metrics (tags and files)" {
 
     while (try it.next(.{})) |row| {
         checked_count += 1;
-        if (row.core_hash == tag1.core.id)
+        const core_hash = ID.new(row.core_hash);
+        if (std.meta.eql(core_hash, tag1.core.id))
             try std.testing.expectEqual(@as(usize, 3), row.relationship_count)
-        else if (row.core_hash == tag2.core.id)
+        else if (std.meta.eql(core_hash, tag2.core.id))
             try std.testing.expectEqual(@as(usize, 1), row.relationship_count)
-        else if (row.core_hash == tag3.core.id)
+        else if (std.meta.eql(core_hash, tag3.core.id))
             try std.testing.expectEqual(@as(usize, 2), row.relationship_count)
         else
             return error.InvalidCoreHashFound;
