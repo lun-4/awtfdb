@@ -322,7 +322,17 @@ pub fn ulidFromBoth(timestamp: anytype, randomnes: u80) ulid.ULID {
 pub const ID = struct {
     data: [26]u8,
     pub const SQL = [26]u8;
+    pub const BaseType = sqlite.Text;
     const Self = @This();
+
+    pub fn generate() Self {
+        var rng = std.rand.DefaultPrng.init(
+            @truncate(u64, @intCast(u128, std.time.nanoTimestamp())),
+        );
+        const rand = rng.random();
+        const generated_ulid = ulidFromTimestamp(rand, std.time.milliTimestamp());
+        return Self.ul(generated_ulid);
+    }
 
     pub fn new(data: [26]u8) Self {
         return Self{ .data = data };
@@ -337,6 +347,10 @@ pub const ID = struct {
     }
 
     pub fn sql(self: *const Self) sqlite.Text {
+        return sqlite.Text{ .data = &self.data };
+    }
+
+    pub fn bindField(self: *const Self) !sqlite.Text {
         return sqlite.Text{ .data = &self.data };
     }
 
@@ -560,20 +574,20 @@ pub const Context = struct {
 
     /// Helper struct to convert hash data given in an sqlite.Blob
     /// back into [32]u8 for the API.
-    pub const HashWithBlob = struct {
-        id: i64,
+    pub const HashSQL = struct {
+        id: ID.SQL,
         hash_data: sqlite.Blob,
 
         pub fn toRealHash(self: @This()) Hash {
             var hash_value: [32]u8 = undefined;
             std.mem.copy(u8, &hash_value, self.hash_data.data);
-            return Hash{ .id = self.id, .hash_data = hash_value };
+            return Hash{ .id = ID.new(self.id), .hash_data = hash_value };
         }
     };
 
     pub fn fetchNamedTag(self: *Self, text: []const u8, language: []const u8) !?Tag {
         var maybe_core_hash = try self.db.?.oneAlloc(
-            HashWithBlob,
+            HashSQL,
             self.allocator,
             \\ select hashes.id, hashes.hash_data
             \\ from tag_names
@@ -608,7 +622,7 @@ pub const Context = struct {
     }
 
     pub const Hash = struct {
-        id: i64,
+        id: ID,
         hash_data: [32]u8,
 
         const HashSelf = @This();
@@ -632,7 +646,7 @@ pub const Context = struct {
             _ = options;
             _ = fmt;
 
-            return std.fmt.format(writer, "{d} {s}", .{ self.id, &self.toHex() });
+            return std.fmt.format(writer, "{s} {s}", .{ self.id, &self.toHex() });
         }
     };
 
@@ -662,16 +676,16 @@ pub const Context = struct {
             defer savepoint.commit();
 
             const hash_blob = sqlite.Blob{ .data = &core_hash_bytes };
-            const core_hash_id = (try self.db.?.one(
-                i64,
-                "insert into hashes (hash_data) values (?) returning id",
+            const hash_id = ID.generate();
+            try self.db.?.exec(
+                "insert into hashes_v2 (id, hash_data) values (?, ?)",
                 .{},
-                .{hash_blob},
-            )).?;
+                .{ hash_id, hash_blob },
+            );
 
             // core_hash_bytes is passed by reference here, so we don't
             // have to worry about losing it to undefined memory hell.
-            core_hash = .{ .id = core_hash_id, .hash_data = core_hash_bytes };
+            core_hash = .{ .id = hash_id, .hash_data = core_hash_bytes };
 
             const core_data_blob = sqlite.Blob{ .data = &core_data };
             try self.db.?.exec(
@@ -851,7 +865,7 @@ pub const Context = struct {
             defer list.deinit();
 
             for (rows) |row| {
-                const hash_with_blob = HashWithBlob{ .id = row.id, .hash_data = row.hash_data };
+                const hash_with_blob = HashSQL{ .id = row.id, .hash_data = row.hash_data };
 
                 const file_tag = FileTag{
                     .core = hash_with_blob.toRealHash(),
@@ -1098,7 +1112,7 @@ pub const Context = struct {
             // string memory is passed to client
             defer self.allocator.free(local_path.hash_data.data);
 
-            const almost_good_hash = HashWithBlob{
+            const almost_good_hash = HashSQL{
                 .id = hash_id,
                 .hash_data = local_path.hash_data,
             };
@@ -1133,7 +1147,7 @@ pub const Context = struct {
             // string memory is passed to client
             defer self.allocator.free(local_path.hash_data.data);
 
-            const almost_good_hash = HashWithBlob{
+            const almost_good_hash = HashSQL{
                 .id = hash_id,
                 .hash_data = local_path.hash_data,
             };
@@ -1182,7 +1196,7 @@ pub const Context = struct {
 
     pub fn fetchFileByPath(self: *Self, absolute_local_path: []const u8) !?File {
         var maybe_hash = try self.db.?.oneAlloc(
-            HashWithBlob,
+            HashSQL,
             self.allocator,
             \\ select hashes.id, hashes.hash_data
             \\ from files
@@ -1473,7 +1487,7 @@ pub const Context = struct {
             defer stmt.deinit();
 
             const internal_hashes = try stmt.all(
-                HashWithBlob,
+                HashSQL,
                 allocator,
                 .{},
                 .{self.hash.id},
@@ -1556,7 +1570,7 @@ pub const Context = struct {
             // string memory is passed to client
             defer self.allocator.free(pool.hash_data.data);
 
-            const almost_good_hash = HashWithBlob{
+            const almost_good_hash = HashSQL{
                 .id = hash_id,
                 .hash_data = pool.hash_data,
             };
