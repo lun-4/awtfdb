@@ -531,6 +531,7 @@ MIME_EXTENSION_MAPPING = {
     "video/x-matroska": ".mkv",
     "video/mkv": ".mkv",
     "audio/x-m4a": ".m4a",
+    "audio/ogg": ".ogg",
     "video/x-m4v": ".m4v",
     "video/3gpp": ".3gpp",
     "application/vnd.oasis.opendocument.text": ".odt",
