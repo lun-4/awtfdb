@@ -747,9 +747,9 @@ const ListParent = struct {
                 "{d}: {d} {s} -> {d} {s}\n",
                 .{
                     tree_row.rowid,
-                    tree_row.child_tag_id,
+                    ID.new(tree_row.child_tag_id),
                     tree_row.child_tag,
-                    tree_row.parent_tag_id,
+                    ID.new(tree_row.parent_tag_id),
                     tree_row.parent_tag,
                 },
             );
