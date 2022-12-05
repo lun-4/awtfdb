@@ -39,6 +39,43 @@ async def send_file(path: str, *, mimetype: Optional[str] = None):
     return response
 
 
+BASE32_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
+
+
+def base32_parse(string):
+    lst = []
+    for input_character in string:
+        for index, alphabet_character in enumerate(BASE32_ALPHABET):
+            if input_character == alphabet_character:
+                lst.append(index)
+    return lst
+
+
+def get_ulid_timestamp(ulid_string: str) -> int:
+    assert len(ulid_string) == 26
+    encoded_timestamp = ulid_string[0:10]
+    decoded_timestamp = base32_parse(encoded_timestamp)
+    # turn into u50
+    result = 0
+    for index, value in enumerate(decoded_timestamp):
+        shift = 5 * (len(decoded_timestamp) - 1 - index)
+        result |= value << shift
+    return result / 1000
+
+
+def get_ulid_datetime(ulid_string):
+    return datetime.datetime.fromtimestamp(get_ulid_timestamp(ulid_string))
+
+
+def test_ulid():
+    ts = get_ulid_timestamp("01FW07HVW1PCGKCDPPFBFC37WA")
+    assert ts is not None
+    dt = datetime.datetime.fromtimestamp(ts)
+    assert dt.year == 2022
+    assert dt.month == 2
+    assert dt.day == 16
+
+
 @dataclass
 class FileCache:
     canvas_size: Dict[int, Tuple[int, int]]
@@ -262,6 +299,7 @@ async def tags_fetch():
     async for tag in tag_rows:
         tags = await fetch_tag(tag[0])
         for tag in tags:
+            tag_timestamp = get_ulid_datetime(tag[0])
             rows.append(
                 {
                     "version": 1,
@@ -269,8 +307,8 @@ async def tags_fetch():
                     "category": "default",
                     "implications": [],
                     "suggestions": [],
-                    "creationTime": "1900-01-01T00:00:00Z",
-                    "lastEditTime": "1900-01-01T00:00:00Z",
+                    "creationTime": tag_timestamp.isoformat(),
+                    "lastEditTime": tag_timestamp.isoformat(),
                     "usages": tag["usages"],
                     "description": "awooga",
                 }
@@ -815,17 +853,20 @@ ALL_FILE_FIELDS = (
 
 
 async def fetch_file_entity(
-    file_id: int, *, micro=False, fields: Optional[List[str]] = None
+    file_id: str, *, micro=False, fields: Optional[List[str]] = None
 ) -> dict:
     fields = fields or ALL_FILE_FIELDS
     if micro:
         fields = MICRO_FILE_FIELDS
 
+    file_timestamp = get_ulid_datetime(file_id)
+
     returned_file = {
         "version": 1,
         "id": file_id,
-        "creationTime": "1900-01-01T00:00:00Z",
-        "lastEditTime": "1900-01-01T00:00:00Z",
+        "creationTime": file_timestamp.isoformat(),
+        "lastEditTime": file_timestamp.isoformat(),
+        "lastFeatureTime": file_timestamp.isoformat(),
         "safety": "safe",
         "source": None,
         "checksum": "test",
@@ -844,7 +885,6 @@ async def fetch_file_entity(
         "noteCount": 0,
         "featureCount": 0,
         "relationCount": 0,
-        "lastFeatureTime": "1900-01-01T00:00:00Z",
         "favoritedBy": [],
         "hasCustomThumbnail": True,
         "comments": [],
