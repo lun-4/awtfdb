@@ -244,7 +244,8 @@ fn migrateTagFiles(self: *Context) !void {
                 .{},
                 .{parent_source_id},
             )) orelse {
-                return error.InconsistentSemantics;
+                //               logger.warn("source id {d} does not exist anymore :(", .{});
+                return error.InconsistentDatabase;
             };
         }
 
@@ -353,14 +354,19 @@ fn migrateTagUsageCounts(self: *Context) !void {
         relationship_count: i64,
     }, .{});
     while (try it.nextAlloc(self.allocator, .{})) |row| {
-        const new_core_hash = try snowflakeNewHash(self, row.core_hash);
+        const new_core_hash = snowflakeNewHash(self, row.core_hash) catch |err| switch (err) {
+            error.TargetHashNotFound => {
+                logger.warn("target not found for {d}, ignoring metrics for it", .{row.core_hash});
+                continue;
+            },
+            else => return err,
+        };
 
-        const args = .{ row.timestamp, new_core_hash.sql(), row.relationship_count };
-        logger.warn("creating metricsc entry {d} {} {d}", args);
+        logger.warn("creating metrics entry {d} {} {d}", .{ row.timestamp, new_core_hash, row.relationship_count });
         try self.db.?.exec(
             "insert into metrics_tag_usage_values_v2 (timestamp, core_hash, relationship_count) VALUES (?, ?, ?)",
             .{},
-            args,
+            .{ row.timestamp, new_core_hash.sql(), row.relationship_count },
         );
     }
 }
@@ -385,7 +391,9 @@ fn migrateSingleTable(
 ) !void {
     logger.warn("migrating {s} to {s}...", .{ old_table, new_table });
     try function(self);
-    try assertSameCount(self, old_table, new_table);
+    if (!std.mem.eql(u8, old_table, "metrics_tag_usage_values")) {
+        try assertSameCount(self, old_table, new_table);
+    }
     try lockTable(self, old_table);
 }
 
@@ -474,9 +482,10 @@ pub fn migrate(self: *Context) !void {
         \\     constraint pool_unique_index unique (pool_hash, entry_index)
         \\ ) without rowid, strict;
         \\
-        \\CREATE TABLE metrics_tag_usage_values_v2 (
+        \\CREATE TABLE IF NOT EXISTS metrics_tag_usage_values_v2 (
         \\     timestamp integer,
-        \\     core_hash text not null,
+        \\     core_hash text not null
+        \\       constraint metrics_core_hash_fk references tag_cores_v2 (core_hash) on delete cascade,
         \\     relationship_count int not null,
         \\     constraint relationship_count_not_negative check (relationship_count >= 0),
         \\     constraint metrics_tag_usage_values_pk primary key (timestamp, core_hash)
