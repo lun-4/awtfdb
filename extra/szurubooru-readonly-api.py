@@ -1050,7 +1050,8 @@ async def single_post_fetch_around(file_id: int):
     }
 
 
-async def fetch_pool_entity(pool_hash: int, micro=False):
+async def fetch_pool_entity(pool_hash: str, micro=False):
+    pool_timestamp = get_ulid_datetime(pool_hash)
     pool_rows = await app.db.execute_fetchall(
         "select title from pools where pool_hash = ?", [pool_hash]
     )
@@ -1080,8 +1081,8 @@ async def fetch_pool_entity(pool_hash: int, micro=False):
         "names": [pool_title],
         "category": "default",
         "posts": pool_posts,
-        "creationTime": "1900-01-01T00:00:00Z",
-        "lastEditTime": "1900-01-01T00:00:00Z",
+        "creationTime": pool_timestamp.isoformat(),
+        "lastEditTime": pool_timestamp.isoformat(),
         "postCount": post_count,
         "description": "",
     }
