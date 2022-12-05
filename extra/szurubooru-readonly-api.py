@@ -413,7 +413,7 @@ async def fetch_file_local_path(file_id: int) -> Optional[str]:
     return path
 
 
-@app.get("/_awtfdb_content/<int:file_id>")
+@app.get("/_awtfdb_content/<file_id>")
 async def content(file_id: int):
     file_local_path = await fetch_file_local_path(file_id)
     if not file_local_path:
@@ -634,7 +634,7 @@ async def submit_thumbnail(file_id, mimetype, file_local_path, thumbnail_path):
     return thumbnail_path
 
 
-@app.get("/_awtfdb_thumbnails/<int:file_id>")
+@app.get("/_awtfdb_thumbnails/<file_id>")
 async def thumbnail(file_id: int):
     file_local_path = await fetch_file_local_path(file_id)
     if not file_local_path:
@@ -674,7 +674,7 @@ async def posts_fetch():
     if "pool:" in query:
         # switch logic to fetching stuff from pool only in order lol
         _, pool_id = query.split(":")
-        pool = await fetch_pool_entity(int(pool_id))
+        pool = await fetch_pool_entity(pool_id)
         posts = pool["posts"][offset:]
         return {
             "query": query,
@@ -770,10 +770,10 @@ async def fetch_tag(core_hash) -> list:
             (core_hash,),
         )
         if not usages_from_metrics:
-            log.info("tag %d has no metrics, calculating manually...", core_hash)
+            log.info("tag %s has no metrics, calculating manually...", core_hash)
             usages = (
                 await app.db.execute_fetchall(
-                    "select count(rowid) from tag_files where core_hash = ?",
+                    "select count(core_hash) from tag_files where core_hash = ?",
                     (core_hash,),
                 )
             )[0][0]
@@ -963,20 +963,20 @@ async def fetch_file_entity(
         returned_file["canvasWidth"] = int(canvas_size[0]) if canvas_size[0] else None
         returned_file["canvasHeight"] = int(canvas_size[1]) if canvas_size[1] else None
 
-        log.info("file %d calculate canvas size: %r", file_id, canvas_size)
+        log.info("file %s calculate canvas size: %r", file_id, canvas_size)
         assert len(canvas_size) == 2
 
-    log.info("file %d fetch fields %r", file_id, fields)
+    log.info("file %s fetch fields %r", file_id, fields)
     return returned_file
 
 
-@app.get("/post/<int:file_id>")
+@app.get("/post/<file_id>")
 async def single_post_fetch(file_id: int):
     # GET /post/<id>
     return await fetch_file_entity(file_id)
 
 
-@app.get("/post/<int:file_id>/around/")
+@app.get("/post/<file_id>/around/")
 async def single_post_fetch_around(file_id: int):
     fields = request_fields()
     prev_cursor = await app.db.execute(
@@ -1085,7 +1085,7 @@ async def pools_fetch():
     }
 
 
-@app.get("/pool/<int:pool_id>")
+@app.get("/pool/<pool_id>")
 async def single_pool_fetch(pool_id: int):
     return await fetch_pool_entity(pool_id)
 
