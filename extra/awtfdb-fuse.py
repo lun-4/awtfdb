@@ -100,7 +100,7 @@ class FuseServer(fuse.Fuse):
 
         _, file_hash_str = possible_file_id.split("@")
         try:
-            file_hash = int(file_hash_str)
+            file_hash = str(file_hash_str)
         except ValueError:
             raise FileNotFoundError(f"invalid file id ({file_hash_str!r})")
 
