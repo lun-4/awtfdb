@@ -120,6 +120,7 @@ fn migrateCores(self: *Context) !void {
     var stmt_tag_cores = try self.db.?.prepare(
         \\ select core_hash, core_data, hashes.hash_data from tag_cores
         \\ join hashes on tag_cores.core_hash = hashes.id
+        \\ order by hashes.id asc
     );
     defer stmt_tag_cores.deinit();
 
@@ -453,7 +454,7 @@ pub fn migrate(self: *Context) !void {
         \\      constraint tag_files_pk primary key (file_hash, core_hash)
         \\ ) without rowid, strict;
         \\
-        \\CREATE TABLE pools_v2 (
+        \\CREATE TABLE IF NOT EXISTS pools_v2 (
         \\     pool_hash text primary key
         \\        constraint pools_hash_fk references hashes_v2 (id) on delete restrict,
         \\     pool_core_data blob not null
@@ -461,7 +462,7 @@ pub fn migrate(self: *Context) !void {
         \\     title text not null
         \\ ) without rowid, strict;
         \\
-        \\CREATE TABLE pool_entries_v2 (
+        \\CREATE TABLE IF NOT EXISTS pool_entries_v2 (
         \\     file_hash text not null
         \\        -- cant reference files.file_hash due to composite primary key
         \\        constraint pool_entries_file_fk references hashes_v2 (id) on delete cascade,
@@ -520,6 +521,6 @@ fn snowflakeNewHash(self: *Context, old_hash: i64) !ID {
     ,
         .{},
         .{old_hash},
-    )).?;
+    )) orelse return error.TargetHashNotFound;
     return ID.new(new_file_hash_id);
 }
