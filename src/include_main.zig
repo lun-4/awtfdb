@@ -2,6 +2,7 @@ const std = @import("std");
 const sqlite = @import("sqlite");
 const manage_main = @import("main.zig");
 const Context = manage_main.Context;
+const ID = manage_main.ID;
 const tunez = @import("tunez");
 
 const libpcre = @import("libpcre");
@@ -104,7 +105,7 @@ fn utilAddTag(
         _ = try utilAddScope(maybe_tag_scope, &writer);
         _ = try utilAddRawTag(config, raw_tag, &writer);
         try output_tags_list.append(
-            list.toOwnedSlice(),
+            try list.toOwnedSlice(),
         );
     }
 }
@@ -302,7 +303,7 @@ const RegexTagInferrer = struct {
                     _ = try utilAddScope(self.config.tag_scope, &writer);
                     _ = try utilAddRawTag(self.config, raw_tag_text, &writer);
 
-                    try tags_to_add.append(tag_text_list.toOwnedSlice());
+                    try tags_to_add.append(try tag_text_list.toOwnedSlice());
                 }
 
                 offset += full_match.end;
@@ -681,7 +682,7 @@ pub const Args = struct {
     default_tags: StringList,
     wanted_inferrers: ConfigList,
     include_paths: StringList,
-    pool: ?i64 = null,
+    pool: ?ID = null,
     strict: bool = false,
 
     pub fn deinit(self: *@This()) void {
@@ -761,7 +762,7 @@ pub fn main() anyerror!void {
                 continue;
             },
             .FetchPool => {
-                given_args.pool = try std.fmt.parseInt(i64, arg, 10);
+                given_args.pool = ID.fromString(arg);
                 state = .None;
                 continue;
             },
@@ -893,7 +894,7 @@ pub fn main() anyerror!void {
         .mime => |*mime_ctx| MimeTagInferrer.deinit(mime_ctx),
     };
 
-    var file_ids_for_tagtree = std.ArrayList(i64).init(allocator);
+    var file_ids_for_tagtree = std.ArrayList(ID).init(allocator);
     defer file_ids_for_tagtree.deinit();
 
     for (given_args.include_paths.items) |path_to_include| {

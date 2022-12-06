@@ -3,6 +3,7 @@ const sqlite = @import("sqlite");
 const manage_main = @import("main.zig");
 const libpcre = @import("libpcre");
 const Context = manage_main.Context;
+const ID = manage_main.ID;
 
 const logger = std.log.scoped(.atags);
 
@@ -148,7 +149,7 @@ const CreateAction = struct {
             else
                 return error.UnknownTag;
 
-            if (tag_to_be_aliased_from.core.id == tag_to_be_aliased_to.id) {
+            if (std.meta.eql(tag_to_be_aliased_from.core.id, tag_to_be_aliased_to.id)) {
                 logger.err(
                     "tag {s} already is pointing to core {s}, making a new alias of an existing alias is a destructive operation",
                     .{ self.config.tag.?, tag_to_be_aliased_to },
@@ -188,11 +189,12 @@ const CreateAction = struct {
             // execute query and bind to tag_to_be_aliased_from
             var stmt = try self.ctx.db.?.prepareDynamic(sql_result.query);
             defer stmt.deinit();
-            var args = [1]i64{tag_to_be_aliased_from.core.id};
-            var it = try stmt.iterator(i64, args);
+            var args = [1]sqlite.Text{tag_to_be_aliased_from.core.id.sql()};
+            var it = try stmt.iterator(ID.SQL, args);
 
             // add tag_to_be_aliased_to to all returned files
-            while (try it.next(.{})) |file_hash_id| {
+            while (try it.next(.{})) |file_hash_id_sql| {
+                const file_hash_id = ID.new(file_hash_id_sql);
                 var file = (try self.ctx.fetchFile(file_hash_id)).?;
                 defer file.deinit();
                 try file.addTag(tag_to_be_aliased_to, .{});
@@ -246,7 +248,7 @@ test "create action (aliasing)" {
     var tag1 = try ctx.createNamedTag("test tag1", "en", null);
     var tag2_before_alias = try ctx.createNamedTag("test tag2", "en", null);
 
-    try std.testing.expect(tag2_before_alias.core.id != tag1.core.id);
+    try std.testing.expect(!std.meta.eql(tag2_before_alias.core.id, tag1.core.id));
 
     const tag1_core = tag1.core.toHex();
 
@@ -280,7 +282,7 @@ fn consumeCoreHash(ctx: *Context, raw_core_hash_buffer: *[32]u8, tag_core_hex_st
 
     const hash_blob = sqlite.Blob{ .data = raw_core_hash };
     const hash_id = (try ctx.db.?.one(
-        i64,
+        ID.SQL,
         \\ select hashes.id
         \\ from hashes
         \\ join tag_cores
@@ -294,7 +296,7 @@ fn consumeCoreHash(ctx: *Context, raw_core_hash_buffer: *[32]u8, tag_core_hex_st
     };
 
     logger.debug("found hash_id for the given core: {d}", .{hash_id});
-    return Context.Hash{ .id = hash_id, .hash_data = raw_core_hash_buffer.* };
+    return Context.Hash{ .id = ID.new(hash_id), .hash_data = raw_core_hash_buffer.* };
 }
 
 const RemoveAction = struct {
@@ -352,7 +354,7 @@ const RemoveAction = struct {
         var raw_core_hash_buffer: [32]u8 = undefined;
 
         var amount: usize = 0;
-        var core_hash_id: ?i64 = null;
+        var core_hash_id: ?ID = null;
         try stdout.print("the following tags will be removed:\n", .{});
 
         if (self.config.tag_core) |tag_core_hex_string| {
@@ -376,7 +378,7 @@ const RemoveAction = struct {
                     tag_language: []const u8,
                 },
                 self.ctx.allocator,
-                .{core.id},
+                .{core.id.sql()},
             );
 
             while (try it.nextAlloc(self.ctx.allocator, .{})) |tag_name| {
@@ -413,7 +415,7 @@ const RemoveAction = struct {
             );
 
             const deleted_name_count = (try self.ctx.db.?.one(
-                i64,
+                usize,
                 \\ delete from tag_names
                 \\ where tag_text = ?
                 \\ and tag_language = ?
@@ -435,10 +437,10 @@ const RemoveAction = struct {
 
         {
             const referenced_files = (try self.ctx.db.?.one(
-                i64,
+                usize,
                 "select count(*) from tag_files where core_hash = ?",
                 .{},
-                .{core_hash_id},
+                .{core_hash_id.?.sql()},
             )) orelse 0;
             try stdout.print("{d} files reference this tag.\n", .{referenced_files});
         }
@@ -448,13 +450,13 @@ const RemoveAction = struct {
             .{amount},
         );
 
-        var deleted_count: ?i64 = null;
+        var deleted_count: ?usize = null;
 
         if (self.config.tag_core) |tag_core_hex_string| {
             var core = try consumeCoreHash(self.ctx, &raw_core_hash_buffer, tag_core_hex_string);
             // TODO fix deleted_count here
             deleted_count = (try self.ctx.db.?.one(
-                i64,
+                usize,
                 \\ delete from tag_names
                 \\ where core_hash = ?
                 \\ returning (
@@ -464,13 +466,13 @@ const RemoveAction = struct {
                 \\ ) as deleted_count
             ,
                 .{},
-                .{ core.id, core.id },
+                .{ core.id.sql(), core.id.sql() },
             )).?;
-            try self.ctx.db.?.exec("delete from tag_cores where core_hash = ?", .{}, .{core.id});
-            try self.ctx.db.?.exec("delete from hashes where id = ?", .{}, .{core.id});
+            try self.ctx.db.?.exec("delete from tag_cores where core_hash = ?", .{}, .{core.id.sql()});
+            try self.ctx.db.?.exec("delete from hashes where id = ?", .{}, .{core.id.sql()});
         } else if (self.config.tag) |tag_text| {
             deleted_count = (try self.ctx.db.?.one(
-                i64,
+                usize,
                 \\ delete from tag_names
                 \\ where tag_text = ? and tag_language = ?
                 \\ returning (
@@ -578,7 +580,7 @@ const SearchAction = struct {
 
         var tag_names = try stmt.all(
             struct {
-                core_hash: i64,
+                core_hash: ID.SQL,
                 hash_data: sqlite.Blob,
             },
             self.ctx.allocator,
@@ -594,7 +596,7 @@ const SearchAction = struct {
         }
 
         for (tag_names) |tag_name| {
-            const fake_hash = Context.HashWithBlob{
+            const fake_hash = Context.HashSQL{
                 .id = tag_name.core_hash,
                 .hash_data = tag_name.hash_data,
             };
@@ -723,9 +725,9 @@ const ListParent = struct {
         defer stmt.deinit();
         var entries = try stmt.all(struct {
             rowid: i64,
-            parent_tag_id: i64,
+            parent_tag_id: ID.SQL,
             parent_tag: []const u8,
-            child_tag_id: i64,
+            child_tag_id: ID.SQL,
             child_tag: []const u8,
         }, self.ctx.allocator, .{}, .{});
         defer {
@@ -745,9 +747,9 @@ const ListParent = struct {
                 "{d}: {d} {s} -> {d} {s}\n",
                 .{
                     tree_row.rowid,
-                    tree_row.child_tag_id,
+                    ID.new(tree_row.child_tag_id),
                     tree_row.child_tag,
-                    tree_row.parent_tag_id,
+                    ID.new(tree_row.parent_tag_id),
                     tree_row.parent_tag,
                 },
             );
@@ -796,20 +798,23 @@ const RemoveParent = struct {
     pub fn run(self: *Self) !void {
         var stdout = std.io.getStdOut().writer();
 
+        // parent_relationship is only used on that stdout call as
+        // information for the user, so it can't be tested until we have
+        // stdout capturing.
         const parent_relationship = (try self.ctx.db.?.one(
-            struct { child_tag: i64, parent_tag: i64 },
+            struct { child_tag: ID.SQL, parent_tag: ID.SQL },
             "select child_tag, parent_tag from tag_implications where rowid = ?",
             .{},
             .{self.config.rowid.?},
         )) orelse return error.InvalidParentId;
 
         try stdout.print(
-            "the parent relationship is between tags {d} -> {d}\n",
+            "the parent relationship is between tags {s} -> {s}\n",
             .{ parent_relationship.parent_tag, parent_relationship.child_tag },
         );
 
         const tag_file_count = (try self.ctx.db.?.one(
-            i64,
+            usize,
             "select count(*) from tag_files where parent_source_id = ?",
             .{},
             .{self.config.rowid.?},
@@ -842,7 +847,7 @@ const RemoveParent = struct {
             if (self.config.delete_file_entries) {
                 logger.info("REMOVING all tag file entries that were made by this parent...", .{});
                 const deleted_tag_file_count = (try self.ctx.db.?.one(
-                    i64,
+                    usize,
                     \\ delete from tag_files
                     \\ where
                     \\ 	parent_source_id = ?
@@ -865,7 +870,7 @@ const RemoveParent = struct {
             } else {
                 logger.info("UPDATING all tag file entries that were made by this parent and setting to null...", .{});
                 const updated_tag_file_count = (try self.ctx.db.?.one(
-                    i64,
+                    usize,
                     \\ update tag_files
                     \\ set
                     \\ 	parent_source_id = null,
@@ -933,7 +938,7 @@ test "remove parent (no entry deletion)" {
     var saw_parent_tag_without_source = false;
 
     for (file_tags) |file_tag| {
-        if (file_tag.core.id == ids.parent_tag_core_id) {
+        if (std.meta.eql(file_tag.core.id, ids.parent_tag_core_id)) {
             try std.testing.expectEqual(manage_main.TagSourceType.system, file_tag.source.kind);
             try std.testing.expectEqual(@as(i64, @enumToInt(manage_main.SystemTagSources.manual_insertion)), file_tag.source.id);
             try std.testing.expectEqual(@as(?i64, null), file_tag.parent_source_id);
@@ -947,9 +952,9 @@ const ParentTestSetupResult = struct {
     tag_tree_entry_id: i64,
     tag_tree_entry2_id: i64,
     tag_tree_entry3_id: i64,
-    parent_tag_core_id: i64,
-    parent_tag2_core_id: i64,
-    parent_tag3_core_id: i64,
+    parent_tag_core_id: ID,
+    parent_tag2_core_id: ID,
+    parent_tag3_core_id: ID,
 };
 
 fn parentTestSetup(
@@ -969,6 +974,13 @@ fn parentTestSetup(
     const tag_tree_entry2_id = try ctx.createTagParent(child_tag, parent_tag2);
     const tag_tree_entry3_id = try ctx.createTagParent(parent_tag2, parent_tag3);
     try ctx.processTagTree(.{});
+
+    // always run ListParent so that it compiles
+    // TODO write test for ListParent (capture stdout??)
+    var action = try ListParent.init(ctx, {});
+    defer action.deinit();
+    try action.run();
+
     return ParentTestSetupResult{
         .tag_tree_entry_id = tag_tree_entry_id,
         .tag_tree_entry2_id = tag_tree_entry2_id,
@@ -1012,7 +1024,7 @@ test "remove parent (with entry deletion)" {
     try std.testing.expectEqual(@as(usize, 3), file_tags.len);
 
     for (file_tags) |file_tag| {
-        if (file_tag.core.id == ids.parent_tag_core_id) {
+        if (std.meta.eql(file_tag.core.id, ids.parent_tag_core_id)) {
             return error.ShouldNotFindOriginalParentIdHere;
         }
     }
@@ -1057,7 +1069,7 @@ const CreatePool = struct {
 
 const FetchPool = struct {
     pub const Config = struct {
-        pool_id: i64,
+        pool_id: ID,
     };
 
     pub fn processArgs(args_it: *std.process.ArgIterator, given_args: *Args) !ActionConfig {
@@ -1065,7 +1077,7 @@ const FetchPool = struct {
 
         const pool_id_str = args_it.next() orelse return error.ExpectedPoolTitle;
         var config = Config{
-            .pool_id = try std.fmt.parseInt(i64, pool_id_str, 10),
+            .pool_id = ID.fromString(pool_id_str),
         };
         return ActionConfig{ .FetchPool = config };
     }
@@ -1145,7 +1157,7 @@ const SearchPool = struct {
         defer stmt.deinit();
 
         var pool_hashes = try stmt.all(
-            i64,
+            ID.SQL,
             self.ctx.allocator,
             .{},
             .{self.config.search_term.?},
@@ -1153,7 +1165,7 @@ const SearchPool = struct {
         defer self.ctx.allocator.free(pool_hashes);
 
         for (pool_hashes) |pool_hash| {
-            var pool = (try self.ctx.fetchPool(pool_hash)).?;
+            var pool = (try self.ctx.fetchPool(ID.new(pool_hash))).?;
             defer pool.deinit();
 
             try stdout.print(
@@ -1167,7 +1179,7 @@ const SearchPool = struct {
 const RemovePool = struct {
     pub const Config = struct {
         given_args: *Args,
-        pool_id: i64,
+        pool_id: ID,
     };
 
     pub fn processArgs(args_it: *std.process.ArgIterator, given_args: *Args) !ActionConfig {
@@ -1310,7 +1322,7 @@ const ListSource = struct {
             \\ from tag_sources
         );
         defer stmt.deinit();
-        var entries = try stmt.all(struct { @"type": i64, id: i64, name: []const u8 }, self.ctx.allocator, .{}, .{});
+        var entries = try stmt.all(struct { type: i64, id: i64, name: []const u8 }, self.ctx.allocator, .{}, .{});
         defer {
             for (entries) |entry| {
                 self.ctx.allocator.free(entry.name);
@@ -1325,7 +1337,7 @@ const ListSource = struct {
         for (entries) |row| {
             try stdout.print(
                 "type={d} id={d}: name={s}\n",
-                .{ row.@"type", row.id, row.name },
+                .{ row.type, row.id, row.name },
             );
         }
 

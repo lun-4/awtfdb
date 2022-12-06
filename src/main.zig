@@ -1,6 +1,10 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const sqlite = @import("sqlite");
+const ulid = @import("ulid");
+const IdMigration = @import("id_migration.zig");
+
+const RowID = i64;
 
 pub const AWTFDB_BLAKE3_CONTEXT = "awtfdb Sun Mar 20 16:58:11 AM +00 2022 main hash key";
 
@@ -28,7 +32,9 @@ const HELPTEXT =
     \\  awtfdb-manage jobs
 ;
 
-const MigrationOptions = struct {};
+const MigrationOptions = struct {
+    function: ?*const fn (*Context) anyerror!void = null,
+};
 
 pub const Migration = struct {
     version: usize,
@@ -222,8 +228,8 @@ pub const MIGRATIONS = .{
         \\    primary key (type, id)
         \\ ) strict;
         // tag_sources with type=0 must have synchronization with the SystemTagSources enum
-        \\ insert into tag_sources values (0, 0, "manual insertion");
-        \\ insert into tag_sources values (0, 1, "tag parenting");
+        \\ insert into tag_sources values (0, 0, 'manual insertion');
+        \\ insert into tag_sources values (0, 1, 'tag parenting');
         // ADD COLUMN tag_source_type (int)
         // ADD COLUMN tag_source_id (int)
         // ADD COLUMN parent_source_id (default null)
@@ -262,6 +268,14 @@ pub const MIGRATIONS = .{
         \\     constraint relationship_count_not_negative check (relationship_count >= 0)
         \\ ) strict;
     },
+
+    .{
+        8, "migrate to ulids for local ids",
+        .{
+            .function = IdMigration.migrate,
+        },
+        null,
+    },
 };
 
 pub const MIGRATION_LOG_TABLE =
@@ -272,7 +286,7 @@ pub const MIGRATION_LOG_TABLE =
     \\ );
 ;
 
-const logger = std.log.scoped(.awtfdb_main);
+pub const logger = std.log.scoped(.awtfdb_main);
 
 pub const TagSourceType = enum(usize) {
     /// This tag source is a part of the core awtfdb system
@@ -292,6 +306,60 @@ pub const SystemTagSources = enum(usize) {
     /// If this value is set, tag_files.parent_source_id will be set
     /// to the parent tree entry that generated this entry
     tag_parenting = 1,
+};
+
+pub fn ulidFromTimestamp(rand: std.rand.Random, timestamp: anytype) ulid.ULID {
+    return ulid.ULID{
+        .timestamp = std.math.cast(u48, timestamp) orelse @panic("time.milliTimestamp() is higher than 281474976710655"),
+        .randomnes = rand.int(u80),
+    };
+}
+pub fn ulidFromBoth(timestamp: anytype, randomnes: u80) ulid.ULID {
+    return ulid.ULID{
+        .timestamp = std.math.cast(u48, timestamp) orelse @panic("time.milliTimestamp() is higher than 281474976710655"),
+        .randomnes = randomnes,
+    };
+}
+
+pub const ID = struct {
+    data: [26]u8,
+    pub const SQL = [26]u8;
+    const Self = @This();
+
+    pub fn generate() Self {
+        var rng = std.rand.DefaultPrng.init(
+            @truncate(u64, @intCast(u128, std.time.nanoTimestamp())),
+        );
+        const rand = rng.random();
+        const generated_ulid = ulidFromTimestamp(rand, std.time.milliTimestamp());
+        return Self.ul(generated_ulid);
+    }
+
+    pub fn new(data: [26]u8) Self {
+        return Self{ .data = data };
+    }
+    pub fn fromString(data: []const u8) Self {
+        std.debug.assert(data.len == 26);
+        return Self.new(data[0..26].*);
+    }
+
+    pub fn ul(ulid_data: ulid.ULID) Self {
+        return Self{ .data = ulid_data.bytes() };
+    }
+
+    pub fn str(self: *const Self) []const u8 {
+        return &self.data;
+    }
+
+    pub fn sql(self: *const Self) sqlite.Text {
+        return sqlite.Text{ .data = &self.data };
+    }
+
+    pub fn format(self: Self, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
+        _ = fmt;
+        _ = options;
+        try writer.writeAll(&self.data);
+    }
 };
 
 pub const Context = struct {
@@ -445,13 +513,13 @@ pub const Context = struct {
                 \\ where core_hash = ?
             ,
                 .{},
-                .{self.core.id},
+                .{self.core.id.sql()},
             );
             const deleted_tag_count = db.rowsAffected();
 
-            try db.exec("delete from tag_cores where core_hash = ?", .{}, .{self.core.id});
+            try db.exec("delete from tag_cores where core_hash = ?", .{}, .{self.core.id.sql()});
             std.debug.assert(db.rowsAffected() == 1);
-            try db.exec("delete from hashes where id = ?", .{}, .{self.core.id});
+            try db.exec("delete from hashes where id = ?", .{}, .{self.core.id.sql()});
             std.debug.assert(db.rowsAffected() == 1);
 
             return deleted_tag_count;
@@ -485,7 +553,7 @@ pub const Context = struct {
             NamedTagValue,
             allocator,
             .{},
-            .{core_hash.id},
+            .{core_hash.id.sql()},
         );
         defer allocator.free(named_tag_values);
 
@@ -501,26 +569,26 @@ pub const Context = struct {
 
         return OwnedTagList{
             .allocator = allocator,
-            .items = list.toOwnedSlice(),
+            .items = try list.toOwnedSlice(),
         };
     }
 
     /// Helper struct to convert hash data given in an sqlite.Blob
     /// back into [32]u8 for the API.
-    pub const HashWithBlob = struct {
-        id: i64,
+    pub const HashSQL = struct {
+        id: ID.SQL,
         hash_data: sqlite.Blob,
 
         pub fn toRealHash(self: @This()) Hash {
             var hash_value: [32]u8 = undefined;
             std.mem.copy(u8, &hash_value, self.hash_data.data);
-            return Hash{ .id = self.id, .hash_data = hash_value };
+            return Hash{ .id = ID.new(self.id), .hash_data = hash_value };
         }
     };
 
     pub fn fetchNamedTag(self: *Self, text: []const u8, language: []const u8) !?Tag {
         var maybe_core_hash = try self.db.?.oneAlloc(
-            HashWithBlob,
+            HashSQL,
             self.allocator,
             \\ select hashes.id, hashes.hash_data
             \\ from tag_names
@@ -555,7 +623,7 @@ pub const Context = struct {
     }
 
     pub const Hash = struct {
-        id: i64,
+        id: ID,
         hash_data: [32]u8,
 
         const HashSelf = @This();
@@ -579,12 +647,22 @@ pub const Context = struct {
             _ = options;
             _ = fmt;
 
-            return std.fmt.format(writer, "{d} {s}", .{ self.id, &self.toHex() });
+            return std.fmt.format(writer, "{s} {s}", .{ self.id, &self.toHex() });
         }
     };
 
     // TODO add sources to tag cores (needs a new Hash struct dedicated to it
     // as things like files use Hash but do not have tag sources)
+
+    fn createHash(self: *Self, hash_blob: sqlite.Blob) !ID {
+        const id = ID.generate();
+        try self.db.?.exec(
+            "insert into hashes (id, hash_data) values (?, ?)",
+            .{},
+            .{ id.sql(), hash_blob },
+        );
+        return id;
+    }
 
     pub fn createNamedTag(
         self: *Self,
@@ -609,33 +687,32 @@ pub const Context = struct {
             defer savepoint.commit();
 
             const hash_blob = sqlite.Blob{ .data = &core_hash_bytes };
-            const core_hash_id = (try self.db.?.one(
-                i64,
-                "insert into hashes (hash_data) values (?) returning id",
-                .{},
-                .{hash_blob},
-            )).?;
 
             // core_hash_bytes is passed by reference here, so we don't
             // have to worry about losing it to undefined memory hell.
-            core_hash = .{ .id = core_hash_id, .hash_data = core_hash_bytes };
+            const hash_id = try self.createHash(hash_blob);
+            core_hash = .{ .id = hash_id, .hash_data = core_hash_bytes };
+
+            const id_data = try self.db.?.one(ID.SQL, "select id from hashes where hash_data= ?", .{}, .{hash_blob});
+            const id = ID.new(id_data.?);
+            std.log.warn("id = {}", .{id});
 
             const core_data_blob = sqlite.Blob{ .data = &core_data };
             try self.db.?.exec(
                 "insert into tag_cores (core_hash, core_data) values (?, ?)",
                 .{},
-                .{ core_hash.id, core_data_blob },
+                .{ core_hash.id.sql(), core_data_blob },
             );
 
-            logger.debug("created tag core with hash {s}", .{core_hash});
+            logger.warn("created tag core with hash {s}", .{core_hash});
         }
 
         try self.db.?.exec(
             "insert into tag_names (core_hash, tag_text, tag_language) values (?, ?, ?)",
             .{},
-            .{ core_hash.id, text, language },
+            .{ core_hash.id.sql(), text, language },
         );
-        logger.debug("created name tag with value {s} language {s} core {s}", .{ text, language, core_hash });
+        logger.warn("created name tag with value {s} language {s} core {s}", .{ text, language, core_hash });
 
         return Tag{
             .core = core_hash,
@@ -679,7 +756,7 @@ pub const Context = struct {
                         \\values (?, ?, ?, ?, ?) on conflict do nothing
                     ,
                         .{},
-                        .{ core_hash.id, self.hash.id, @enumToInt(source.kind), source.id, parent_source_id },
+                        .{ core_hash.id.sql(), self.hash.id.sql(), @enumToInt(source.kind), source.id, parent_source_id },
                     );
                 } else {
                     try self.ctx.db.?.exec(
@@ -687,7 +764,7 @@ pub const Context = struct {
                         \\values (?, ?, ?, ?) on conflict do nothing
                     ,
                         .{},
-                        .{ core_hash.id, self.hash.id, @enumToInt(source.kind), source.id },
+                        .{ core_hash.id.sql(), self.hash.id.sql(), @enumToInt(source.kind), source.id },
                     );
                 }
             } else {
@@ -698,7 +775,7 @@ pub const Context = struct {
                 try self.ctx.db.?.exec(
                     "insert into tag_files (core_hash, file_hash) values (?, ?) on conflict do nothing",
                     .{},
-                    .{ core_hash.id, self.hash.id },
+                    .{ core_hash.id.sql(), self.hash.id.sql() },
                 );
             }
         }
@@ -707,7 +784,7 @@ pub const Context = struct {
             try self.ctx.db.?.exec(
                 "delete from tag_files where core_hash = ? and file_hash = ?",
                 .{},
-                .{ core_hash.id, self.hash.id },
+                .{ core_hash.id.sql(), self.hash.id.sql() },
             );
             logger.debug("remove file {s} (hash {s}) with tag core hash {d}", .{ self.local_path, self.hash, core_hash.id });
         }
@@ -717,7 +794,7 @@ pub const Context = struct {
             try self.ctx.db.?.exec(
                 "update files set local_path = ? where file_hash = ? and local_path = ?",
                 .{},
-                .{ new_local_path, self.hash.id, self.local_path },
+                .{ new_local_path, self.hash.id.sql(), self.local_path },
             );
 
             self.ctx.allocator.free(self.local_path);
@@ -729,7 +806,7 @@ pub const Context = struct {
             try self.ctx.db.?.exec(
                 "delete from files where file_hash = ? and local_path = ?",
                 .{},
-                .{ self.hash.id, self.local_path },
+                .{ self.hash.id.sql(), self.local_path },
             );
 
             // NOTE how that we don't delete it from hashes table.
@@ -779,7 +856,7 @@ pub const Context = struct {
 
             const rows = try stmt.all(
                 struct {
-                    id: i64,
+                    id: ID.SQL,
                     hash_data: sqlite.Blob,
                     tag_source_type: i64,
                     tag_source_id: i64,
@@ -787,7 +864,7 @@ pub const Context = struct {
                 },
                 allocator,
                 .{},
-                .{self.hash.id},
+                .{self.hash.id.sql()},
             );
             defer {
                 for (rows) |row| allocator.free(row.hash_data.data);
@@ -798,7 +875,7 @@ pub const Context = struct {
             defer list.deinit();
 
             for (rows) |row| {
-                const hash_with_blob = HashWithBlob{ .id = row.id, .hash_data = row.hash_data };
+                const hash_with_blob = HashSQL{ .id = row.id, .hash_data = row.hash_data };
 
                 const file_tag = FileTag{
                     .core = hash_with_blob.toRealHash(),
@@ -813,7 +890,7 @@ pub const Context = struct {
                 try list.append(file_tag);
             }
 
-            return list.toOwnedSlice();
+            return try list.toOwnedSlice();
         }
 
         pub fn printTagsTo(
@@ -876,7 +953,7 @@ pub const Context = struct {
             },
             .external => {
                 const maybe_row = try self.db.?.one(
-                    struct { @"type": i64, id: i64 },
+                    struct { type: i64, id: i64 },
                     "select type, id from tag_sources where type = ? and id = ?",
                     .{},
                     .{ @enumToInt(TagSourceType.external), id },
@@ -912,6 +989,16 @@ pub const Context = struct {
         insert_new_hash: bool = true,
     };
 
+    pub fn fetchHashId(self: *Self, blob: sqlite.Blob) !?ID {
+        const maybe_id_bytes = try self.db.?.one(
+            ID.SQL,
+            "select id from hashes where hash_data = ?",
+            .{},
+            .{blob},
+        );
+        return if (maybe_id_bytes) |id_bytes| ID.new(id_bytes) else null;
+    }
+
     /// if the file is not indexed and options.insert_new_hash is false,
     /// do not rely on the returned hash's id object making any sense.
     pub fn calculateHash(self: *Self, file: std.fs.File, options: CalculateHashOptions) !Hash {
@@ -928,24 +1015,14 @@ pub const Context = struct {
         hasher.final(&file_hash.hash_data);
 
         const hash_blob = sqlite.Blob{ .data = &file_hash.hash_data };
-        const maybe_hash_id = try self.db.?.one(
-            i64,
-            "select id from hashes where hash_data = ?",
-            .{},
-            .{hash_blob},
-        );
+        const maybe_hash_id = try self.fetchHashId(hash_blob);
         if (maybe_hash_id) |hash_id| {
             file_hash.id = hash_id;
         } else {
             if (options.insert_new_hash) {
-                file_hash.id = (try self.db.?.one(
-                    i64,
-                    "insert into hashes (hash_data) values (?) returning id",
-                    .{},
-                    .{hash_blob},
-                )).?;
+                file_hash.id = try self.createHash(hash_blob);
             } else {
-                file_hash.id = -1;
+                file_hash.id = .{ .data = undefined };
             }
         }
 
@@ -960,24 +1037,14 @@ pub const Context = struct {
         hasher.final(&hash_entry.hash_data);
 
         const hash_blob = sqlite.Blob{ .data = &hash_entry.hash_data };
-        const maybe_hash_id = try self.db.?.one(
-            i64,
-            "select id from hashes where hash_data = ?",
-            .{},
-            .{hash_blob},
-        );
+        const maybe_hash_id = try self.fetchHashId(hash_blob);
         if (maybe_hash_id) |hash_id| {
             hash_entry.id = hash_id;
         } else {
             if (options.insert_new_hash) {
-                hash_entry.id = (try self.db.?.one(
-                    i64,
-                    "insert into hashes (hash_data) values (?) returning id",
-                    .{},
-                    .{hash_blob},
-                )).?;
+                hash_entry.id = try self.createHash(hash_blob);
             } else {
-                hash_entry.id = -1;
+                hash_entry.id = .{ .data = undefined };
             }
         }
 
@@ -992,7 +1059,7 @@ pub const Context = struct {
         try self.db.?.exec(
             "insert into files (file_hash, local_path) values (?, ?) on conflict do nothing",
             .{},
-            .{ file_hash.id, absolute_local_path },
+            .{ file_hash.id.sql(), absolute_local_path },
         );
         logger.debug("created file entry hash={s} path={s}", .{
             absolute_local_path,
@@ -1024,7 +1091,7 @@ pub const Context = struct {
 
     // TODO create fetchFileFromHash that receives full hash object and automatically
     // prefers hash instead of id-search
-    pub fn fetchFile(self: *Self, hash_id: i64) !?File {
+    pub fn fetchFile(self: *Self, hash_id: ID) !?File {
         var maybe_local_path = try self.db.?.oneAlloc(
             struct {
                 local_path: []const u8,
@@ -1038,15 +1105,15 @@ pub const Context = struct {
             \\ where files.file_hash = ?
         ,
             .{},
-            .{hash_id},
+            .{hash_id.sql()},
         );
 
         if (maybe_local_path) |*local_path| {
             // string memory is passed to client
             defer self.allocator.free(local_path.hash_data.data);
 
-            const almost_good_hash = HashWithBlob{
-                .id = hash_id,
+            const almost_good_hash = HashSQL{
+                .id = hash_id.data,
                 .hash_data = local_path.hash_data,
             };
             return File{
@@ -1059,7 +1126,7 @@ pub const Context = struct {
         }
     }
 
-    pub fn fetchFileExact(self: *Self, hash_id: i64, given_local_path: []const u8) !?File {
+    pub fn fetchFileExact(self: *Self, hash_id: ID, given_local_path: []const u8) !?File {
         var maybe_local_path = try self.db.?.oneAlloc(
             struct {
                 local_path: []const u8,
@@ -1073,15 +1140,15 @@ pub const Context = struct {
             \\ where files.file_hash = ? and files.local_path = ?
         ,
             .{},
-            .{ hash_id, given_local_path },
+            .{ hash_id.sql(), given_local_path },
         );
 
         if (maybe_local_path) |*local_path| {
             // string memory is passed to client
             defer self.allocator.free(local_path.hash_data.data);
 
-            const almost_good_hash = HashWithBlob{
-                .id = hash_id,
+            const almost_good_hash = HashSQL{
+                .id = hash_id.data,
                 .hash_data = local_path.hash_data,
             };
             return File{
@@ -1100,7 +1167,7 @@ pub const Context = struct {
         var maybe_local_path = try self.db.?.oneAlloc(
             struct {
                 local_path: []const u8,
-                hash_id: i64,
+                hash_id: ID.SQL,
             },
             self.allocator,
             \\ select local_path, hashes.id
@@ -1118,7 +1185,7 @@ pub const Context = struct {
                 .ctx = self,
                 .local_path = local_path.local_path,
                 .hash = Hash{
-                    .id = local_path.hash_id,
+                    .id = ID.new(local_path.hash_id),
                     .hash_data = hash_data,
                 },
             };
@@ -1129,7 +1196,7 @@ pub const Context = struct {
 
     pub fn fetchFileByPath(self: *Self, absolute_local_path: []const u8) !?File {
         var maybe_hash = try self.db.?.oneAlloc(
-            HashWithBlob,
+            HashSQL,
             self.allocator,
             \\ select hashes.id, hashes.hash_data
             \\ from files
@@ -1159,20 +1226,17 @@ pub const Context = struct {
             i64,
             "insert into tag_implications (child_tag, parent_tag) values (?, ?) returning rowid",
             .{},
-            .{
-                child_tag.core.id,
-                parent_tag.core.id,
-            },
+            .{ child_tag.core.id.sql(), parent_tag.core.id.sql() },
         )).?;
     }
 
-    fn processSingleFileIntoTagTree(self: *Self, file_hash: i64, treemap: TagTreeMap) !void {
+    fn processSingleFileIntoTagTree(self: *Self, file_hash: ID, treemap: TagTreeMap) !void {
         var file = (try self.fetchFile(file_hash)).?;
         defer file.deinit();
 
         const TagEntry = struct {
-            tag_id: i64,
-            parent_entry_id: i64,
+            tag_id: ID,
+            parent_entry_id: RowID,
         };
         const TagSet = std.AutoHashMap(TagEntry, void);
         var tags_to_add = TagSet.init(self.allocator);
@@ -1223,7 +1287,7 @@ pub const Context = struct {
             // (prevent db locking i/o)
             var already_has_it = false;
             for (file_tags) |file_tag| {
-                if (tag_entry.tag_id == file_tag.core.id) already_has_it = true;
+                if (std.meta.eql(tag_entry.tag_id, file_tag.core.id)) already_has_it = true;
             }
             if (already_has_it) continue;
 
@@ -1239,11 +1303,11 @@ pub const Context = struct {
         ///
         /// Useful if you are ainclude(1) and don't want to process the entire
         /// file database.
-        files: ?[]const i64 = null,
+        files: ?[]ID = null,
     };
 
-    const TagTreeEntry = struct { tag_id: i64, row_id: i64 };
-    const TagTreeMap = std.AutoHashMap(i64, []TagTreeEntry);
+    const TagTreeEntry = struct { tag_id: ID, row_id: RowID };
+    const TagTreeMap = std.AutoHashMap(ID, []TagTreeEntry);
 
     pub fn processTagTree(self: *Self, options: ProcessTagTreeOptions) !void {
         logger.info("processing tag tree...", .{});
@@ -1253,7 +1317,7 @@ pub const Context = struct {
         );
         defer tree_stmt.deinit();
         var tree_rows = try tree_stmt.all(
-            struct { row_id: i64, child_tag: i64, parent_tag: i64 },
+            struct { row_id: RowID, child_tag: ID.SQL, parent_tag: ID.SQL },
             self.allocator,
             .{},
             .{},
@@ -1268,24 +1332,25 @@ pub const Context = struct {
         }
 
         for (tree_rows) |tree_row| {
-            const maybe_parents = treemap.get(tree_row.child_tag);
+            const child_tag = ID.new(tree_row.child_tag);
+            const maybe_parents = treemap.get(child_tag);
             if (maybe_parents) |parents| {
                 // realloc
                 var new_parents = try self.allocator.alloc(TagTreeEntry, parents.len + 1);
                 std.mem.copy(TagTreeEntry, new_parents, parents);
                 new_parents[new_parents.len - 1] = .{
-                    .tag_id = tree_row.parent_tag,
+                    .tag_id = ID.new(tree_row.parent_tag),
                     .row_id = tree_row.row_id,
                 };
                 self.allocator.free(parents);
-                try treemap.put(tree_row.child_tag, new_parents);
+                try treemap.put(child_tag, new_parents);
             } else {
                 var new_parents = try self.allocator.alloc(TagTreeEntry, 1);
                 new_parents[0] = .{
-                    .tag_id = tree_row.parent_tag,
+                    .tag_id = ID.new(tree_row.parent_tag),
                     .row_id = tree_row.row_id,
                 };
-                try treemap.put(tree_row.child_tag, new_parents);
+                try treemap.put(child_tag, new_parents);
             }
         }
 
@@ -1301,7 +1366,7 @@ pub const Context = struct {
             defer stmt.deinit();
 
             const FileRow = struct {
-                file_hash: i64,
+                file_hash: ID.SQL,
             };
             var iter = try stmt.iterator(
                 FileRow,
@@ -1309,7 +1374,7 @@ pub const Context = struct {
             );
 
             while (try iter.next(.{})) |file_row| {
-                const file_hash = file_row.file_hash;
+                const file_hash = ID.new(file_row.file_hash);
                 try self.processSingleFileIntoTagTree(file_hash, treemap);
             }
         }
@@ -1331,7 +1396,7 @@ pub const Context = struct {
                 usize,
                 "select max(entry_index) from pool_entries where pool_hash = ?",
                 .{},
-                .{self.hash.id},
+                .{self.hash.id.sql()},
             );
 
             return if (maybe_max_index) |max_index| max_index + 1 else 0;
@@ -1341,37 +1406,37 @@ pub const Context = struct {
             try self.ctx.db.?.exec(
                 "delete from pools where pool_hash = ?",
                 .{},
-                .{self.hash.id},
+                .{self.hash.id.sql()},
             );
         }
 
-        pub fn addFile(self: PoolSelf, file_id: i64) !void {
+        pub fn addFile(self: PoolSelf, file_id: ID) !void {
             const index = try self.availableIndex();
             logger.warn("adding file {d} to pool {d} index {d}", .{ file_id, self.hash.id, index });
             try self.ctx.db.?.exec(
                 "insert into pool_entries (file_hash, pool_hash, entry_index) values (?, ?, ?)",
                 .{},
-                .{ file_id, self.hash.id, index },
+                .{ file_id.sql(), self.hash.id.sql(), index },
             );
         }
 
-        pub fn removeFile(self: PoolSelf, file_id: i64) !void {
+        pub fn removeFile(self: PoolSelf, file_id: ID) !void {
             try self.ctx.db.?.exec(
                 "delete from pool_entries where file_hash = ? and pool_hash = ?",
                 .{},
-                .{ file_id, self.hash.id },
+                .{ file_id.sql(), self.hash.id.sql() },
             );
         }
 
         pub fn addFileAtIndex(
             self: PoolSelf,
-            new_file_id: i64,
+            new_file_id: ID,
             index: usize,
         ) !void {
             var all_file_hashes = try self.fetchFiles(self.ctx.allocator);
             defer self.ctx.allocator.free(all_file_hashes);
 
-            var all_hash_ids = std.ArrayList(i64).init(self.ctx.allocator);
+            var all_hash_ids = std.ArrayList(ID).init(self.ctx.allocator);
             defer all_hash_ids.deinit();
             for (all_file_hashes) |hash| try all_hash_ids.append(hash.id);
 
@@ -1391,12 +1456,16 @@ pub const Context = struct {
                 errdefer savepoint.rollback();
                 defer savepoint.commit();
 
-                try self.ctx.db.?.exec("delete from pool_entries where pool_hash = ?", .{}, .{self.hash.id});
+                try self.ctx.db.?.exec(
+                    "delete from pool_entries where pool_hash = ?",
+                    .{},
+                    .{self.hash.id.sql()},
+                );
                 for (all_hash_ids.items) |pool_file_id, pool_index| {
                     try self.ctx.db.?.exec(
                         "insert into pool_entries (file_hash, pool_hash, entry_index) values (?, ?, ?)",
                         .{},
-                        .{ pool_file_id, self.hash.id, pool_index },
+                        .{ pool_file_id.sql(), self.hash.id.sql(), pool_index },
                     );
                 }
             }
@@ -1420,10 +1489,10 @@ pub const Context = struct {
             defer stmt.deinit();
 
             const internal_hashes = try stmt.all(
-                HashWithBlob,
+                HashSQL,
                 allocator,
                 .{},
-                .{self.hash.id},
+                .{self.hash.id.sql()},
             );
             defer {
                 for (internal_hashes) |hash| allocator.free(hash.hash_data.data);
@@ -1437,7 +1506,7 @@ pub const Context = struct {
                 try list.append(hash.toRealHash());
             }
 
-            return list.toOwnedSlice();
+            return try list.toOwnedSlice();
         }
     };
 
@@ -1456,12 +1525,7 @@ pub const Context = struct {
         defer savepoint.commit();
 
         const hash_blob = sqlite.Blob{ .data = &core_hash_bytes };
-        const core_hash_id = (try self.db.?.one(
-            i64,
-            "insert into hashes (hash_data) values (?) returning id",
-            .{},
-            .{hash_blob},
-        )).?;
+        const core_hash_id = try self.createHash(hash_blob);
 
         // core_hash_bytes is passed by reference here, so we don't
         // have to worry about losing it to undefined memory hell.
@@ -1470,7 +1534,7 @@ pub const Context = struct {
         try self.db.?.exec(
             "insert into pools (pool_hash, pool_core_data, title) values (?, ?, ?)",
             .{},
-            .{ core_hash_id, core_data_blob, title },
+            .{ core_hash_id.sql(), core_data_blob, title },
         );
 
         var pool_hash = Hash{ .id = core_hash_id, .hash_data = core_hash_bytes };
@@ -1482,7 +1546,7 @@ pub const Context = struct {
         };
     }
 
-    pub fn fetchPool(self: *Self, hash_id: i64) !?Pool {
+    pub fn fetchPool(self: *Self, hash_id: ID) !?Pool {
         var maybe_pool = try self.db.?.oneAlloc(
             struct {
                 title: []const u8,
@@ -1496,15 +1560,15 @@ pub const Context = struct {
             \\ where pools.pool_hash = ?
         ,
             .{},
-            .{hash_id},
+            .{hash_id.sql()},
         );
 
         if (maybe_pool) |*pool| {
             // string memory is passed to client
             defer self.allocator.free(pool.hash_data.data);
 
-            const almost_good_hash = HashWithBlob{
-                .id = hash_id,
+            const almost_good_hash = HashSQL{
+                .id = hash_id.data,
                 .hash_data = pool.hash_data,
             };
             return Pool{
@@ -1575,11 +1639,19 @@ pub const Context = struct {
 
                 if (current_version < migration.version) {
                     logger.info("running migration {d} '{s}'", .{ migration.version, migration.name });
-                    var diags = sqlite.Diagnostics{};
-                    self.db.?.execMulti(migration.sql.?, .{ .diags = &diags }) catch |err| {
-                        logger.err("unable to prepare statement, got error {s}. diagnostics: {s}", .{ @errorName(err), diags });
-                        return err;
-                    };
+
+                    if (migration.sql) |migration_sql| {
+                        var diags = sqlite.Diagnostics{};
+                        self.db.?.execMulti(migration_sql, .{ .diags = &diags }) catch |err| {
+                            logger.err(
+                                "unable to prepare statement, got error {s}. diagnostics: {s}",
+                                .{ @errorName(err), diags },
+                            );
+                            return err;
+                        };
+                    } else {
+                        try migration.options.function.?(self);
+                    }
 
                     try self.db.?.exec(
                         "INSERT INTO migration_logs (version, applied_at, description) values (?, ?, ?);",
@@ -1702,7 +1774,23 @@ pub fn main() anyerror!void {
 
 pub var test_db_path_buffer: [std.os.PATH_MAX]u8 = undefined;
 
+pub var test_set_log = false;
+
 pub fn makeTestContext() !Context {
+    if (!test_set_log) {
+        _ = sqlite.c.sqlite3_shutdown();
+
+        const rc = sqlite.c.sqlite3_config(sqlite.c.SQLITE_CONFIG_LOG, sqliteLog, @as(?*anyopaque, null));
+        test_set_log = true;
+        if (rc != sqlite.c.SQLITE_OK) {
+            logger.err("failed to configure ({}): {d} '{s}'", .{
+                test_set_log, rc, sqlite.c.sqlite3_errstr(rc),
+            });
+            return error.ConfigFail;
+        }
+        _ = sqlite.c.sqlite3_initialize();
+    }
+
     const homepath = try std.fs.cwd().realpath(".", &test_db_path_buffer);
     var ctx = Context{
         .args_it = undefined,
@@ -1945,21 +2033,21 @@ test "tag parenting" {
     var saw_parent3 = false;
 
     for (file_tags) |file_tag| {
-        if (file_tag.core.id == parent_tag.core.id) {
+        if (std.meta.eql(file_tag.core.id, parent_tag.core.id)) {
             try std.testing.expectEqual(TagSourceType.system, file_tag.source.kind);
             try std.testing.expectEqual(@as(i64, @enumToInt(SystemTagSources.tag_parenting)), file_tag.source.id);
             try std.testing.expectEqual(tag_tree_entry_id, file_tag.parent_source_id.?);
             saw_parent = true;
         }
-        if (file_tag.core.id == parent_tag2.core.id) {
+        if (std.meta.eql(file_tag.core.id, parent_tag2.core.id)) {
             try std.testing.expectEqual(tag_tree_entry2_id, file_tag.parent_source_id.?);
             saw_parent2 = true;
         }
-        if (file_tag.core.id == parent_tag3.core.id) {
+        if (std.meta.eql(file_tag.core.id, parent_tag3.core.id)) {
             try std.testing.expectEqual(tag_tree_entry3_id, file_tag.parent_source_id.?);
             saw_parent3 = true;
         }
-        if (file_tag.core.id == child_tag.core.id) saw_child = true;
+        if (std.meta.eql(file_tag.core.id, child_tag.core.id)) saw_child = true;
     }
 
     try std.testing.expect(saw_parent);
@@ -2019,9 +2107,9 @@ test "file pools" {
         defer ctx.allocator.free(file_hashes);
 
         try std.testing.expectEqual(@as(usize, 3), file_hashes.len);
-        try std.testing.expect(file_hashes[0].id == indexed_file3.hash.id);
-        try std.testing.expect(file_hashes[1].id == indexed_file1.hash.id);
-        try std.testing.expect(file_hashes[2].id == indexed_file2.hash.id);
+        try std.testing.expect(std.meta.eql(file_hashes[0].id, indexed_file3.hash.id));
+        try std.testing.expect(std.meta.eql(file_hashes[1].id, indexed_file1.hash.id));
+        try std.testing.expect(std.meta.eql(file_hashes[2].id, indexed_file2.hash.id));
     }
 
     // remove one, assert it remains in order
@@ -2032,8 +2120,8 @@ test "file pools" {
         defer ctx.allocator.free(file_hashes);
 
         try std.testing.expectEqual(@as(usize, 2), file_hashes.len);
-        try std.testing.expect(file_hashes[0].id == indexed_file3.hash.id);
-        try std.testing.expect(file_hashes[1].id == indexed_file2.hash.id);
+        try std.testing.expect(std.meta.eql(file_hashes[0].id, indexed_file3.hash.id));
+        try std.testing.expect(std.meta.eql(file_hashes[1].id, indexed_file2.hash.id));
     }
 
     // add it again, see it at end
@@ -2044,9 +2132,9 @@ test "file pools" {
         defer ctx.allocator.free(file_hashes);
 
         try std.testing.expectEqual(@as(usize, 3), file_hashes.len);
-        try std.testing.expect(file_hashes[0].id == indexed_file3.hash.id);
-        try std.testing.expect(file_hashes[1].id == indexed_file2.hash.id);
-        try std.testing.expect(file_hashes[2].id == indexed_file1.hash.id);
+        try std.testing.expect(std.meta.eql(file_hashes[0].id, indexed_file3.hash.id));
+        try std.testing.expect(std.meta.eql(file_hashes[1].id, indexed_file2.hash.id));
+        try std.testing.expect(std.meta.eql(file_hashes[2].id, indexed_file1.hash.id));
     }
 
     // remove one, assert it remains in order
@@ -2057,8 +2145,8 @@ test "file pools" {
         defer ctx.allocator.free(file_hashes);
 
         try std.testing.expectEqual(@as(usize, 2), file_hashes.len);
-        try std.testing.expect(file_hashes[0].id == indexed_file3.hash.id);
-        try std.testing.expect(file_hashes[1].id == indexed_file2.hash.id);
+        try std.testing.expect(std.meta.eql(file_hashes[0].id, indexed_file3.hash.id));
+        try std.testing.expect(std.meta.eql(file_hashes[1].id, indexed_file2.hash.id));
     }
 
     // add it IN A SPECIFIED INDEX, see it at end
@@ -2069,9 +2157,9 @@ test "file pools" {
         defer ctx.allocator.free(file_hashes);
 
         try std.testing.expectEqual(@as(usize, 3), file_hashes.len);
-        try std.testing.expect(file_hashes[0].id == indexed_file1.hash.id);
-        try std.testing.expect(file_hashes[1].id == indexed_file3.hash.id);
-        try std.testing.expect(file_hashes[2].id == indexed_file2.hash.id);
+        try std.testing.expect(std.meta.eql(file_hashes[0].id, indexed_file1.hash.id));
+        try std.testing.expect(std.meta.eql(file_hashes[1].id, indexed_file3.hash.id));
+        try std.testing.expect(std.meta.eql(file_hashes[2].id, indexed_file2.hash.id));
     }
 }
 
@@ -2134,8 +2222,10 @@ test "everyone else" {
     std.testing.refAllDecls(@import("./rm_main.zig"));
     //std.testing.refAllDecls(@import("./hydrus_api_main.zig"));
     std.testing.refAllDecls(@import("./tags_main.zig"));
+    std.testing.refAllDecls(@import("./janitor_main.zig"));
     std.testing.refAllDecls(@import("./metrics_main.zig"));
     std.testing.refAllDecls(@import("./test_migrations.zig"));
+    std.testing.refAllDecls(@import("./snowflake.zig"));
 
     if (builtin.os.tag == .linux) {
         std.testing.refAllDecls(@import("./rename_watcher_main.zig"));

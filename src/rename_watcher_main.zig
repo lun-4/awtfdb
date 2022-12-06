@@ -2,6 +2,7 @@ const std = @import("std");
 const sqlite = @import("sqlite");
 const manage_main = @import("main.zig");
 const Context = manage_main.Context;
+const ID = manage_main.ID;
 const ExpiringHashMap = @import("expiring-hash-map").ExpiringHashMap;
 
 const logger = std.log.scoped(.awtfdb_watcher);
@@ -271,7 +272,7 @@ const RenameContext = struct {
 
         const raw_files = try stmt.all(
             struct {
-                file_hash: i64,
+                file_hash: ID.SQL,
                 hash_data: sqlite.Blob,
                 local_path: []const u8,
             },
@@ -287,7 +288,7 @@ const RenameContext = struct {
         // find out if the target newpath is a folder or not by searching
         // if there are multiple entries with it already
         var newpath_count = (try self.ctx.db.?.one(
-            i64,
+            usize,
             \\ select count(*)
             \\ from files
             \\ where local_path LIKE ? || '%'
@@ -320,7 +321,7 @@ const RenameContext = struct {
 
             for (raw_files) |raw_file| {
                 if (std.mem.eql(u8, raw_file.local_path, oldpath)) {
-                    const real_hash = (Context.HashWithBlob{
+                    const real_hash = (Context.HashSQL{
                         .id = raw_file.file_hash,
                         .hash_data = raw_file.hash_data,
                     }).toRealHash();
@@ -425,7 +426,7 @@ const RenameContext = struct {
                             .{ &raw_file.file_hash, raw_file.local_path, replaced_path },
                         );
 
-                        const real_hash = (Context.HashWithBlob{
+                        const real_hash = (Context.HashSQL{
                             .id = raw_file.file_hash,
                             .hash_data = raw_file.hash_data,
                         }).toRealHash();

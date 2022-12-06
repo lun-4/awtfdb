@@ -3,6 +3,7 @@ const sqlite = @import("sqlite");
 const manage_main = @import("main.zig");
 const libpcre = @import("libpcre");
 const Context = manage_main.Context;
+const ID = manage_main.ID;
 
 const logger = std.log.scoped(.als);
 
@@ -103,7 +104,7 @@ pub fn main() anyerror!void {
             var it = std.mem.split(u8, query, "@");
             _ = it.next();
             const file_hash_as_str = it.next() orelse return error.InvalidFileIdSyntax;
-            const file_hash = try std.fmt.parseInt(i64, file_hash_as_str, 10);
+            const file_hash = ID.fromString(file_hash_as_str);
 
             var maybe_file = try ctx.fetchFile(file_hash);
             if (maybe_file) |file| {

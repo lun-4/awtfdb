@@ -3,7 +3,7 @@ const sqlite = @import("sqlite");
 const manage_main = @import("main.zig");
 const libpcre = @import("libpcre");
 const Context = manage_main.Context;
-
+const ID = manage_main.ID;
 const logger = std.log.scoped(.afind);
 
 const VERSION = "0.0.1";
@@ -144,7 +144,7 @@ pub fn main() anyerror!void {
         },
     };
 
-    var resolved_arguments = std.ArrayList(i64).init(allocator);
+    var resolved_arguments = std.ArrayList(ID.SQL).init(allocator);
     defer resolved_arguments.deinit();
 
     for (result.arguments) |argument| {
@@ -152,7 +152,7 @@ pub fn main() anyerror!void {
             .tag => |tag_text| {
                 const maybe_tag = try ctx.fetchNamedTag(tag_text, "en");
                 if (maybe_tag) |tag| {
-                    try resolved_arguments.append(tag.core.id);
+                    try resolved_arguments.append(tag.core.id.data);
                 } else {
                     logger.err("unknown tag '{s}'", .{tag_text});
                     return error.UnknownTag;
@@ -161,17 +161,12 @@ pub fn main() anyerror!void {
 
             .file => |file_hash| {
                 const hash_blob = sqlite.Blob{ .data = &file_hash };
-                const maybe_hash_id = (try ctx.db.?.one(
-                    i64,
-                    "select id from hashes where hash_data = ?",
-                    .{},
-                    .{hash_blob},
-                ));
+                const maybe_hash_id = try ctx.fetchHashId(hash_blob);
 
                 if (maybe_hash_id) |hash_id| {
-                    try resolved_arguments.append(hash_id);
+                    try resolved_arguments.append(hash_id.data);
                 } else {
-                    try resolved_arguments.append(-1);
+                    try resolved_arguments.append(undefined);
                     //logger.err("unknown file '{x}'", .{std.fmt.fmtSliceHexLower(&file_hash)});
                     //return error.UnknownFile;
                 }
@@ -185,7 +180,7 @@ pub fn main() anyerror!void {
     logger.debug("generated query: {s}", .{result.query});
     logger.debug("found arguments: {any}", .{resolved_arguments.items});
 
-    var it = try stmt.iterator(i64, resolved_arguments.items);
+    var it = try stmt.iterator(ID.SQL, resolved_arguments.items);
 
     const BufferedFileWriter = std.io.BufferedWriter(4096, std.fs.File.Writer);
 
@@ -203,7 +198,8 @@ pub fn main() anyerror!void {
         returned_files.deinit();
     }
 
-    while (try it.next(.{})) |file_hash| {
+    while (try it.next(.{})) |file_hash_sql| {
+        const file_hash = ID.new(file_hash_sql);
         var file = (try ctx.fetchFile(file_hash)).?;
         // if we use --link, we need the full list of files to make
         // symlinks out of, so this block doesn't own the lifetime of the
@@ -529,8 +525,8 @@ pub const SqlGiver = struct {
 
         return Result{ .Ok = .{
             .allocator = allocator,
-            .query = list.toOwnedSlice(),
-            .arguments = arguments.toOwnedSlice(),
+            .query = try list.toOwnedSlice(),
+            .arguments = try arguments.toOwnedSlice(),
         } };
     }
 };

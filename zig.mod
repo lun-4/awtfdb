@@ -3,7 +3,7 @@ name: awtfdb
 license: MIT
 description: The Anime Woman Tagged Files Database
 root_dependencies:
-  - src: git https://github.com/lun-4/zig-sqlite branch-luna-stage2
+  - src: git https://github.com/lun-4/zig-sqlite branch-custom-bindfield-without-allocators
   - src: git https://github.com/lun-4/libpcre.zig branch-luna-pcre
   - src: git https://github.com/truemedian/hzzp
   - src: git https://github.com/lun-4/libmagic.zig
@@ -11,3 +11,4 @@ root_dependencies:
   - src: git https://github.com/lun-4/tunez branch-luna-stage2
     name: tunez
     main: src/main.zig
+  - src: git https://github.com/lun-4/zig-ulid branch-no-alloc

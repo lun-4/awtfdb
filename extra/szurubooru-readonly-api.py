@@ -39,6 +39,43 @@ async def send_file(path: str, *, mimetype: Optional[str] = None):
     return response
 
 
+BASE32_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
+
+
+def base32_parse(string):
+    lst = []
+    for input_character in string:
+        for index, alphabet_character in enumerate(BASE32_ALPHABET):
+            if input_character == alphabet_character:
+                lst.append(index)
+    return lst
+
+
+def get_ulid_timestamp(ulid_string: str) -> int:
+    assert len(ulid_string) == 26
+    encoded_timestamp = ulid_string[0:10]
+    decoded_timestamp = base32_parse(encoded_timestamp)
+    # turn into u50
+    result = 0
+    for index, value in enumerate(decoded_timestamp):
+        shift = 5 * (len(decoded_timestamp) - 1 - index)
+        result |= value << shift
+    return result / 1000
+
+
+def get_ulid_datetime(ulid_string):
+    return datetime.datetime.fromtimestamp(get_ulid_timestamp(ulid_string))
+
+
+def test_ulid():
+    ts = get_ulid_timestamp("01FW07HVW1PCGKCDPPFBFC37WA")
+    assert ts is not None
+    dt = datetime.datetime.fromtimestamp(ts)
+    assert dt.year == 2022
+    assert dt.month == 2
+    assert dt.day == 16
+
+
 @dataclass
 class FileCache:
     canvas_size: Dict[int, Tuple[int, int]]
@@ -262,6 +299,7 @@ async def tags_fetch():
     async for tag in tag_rows:
         tags = await fetch_tag(tag[0])
         for tag in tags:
+            tag_timestamp = get_ulid_datetime(tag[0])
             rows.append(
                 {
                     "version": 1,
@@ -269,8 +307,8 @@ async def tags_fetch():
                     "category": "default",
                     "implications": [],
                     "suggestions": [],
-                    "creationTime": "1900-01-01T00:00:00Z",
-                    "lastEditTime": "1900-01-01T00:00:00Z",
+                    "creationTime": tag_timestamp.isoformat(),
+                    "lastEditTime": tag_timestamp.isoformat(),
                     "usages": tag["usages"],
                     "description": "awooga",
                 }
@@ -413,7 +451,7 @@ async def fetch_file_local_path(file_id: int) -> Optional[str]:
     return path
 
 
-@app.get("/_awtfdb_content/<int:file_id>")
+@app.get("/_awtfdb_content/<file_id>")
 async def content(file_id: int):
     file_local_path = await fetch_file_local_path(file_id)
     if not file_local_path:
@@ -493,6 +531,7 @@ MIME_EXTENSION_MAPPING = {
     "video/x-matroska": ".mkv",
     "video/mkv": ".mkv",
     "audio/x-m4a": ".m4a",
+    "audio/ogg": ".ogg",
     "video/x-m4v": ".m4v",
     "video/3gpp": ".3gpp",
     "application/vnd.oasis.opendocument.text": ".odt",
@@ -634,7 +673,7 @@ async def submit_thumbnail(file_id, mimetype, file_local_path, thumbnail_path):
     return thumbnail_path
 
 
-@app.get("/_awtfdb_thumbnails/<int:file_id>")
+@app.get("/_awtfdb_thumbnails/<file_id>")
 async def thumbnail(file_id: int):
     file_local_path = await fetch_file_local_path(file_id)
     if not file_local_path:
@@ -674,7 +713,7 @@ async def posts_fetch():
     if "pool:" in query:
         # switch logic to fetching stuff from pool only in order lol
         _, pool_id = query.split(":")
-        pool = await fetch_pool_entity(int(pool_id))
+        pool = await fetch_pool_entity(pool_id)
         posts = pool["posts"][offset:]
         return {
             "query": query,
@@ -770,10 +809,10 @@ async def fetch_tag(core_hash) -> list:
             (core_hash,),
         )
         if not usages_from_metrics:
-            log.info("tag %d has no metrics, calculating manually...", core_hash)
+            log.info("tag %s has no metrics, calculating manually...", core_hash)
             usages = (
                 await app.db.execute_fetchall(
-                    "select count(rowid) from tag_files where core_hash = ?",
+                    "select count(core_hash) from tag_files where core_hash = ?",
                     (core_hash,),
                 )
             )[0][0]
@@ -815,17 +854,20 @@ ALL_FILE_FIELDS = (
 
 
 async def fetch_file_entity(
-    file_id: int, *, micro=False, fields: Optional[List[str]] = None
+    file_id: str, *, micro=False, fields: Optional[List[str]] = None
 ) -> dict:
     fields = fields or ALL_FILE_FIELDS
     if micro:
         fields = MICRO_FILE_FIELDS
 
+    file_timestamp = get_ulid_datetime(file_id)
+
     returned_file = {
         "version": 1,
         "id": file_id,
-        "creationTime": "1900-01-01T00:00:00Z",
-        "lastEditTime": "1900-01-01T00:00:00Z",
+        "creationTime": file_timestamp.isoformat(),
+        "lastEditTime": file_timestamp.isoformat(),
+        "lastFeatureTime": file_timestamp.isoformat(),
         "safety": "safe",
         "source": None,
         "checksum": "test",
@@ -844,7 +886,6 @@ async def fetch_file_entity(
         "noteCount": 0,
         "featureCount": 0,
         "relationCount": 0,
-        "lastFeatureTime": "1900-01-01T00:00:00Z",
         "favoritedBy": [],
         "hasCustomThumbnail": True,
         "comments": [],
@@ -963,20 +1004,20 @@ async def fetch_file_entity(
         returned_file["canvasWidth"] = int(canvas_size[0]) if canvas_size[0] else None
         returned_file["canvasHeight"] = int(canvas_size[1]) if canvas_size[1] else None
 
-        log.info("file %d calculate canvas size: %r", file_id, canvas_size)
+        log.info("file %s calculate canvas size: %r", file_id, canvas_size)
         assert len(canvas_size) == 2
 
-    log.info("file %d fetch fields %r", file_id, fields)
+    log.info("file %s fetch fields %r", file_id, fields)
     return returned_file
 
 
-@app.get("/post/<int:file_id>")
+@app.get("/post/<file_id>")
 async def single_post_fetch(file_id: int):
     # GET /post/<id>
     return await fetch_file_entity(file_id)
 
 
-@app.get("/post/<int:file_id>/around/")
+@app.get("/post/<file_id>/around/")
 async def single_post_fetch_around(file_id: int):
     fields = request_fields()
     prev_cursor = await app.db.execute(
@@ -1009,7 +1050,8 @@ async def single_post_fetch_around(file_id: int):
     }
 
 
-async def fetch_pool_entity(pool_hash: int, micro=False):
+async def fetch_pool_entity(pool_hash: str, micro=False):
+    pool_timestamp = get_ulid_datetime(pool_hash)
     pool_rows = await app.db.execute_fetchall(
         "select title from pools where pool_hash = ?", [pool_hash]
     )
@@ -1039,8 +1081,8 @@ async def fetch_pool_entity(pool_hash: int, micro=False):
         "names": [pool_title],
         "category": "default",
         "posts": pool_posts,
-        "creationTime": "1900-01-01T00:00:00Z",
-        "lastEditTime": "1900-01-01T00:00:00Z",
+        "creationTime": pool_timestamp.isoformat(),
+        "lastEditTime": pool_timestamp.isoformat(),
         "postCount": post_count,
         "description": "",
     }
@@ -1085,7 +1127,7 @@ async def pools_fetch():
     }
 
 
-@app.get("/pool/<int:pool_id>")
+@app.get("/pool/<pool_id>")
 async def single_pool_fetch(pool_id: int):
     return await fetch_pool_entity(pool_id)
 
