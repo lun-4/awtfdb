@@ -297,9 +297,9 @@ async def tags_fetch():
     )
     rows = []
     async for tag in tag_rows:
+        tag_timestamp = get_ulid_datetime(tag[0])
         tags = await fetch_tag(tag[0])
         for tag in tags:
-            tag_timestamp = get_ulid_datetime(tag[0])
             rows.append(
                 {
                     "version": 1,
