@@ -850,6 +850,7 @@ ALL_FILE_FIELDS = (
     "type",
     "canvasHeight",
     "canvasWidth",
+    "fileSize",
 )
 
 
@@ -1006,6 +1007,9 @@ async def fetch_file_entity(
 
         log.info("file %s calculate canvas size: %r", file_id, canvas_size)
         assert len(canvas_size) == 2
+
+    if "fileSize" in fields:
+        returned_file["fileSize"] = Path(file_local_path).stat().st_size
 
     log.info("file %s fetch fields %r", file_id, fields)
     return returned_file
