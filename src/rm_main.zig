@@ -174,10 +174,15 @@ pub fn main() anyerror!void {
     for (given_args.paths.items) |path| {
         var full_path_buffer: [std.os.PATH_MAX]u8 = undefined;
         // if forcing a deletion, do not give a shit about filesystem
-        const full_path = if (given_args.force)
-            path
-        else
-            try std.fs.cwd().realpath(path, &full_path_buffer);
+        const full_path = std.fs.cwd().realpath(path, &full_path_buffer) catch |err| blk: {
+            if (given_args.force) {
+                logger.warn("ignoring error {s} while resolving '{s}'", .{ @errorName(err), path });
+                break :blk path;
+            } else {
+                logger.err("error resolving path '{s}'", .{path});
+                return err;
+            }
+        };
         var maybe_file = try ctx.fetchFileByPath(full_path);
 
         if (maybe_file) |*file| {
@@ -185,8 +190,8 @@ pub fn main() anyerror!void {
             count += try processFile(given_args, file);
         } else {
             var dir = std.fs.cwd().openIterableDir(full_path, .{}) catch |err| {
-                logger.err("path not found: {s}", .{full_path});
-                return err;
+                logger.warn("ignoring file {s} ({s})", .{ full_path, @errorName(err) });
+                continue;
             };
 
             if (!given_args.recursive) {
