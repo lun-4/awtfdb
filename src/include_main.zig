@@ -128,7 +128,7 @@ const TestUtil = struct {
         const written_bytes = try file.write(test_vector_bytes);
         std.debug.assert(written_bytes == test_vector_bytes.len);
 
-        var indexed_file = try ctx.createFileFromDir(tmp.dir, filename);
+        var indexed_file = try ctx.createFileFromDir(tmp.dir, filename, .{});
         defer indexed_file.deinit();
 
         const file_tags = try indexed_file.fetchTags(allocator);
@@ -142,7 +142,7 @@ const TestUtil = struct {
         }
 
         // actually run inferrer
-        try @call(.{}, InferrerType.run, first_args ++ .{ &indexed_file, &tags_to_add });
+        try @call(.auto, InferrerType.run, first_args ++ .{ &indexed_file, &tags_to_add });
 
         try addTagList(ctx, &indexed_file, tags_to_add);
 
@@ -684,6 +684,7 @@ pub const Args = struct {
     include_paths: StringList,
     pool: ?ID = null,
     strict: bool = false,
+    use_file_timestamp: bool = false,
 
     pub fn deinit(self: *@This()) void {
         self.default_tags.deinit();
@@ -799,6 +800,8 @@ pub fn main() anyerror!void {
             given_args.filter_indexed_files_only = true;
         } else if (std.mem.eql(u8, arg, "--dry-run")) {
             given_args.dry_run = true;
+        } else if (std.mem.eql(u8, arg, "--use-file-timestamp-for-id")) {
+            given_args.use_file_timestamp = true;
         } else if (std.mem.eql(u8, arg, "--v1")) {
             given_args.cli_v1 = true; // doesn't do anything yet
         } else if (std.mem.eql(u8, arg, "--tag") or std.mem.eql(u8, arg, "-t")) {
@@ -911,7 +914,9 @@ pub fn main() anyerror!void {
             if (given_args.filter_indexed_files_only) {
                 @panic("TODO support filter_indexed_files_only on file paths");
             }
-            var file = try ctx.createFileFromPath(path_to_include);
+            var file = try ctx.createFileFromPath(path_to_include, .{
+                .use_file_timestamp = given_args.use_file_timestamp,
+            });
             try file_ids_for_tagtree.append(file.hash.id);
             defer file.deinit();
             logger.debug("adding file '{s}'", .{file.local_path});
@@ -977,7 +982,9 @@ pub fn main() anyerror!void {
                             }
                         }
 
-                        var file = try ctx.createFileFromDir(entry.dir, entry.basename);
+                        var file = try ctx.createFileFromDir(entry.dir, entry.basename, .{
+                            .use_file_timestamp = given_args.use_file_timestamp,
+                        });
                         try file_ids_for_tagtree.append(file.hash.id);
                         defer file.deinit();
                         {

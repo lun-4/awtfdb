@@ -242,11 +242,11 @@ test "metrics (tags and files)" {
     defer file3.close();
     _ = try file3.write("awooga3");
 
-    var indexed_file1 = try ctx.createFileFromDir(tmp.dir, "test_file1");
+    var indexed_file1 = try ctx.createFileFromDir(tmp.dir, "test_file1", .{});
     defer indexed_file1.deinit();
-    var indexed_file2 = try ctx.createFileFromDir(tmp.dir, "test_file2");
+    var indexed_file2 = try ctx.createFileFromDir(tmp.dir, "test_file2", .{});
     defer indexed_file2.deinit();
-    var indexed_file3 = try ctx.createFileFromDir(tmp.dir, "test_file3");
+    var indexed_file3 = try ctx.createFileFromDir(tmp.dir, "test_file3", .{});
     defer indexed_file3.deinit();
 
     // setup tag links

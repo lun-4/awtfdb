@@ -335,6 +335,16 @@ pub const ID = struct {
         return Self.ul(generated_ulid);
     }
 
+    pub fn generateWithTimestamp(milliTimestamp: anytype) Self {
+        var rng = std.rand.DefaultPrng.init(
+            @truncate(u64, @intCast(u128, std.time.nanoTimestamp())),
+        );
+        const rand = rng.random();
+
+        const generated_ulid = ulidFromTimestamp(rand, milliTimestamp);
+        return Self.ul(generated_ulid);
+    }
+
     pub fn new(data: [26]u8) Self {
         return Self{ .data = data };
     }
@@ -654,8 +664,16 @@ pub const Context = struct {
     // TODO add sources to tag cores (needs a new Hash struct dedicated to it
     // as things like files use Hash but do not have tag sources)
 
-    fn createHash(self: *Self, hash_blob: sqlite.Blob) !ID {
-        const id = ID.generate();
+    pub const CreateHashOptions = struct {
+        milliTimestamp: ?i128 = null,
+    };
+
+    fn createHash(self: *Self, hash_blob: sqlite.Blob, options: CreateHashOptions) !ID {
+        const id = if (options.milliTimestamp) |timestamp|
+            ID.generateWithTimestamp(timestamp)
+        else
+            ID.generate();
+
         try self.db.?.exec(
             "insert into hashes (id, hash_data) values (?, ?)",
             .{},
@@ -690,7 +708,7 @@ pub const Context = struct {
 
             // core_hash_bytes is passed by reference here, so we don't
             // have to worry about losing it to undefined memory hell.
-            const hash_id = try self.createHash(hash_blob);
+            const hash_id = try self.createHash(hash_blob, .{});
             core_hash = .{ .id = hash_id, .hash_data = core_hash_bytes };
 
             const id_data = try self.db.?.one(ID.SQL, "select id from hashes where hash_data= ?", .{}, .{hash_blob});
@@ -968,8 +986,12 @@ pub const Context = struct {
         };
     }
 
+    pub const CreateFileOptions = struct {
+        use_file_timestamp: bool = false,
+    };
+
     /// Caller owns returned memory.
-    pub fn createFileFromPath(self: *Self, local_path: []const u8) !File {
+    pub fn createFileFromPath(self: *Self, local_path: []const u8, options: CreateFileOptions) !File {
         const absolute_local_path = try std.fs.realpathAlloc(self.allocator, local_path);
         var possible_file_entry = try self.fetchFileByPath(absolute_local_path);
         if (possible_file_entry) |file_entry| {
@@ -981,12 +1003,15 @@ pub const Context = struct {
         var file = try std.fs.openFileAbsolute(absolute_local_path, .{ .mode = .read_only });
         defer file.close();
 
-        var file_hash: Hash = try self.calculateHash(file, .{});
+        var file_hash: Hash = try self.calculateHash(file, .{
+            .use_file_timestamp = options.use_file_timestamp,
+        });
         return try self.insertFile(file_hash, absolute_local_path);
     }
 
     pub const CalculateHashOptions = struct {
         insert_new_hash: bool = true,
+        use_file_timestamp: bool = false,
     };
 
     pub fn fetchHashId(self: *Self, blob: sqlite.Blob) !?ID {
@@ -1020,7 +1045,15 @@ pub const Context = struct {
             file_hash.id = hash_id;
         } else {
             if (options.insert_new_hash) {
-                file_hash.id = try self.createHash(hash_blob);
+                if (options.use_file_timestamp) {
+                    const stat = try file.stat();
+                    const timestamp_as_milliseconds = @divTrunc(stat.ctime, std.time.ns_per_ms);
+                    file_hash.id = try self.createHash(hash_blob, .{
+                        .milliTimestamp = timestamp_as_milliseconds,
+                    });
+                } else {
+                    file_hash.id = try self.createHash(hash_blob, .{});
+                }
             } else {
                 file_hash.id = .{ .data = undefined };
             }
@@ -1041,8 +1074,10 @@ pub const Context = struct {
         if (maybe_hash_id) |hash_id| {
             hash_entry.id = hash_id;
         } else {
+            // TODO remove insertion capabilities from this API,
+            // as it is only used to double check against tag cores in the janitor
             if (options.insert_new_hash) {
-                hash_entry.id = try self.createHash(hash_blob);
+                hash_entry.id = try self.createHash(hash_blob, .{});
             } else {
                 hash_entry.id = .{ .data = undefined };
             }
@@ -1073,7 +1108,12 @@ pub const Context = struct {
         };
     }
 
-    pub fn createFileFromDir(self: *Self, dir: std.fs.Dir, dir_path: []const u8) !File {
+    pub fn createFileFromDir(
+        self: *Self,
+        dir: std.fs.Dir,
+        dir_path: []const u8,
+        options: CreateFileOptions,
+    ) !File {
         var file = try dir.openFile(dir_path, .{ .mode = .read_only });
         defer file.close();
         const absolute_local_path = try dir.realpathAlloc(self.allocator, dir_path);
@@ -1085,7 +1125,9 @@ pub const Context = struct {
             return file_entry;
         }
 
-        var file_hash: Hash = try self.calculateHash(file, .{});
+        var file_hash: Hash = try self.calculateHash(file, .{
+            .use_file_timestamp = options.use_file_timestamp,
+        });
         return try self.insertFile(file_hash, absolute_local_path);
     }
 
@@ -1525,7 +1567,7 @@ pub const Context = struct {
         defer savepoint.commit();
 
         const hash_blob = sqlite.Blob{ .data = &core_hash_bytes };
-        const core_hash_id = try self.createHash(hash_blob);
+        const core_hash_id = try self.createHash(hash_blob, .{});
 
         // core_hash_bytes is passed by reference here, so we don't
         // have to worry about losing it to undefined memory hell.
@@ -1895,7 +1937,7 @@ test "file creation" {
     defer file.close();
     _ = try file.write("awooga");
 
-    var indexed_file = try ctx.createFileFromDir(tmp.dir, "test_file");
+    var indexed_file = try ctx.createFileFromDir(tmp.dir, "test_file", .{});
     defer indexed_file.deinit();
 
     try std.testing.expect(std.mem.endsWith(u8, indexed_file.local_path, "/test_file"));
@@ -1903,7 +1945,7 @@ test "file creation" {
     // also try to create indexed file via absolute path
     const full_tmp_file = try tmp.dir.realpathAlloc(std.testing.allocator, "test_file");
     defer std.testing.allocator.free(full_tmp_file);
-    var path_indexed_file = try ctx.createFileFromPath(full_tmp_file);
+    var path_indexed_file = try ctx.createFileFromPath(full_tmp_file, .{});
     defer path_indexed_file.deinit();
 
     try std.testing.expectStringEndsWith(path_indexed_file.local_path, "/test_file");
@@ -1941,7 +1983,7 @@ test "file and tags" {
     defer file.close();
     _ = try file.write("awooga");
 
-    var indexed_file = try ctx.createFileFromDir(tmp.dir, "test_file");
+    var indexed_file = try ctx.createFileFromDir(tmp.dir, "test_file", .{});
     defer indexed_file.deinit();
 
     var tag = try ctx.createNamedTag("test_tag", "en", null);
@@ -2007,7 +2049,7 @@ test "tag parenting" {
     defer file.close();
     _ = try file.write("awooga");
 
-    var indexed_file = try ctx.createFileFromDir(tmp.dir, "test_file");
+    var indexed_file = try ctx.createFileFromDir(tmp.dir, "test_file", .{});
     defer indexed_file.deinit();
 
     var child_tag = try ctx.createNamedTag("child_test_tag", "en", null);
@@ -2075,11 +2117,11 @@ test "file pools" {
     defer file3.close();
     _ = try file3.write("awooga3");
 
-    var indexed_file1 = try ctx.createFileFromDir(tmp.dir, "test_file1");
+    var indexed_file1 = try ctx.createFileFromDir(tmp.dir, "test_file1", .{});
     defer indexed_file1.deinit();
-    var indexed_file2 = try ctx.createFileFromDir(tmp.dir, "test_file2");
+    var indexed_file2 = try ctx.createFileFromDir(tmp.dir, "test_file2", .{});
     defer indexed_file2.deinit();
-    var indexed_file3 = try ctx.createFileFromDir(tmp.dir, "test_file3");
+    var indexed_file3 = try ctx.createFileFromDir(tmp.dir, "test_file3", .{});
     defer indexed_file3.deinit();
 
     var child_tag = try ctx.createNamedTag("child_test_tag", "en", null);
@@ -2189,7 +2231,7 @@ test "tag sources" {
     defer file1.close();
     _ = try file1.write("awooga1");
 
-    var indexed_file1 = try ctx.createFileFromDir(tmp.dir, "test_file1");
+    var indexed_file1 = try ctx.createFileFromDir(tmp.dir, "test_file1", .{});
     defer indexed_file1.deinit();
 
     var source = try ctx.createTagSource("my test tag source", .{});

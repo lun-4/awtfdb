@@ -503,7 +503,7 @@ test "remove action" {
     var file = try tmp.dir.createFile("test_file", .{});
     defer file.close();
     _ = try file.write("awooga");
-    var indexed_file = try ctx.createFileFromDir(tmp.dir, "test_file");
+    var indexed_file = try ctx.createFileFromDir(tmp.dir, "test_file", .{});
     defer indexed_file.deinit();
 
     // setup file tags to 1, 2, 3
@@ -911,7 +911,7 @@ test "remove parent (no entry deletion)" {
     defer file.close();
     _ = try file.write("awooga");
 
-    var indexed_file = try ctx.createFileFromDir(tmp.dir, "test_file");
+    var indexed_file = try ctx.createFileFromDir(tmp.dir, "test_file", .{});
     defer indexed_file.deinit();
 
     const ids = try parentTestSetup(&ctx, &indexed_file);
@@ -1001,7 +1001,7 @@ test "remove parent (with entry deletion)" {
     defer file.close();
     _ = try file.write("awooga");
 
-    var indexed_file = try ctx.createFileFromDir(tmp.dir, "test_file");
+    var indexed_file = try ctx.createFileFromDir(tmp.dir, "test_file", .{});
     defer indexed_file.deinit();
 
     const ids = try parentTestSetup(&ctx, &indexed_file);

@@ -729,7 +729,7 @@ test "rename syscalls trigger db rename" {
     defer file.close();
     _ = try file.write("awooga");
 
-    var indexed_file = try ctx.createFileFromDir(tmp.dir, "test_file");
+    var indexed_file = try ctx.createFileFromDir(tmp.dir, "test_file", .{});
     defer indexed_file.deinit();
 
     // TODO system layer so we can attach a test procfs and test filesystem too
@@ -815,7 +815,7 @@ test "rename syscalls trigger db rename (target being a folder)" {
     defer file.close();
     _ = try file.write("awooga");
 
-    var indexed_file = try ctx.createFileFromDir(tmp.dir, "test_file");
+    var indexed_file = try ctx.createFileFromDir(tmp.dir, "test_file", .{});
     defer indexed_file.deinit();
 
     // TODO system layer so we can attach a test procfs and test filesystem too

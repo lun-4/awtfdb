@@ -509,7 +509,7 @@ test "janitor functionality" {
     defer file.close();
     _ = try file.write("awooga");
 
-    var indexed_file = try ctx.createFileFromDir(tmp.dir, "test_file");
+    var indexed_file = try ctx.createFileFromDir(tmp.dir, "test_file", .{});
     defer indexed_file.deinit();
 
     var tag = try ctx.createNamedTag("test_tag", "en", null);
