@@ -38,6 +38,8 @@ const HELPTEXT =
     \\ 					never folders)
     \\ --strict				do not implicitly add any tags, fail
     \\ 					on unknown tags.
+    \\ --use-file-timestamp		use file timestamp on the internal file
+    \\ 					id.
     \\
     \\ example, adding a single file:
     \\  ainclude --tag format:mp4 --tag "meme:what the dog doing" /downloads/funny_meme.mp4
@@ -800,7 +802,7 @@ pub fn main() anyerror!void {
             given_args.filter_indexed_files_only = true;
         } else if (std.mem.eql(u8, arg, "--dry-run")) {
             given_args.dry_run = true;
-        } else if (std.mem.eql(u8, arg, "--use-file-timestamp-for-id")) {
+        } else if (std.mem.eql(u8, arg, "--use-file-timestamp")) {
             given_args.use_file_timestamp = true;
         } else if (std.mem.eql(u8, arg, "--v1")) {
             given_args.cli_v1 = true; // doesn't do anything yet
@@ -820,6 +822,7 @@ pub fn main() anyerror!void {
         } else if (std.mem.eql(u8, arg, "--strict")) {
             given_args.strict = true;
         } else if (std.mem.startsWith(u8, arg, "--")) {
+            logger.err("unknown argument '{s}'", .{arg});
             return error.InvalidArgument;
         } else {
             try given_args.include_paths.append(arg);
