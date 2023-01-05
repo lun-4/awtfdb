@@ -12,11 +12,12 @@ const HELPTEXT =
     \\ als: list file tags
     \\
     \\ usage:
-    \\ 	als path
+    \\ 	als [options] [path]
     \\
     \\ options:
     \\ 	-h				prints this help and exits
     \\ 	-V				prints version and exits
+    \\ 	--id				print file id
     \\
     \\ examples:
     \\ 	als path/to/file
@@ -53,6 +54,7 @@ pub fn main() anyerror!void {
         help: bool = false,
         version: bool = false,
         force: bool = false,
+        show_id: bool = false,
         paths: StringList,
     };
 
@@ -68,6 +70,8 @@ pub fn main() anyerror!void {
             current_log_level = .debug;
         } else if (std.mem.eql(u8, arg, "-f")) {
             given_args.force = true;
+        } else if (std.mem.eql(u8, arg, "--id")) {
+            given_args.show_id = true;
         } else {
             try given_args.paths.append(arg);
         }
@@ -109,8 +113,9 @@ pub fn main() anyerror!void {
             var maybe_file = try ctx.fetchFile(file_hash);
             if (maybe_file) |file| {
                 defer file.deinit();
+                const id_text = if (given_args.show_id) file.hash.id.str() else "";
 
-                try stdout.print("- {s}", .{file.local_path});
+                try stdout.print("- {s}{s}", .{ id_text, file.local_path });
                 try file.printTagsTo(allocator, stdout);
                 try stdout.print("\n", .{});
             }
@@ -119,10 +124,13 @@ pub fn main() anyerror!void {
 
         if (given_args.force) {
             var maybe_inner_file = try ctx.fetchFileByPath(query);
-            try stdout.print("- {s}", .{query});
             if (maybe_inner_file) |*file| {
+                const id_text = if (given_args.show_id) file.hash.id.str() else "";
+                try stdout.print("- {s}{s}", .{ id_text, query });
                 defer file.deinit();
                 try file.printTagsTo(allocator, stdout);
+            } else {
+                try stdout.print("- {s}", .{query});
             }
 
             continue;
@@ -156,6 +164,9 @@ pub fn main() anyerror!void {
                     const full_path = try dir.dir.realpath(entry.name, &realpath_buf);
                     var maybe_inner_file = try ctx.fetchFileByPath(full_path);
                     if (maybe_inner_file) |*file| {
+                        const id_text = if (given_args.show_id) file.hash.id.str() else "";
+                        try stdout.print("{s}", .{id_text});
+
                         defer file.deinit();
                         try file.printTagsTo(allocator, stdout);
                     }
@@ -169,6 +180,9 @@ pub fn main() anyerror!void {
             const maybe_file = try ctx.fetchFileByPath(full_path);
             try stdout.print("- {s}", .{query});
             if (maybe_file) |file| {
+                const id_text = if (given_args.show_id) file.hash.id.str() else "";
+                try stdout.print(" {s}", .{id_text});
+
                 defer file.deinit();
                 try file.printTagsTo(allocator, stdout);
             }
