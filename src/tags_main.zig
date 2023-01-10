@@ -836,12 +836,6 @@ const RemoveParent = struct {
             errdefer savepoint.rollback();
             defer savepoint.commit();
 
-            try self.ctx.db.?.exec(
-                "delete from tag_implications where rowid = ?",
-                .{},
-                .{self.config.rowid.?},
-            );
-
             const rowid = self.config.rowid.?;
 
             if (self.config.delete_file_entries) {
@@ -895,6 +889,12 @@ const RemoveParent = struct {
 
                 logger.info("updated {d} tag_files entries", .{updated_tag_file_count});
             }
+
+            try self.ctx.db.?.exec(
+                "delete from tag_implications where rowid = ?",
+                .{},
+                .{self.config.rowid.?},
+            );
         }
 
         try stdout.print("deleted parent id {d}\n", .{self.config.rowid.?});
