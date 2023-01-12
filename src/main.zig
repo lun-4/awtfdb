@@ -276,6 +276,14 @@ pub const MIGRATIONS = .{
         },
         null,
     },
+
+    .{
+        9, "add global library configuration",
+        \\ create table library_configuration (
+        \\     key text unique,
+        \\     value text
+        \\ ) strict;
+    },
 };
 
 pub const MIGRATION_LOG_TABLE =
@@ -372,6 +380,27 @@ pub const ID = struct {
     }
 };
 
+const FieldRequest = struct {
+    tag_name_regex: bool = false,
+};
+
+const libpcre = @import("libpcre");
+
+pub const LibraryConfiguration = struct {
+    initialized_requests: FieldRequest = .{},
+    tag_name_regex_string: ?[:0]const u8 = null,
+    tag_name_regex: ?libpcre.Regex = null,
+
+    const Self = @This();
+
+    pub fn deinit(self: Self, allocator: std.mem.Allocator) void {
+        if (self.tag_name_regex) |regex| regex.deinit();
+        if (self.tag_name_regex_string) |tag_name_regex_string| {
+            allocator.free(tag_name_regex_string);
+        }
+    }
+};
+
 pub const Context = struct {
     home_path: ?[]const u8 = null,
     db_path: ?[]const u8 = null,
@@ -380,6 +409,11 @@ pub const Context = struct {
     allocator: std.mem.Allocator,
     /// Always call loadDatabase before using this attribute.
     db: ?sqlite.Db = null,
+
+    // TODO split createDatabase and migrateDatabase into possibly separate
+    // functions to that we don't keep db as a null. Context's db should be
+    // functional, given by some openDatabase.
+    library_config: LibraryConfiguration = .{},
 
     const Self = @This();
 
@@ -477,8 +511,6 @@ pub const Context = struct {
     }
 
     pub fn deinit(self: *Self) void {
-        if (self.db_path) |db_path| self.allocator.free(db_path);
-
         if (self.db) |*db| {
             logger.info("possibly optimizing database...", .{});
             // The results of analysis are not as good when only part of each index is examined,
@@ -488,6 +520,9 @@ pub const Context = struct {
             _ = db.exec("PRAGMA optimize;", .{}, .{}) catch {};
             db.deinit();
         }
+
+        if (self.db_path) |db_path| self.allocator.free(db_path);
+        self.library_config.deinit(self.allocator);
     }
 
     pub const Blake3Hash = [std.crypto.hash.Blake3.digest_length]u8;
@@ -682,12 +717,73 @@ pub const Context = struct {
         return id;
     }
 
+    /// Ask for fields to be loaded on demand.
+    pub fn wantConfigFields(self: *Self, wanted_fields: FieldRequest) !void {
+        if (wanted_fields.tag_name_regex and !self.library_config.initialized_requests.tag_name_regex) {
+            self.library_config.initialized_requests.tag_name_regex = true;
+
+            const tag_name_regex = try self.db.?.oneAlloc(
+                []const u8,
+                self.allocator,
+                "select value from library_configuration where key = 'tag_name_regex'",
+                .{},
+                .{},
+            );
+
+            if (tag_name_regex) |tag_name_regex_string| {
+                defer self.allocator.free(tag_name_regex_string);
+                self.library_config.tag_name_regex_string = try std.cstr.addNullByte(
+                    self.allocator,
+                    tag_name_regex_string,
+                );
+
+                self.library_config.tag_name_regex = try libpcre.Regex.compile(
+                    self.library_config.tag_name_regex_string.?,
+                    .{},
+                );
+            }
+        }
+    }
+
     pub fn createNamedTag(
         self: *Self,
         text: []const u8,
         language: []const u8,
         maybe_core: ?Hash,
     ) !Tag {
+        std.debug.assert(self.db != null);
+        try self.wantConfigFields(.{ .tag_name_regex = true });
+
+        if (self.library_config.tag_name_regex) |regex| {
+            const maybe_capture = try regex.matches(text, .{});
+            if (maybe_capture) |capture| {
+                // verify given match is the tag itslf
+                const is_at_start = capture.start == 0;
+                const is_at_end = capture.end == text.len;
+
+                if (!(is_at_start and is_at_end)) {
+                    // TODO add first-party error detail API
+                    //  (remove my logger.warn workarounds)
+                    //self.pushError(.{ .InvalidTagName = capture });
+                    logger.warn(
+                        "tag name {s} does not match regex {?s}, only '{s}' matches",
+                        .{
+                            text,
+                            self.library_config.tag_name_regex_string,
+                            text[capture.start..capture.end],
+                        },
+                    );
+                    return error.InvalidTagName;
+                }
+            } else {
+                logger.warn(
+                    "tag name {s} does not match regex {?s}",
+                    .{ text, self.library_config.tag_name_regex_string },
+                );
+                return error.InvalidTagName;
+            }
+        }
+
         var core_hash: Hash = undefined;
         if (maybe_core) |existing_core_hash| {
             core_hash = existing_core_hash;
@@ -2255,6 +2351,25 @@ test "tag sources" {
         }
         try std.testing.expect(saw_source);
     }
+}
+
+test "tag name regex" {
+    var ctx = try makeTestContextRealFile();
+    defer ctx.deinit();
+
+    // TODO why doesnt a constant string on the stack work on this query
+    const TEST_TAG_REGEX = try std.testing.allocator.dupe(u8, "[a-zA-Z0-9_]+");
+    defer std.testing.allocator.free(TEST_TAG_REGEX);
+    logger.warn("RGX = {s}", .{TEST_TAG_REGEX});
+    try ctx.db.?.exec(
+        \\ insert into library_configuration(key, value) values ('tag_name_regex', ?);
+    ,
+        .{},
+        .{TEST_TAG_REGEX},
+    );
+
+    try std.testing.expectError(error.InvalidTagName, ctx.createNamedTag("my test tag", "en", null));
+    _ = try ctx.createNamedTag("correct_tag_source", "en", null);
 }
 
 test "everyone else" {
