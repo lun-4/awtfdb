@@ -745,15 +745,8 @@ pub const Context = struct {
         }
     }
 
-    pub fn createNamedTag(
-        self: *Self,
-        text: []const u8,
-        language: []const u8,
-        maybe_core: ?Hash,
-    ) !Tag {
-        std.debug.assert(self.db != null);
+    pub fn verifyTagName(self: *Self, text: []const u8) !void {
         try self.wantConfigFields(.{ .tag_name_regex = true });
-
         if (self.library_config.tag_name_regex) |regex| {
             const maybe_capture = try regex.matches(text, .{});
             if (maybe_capture) |capture| {
@@ -783,6 +776,16 @@ pub const Context = struct {
                 return error.InvalidTagName;
             }
         }
+    }
+
+    pub fn createNamedTag(
+        self: *Self,
+        text: []const u8,
+        language: []const u8,
+        maybe_core: ?Hash,
+    ) !Tag {
+        std.debug.assert(self.db != null);
+        try self.verifyTagName(text);
 
         var core_hash: Hash = undefined;
         if (maybe_core) |existing_core_hash| {
