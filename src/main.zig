@@ -391,6 +391,9 @@ pub const LibraryConfiguration = struct {
     tag_name_regex_string: ?[:0]const u8 = null,
     tag_name_regex: ?libpcre.Regex = null,
 
+    const FieldUpdateRequest = union(enum) {
+        tag_name_regex: []const u8,
+    };
     const Self = @This();
 
     pub fn deinit(self: Self, allocator: std.mem.Allocator) void {
@@ -725,6 +728,7 @@ pub const Context = struct {
     /// Ask for fields to be loaded on demand.
     pub fn wantConfigFields(self: *Self, wanted_fields: FieldRequest) !void {
         if (wanted_fields.tag_name_regex and !self.library_config.initialized_requests.tag_name_regex) {
+            logger.debug("requesting tag_name_regex library config...", .{});
             self.library_config.initialized_requests.tag_name_regex = true;
 
             const tag_name_regex = try self.db.?.oneAlloc(
@@ -748,6 +752,23 @@ pub const Context = struct {
                 );
             }
         }
+    }
+
+    pub fn updateLibraryConfig(self: *Self, field: LibraryConfiguration.FieldUpdateRequest) !void {
+        switch (field) {
+            .tag_name_regex => |new_regex| {
+                try self.db.?.exec(
+                    \\ insert into library_configuration(key, value)
+                    \\ values ('tag_name_regex', ?)
+                    \\ on conflict do update set value = ?
+                    \\ where key = 'tag_name_regex';
+                ,
+                    .{},
+                    .{ new_regex, new_regex },
+                );
+            },
+        }
+        self.resetConfig();
     }
 
     pub fn verifyTagName(self: *Self, text: []const u8) !void {
@@ -1798,6 +1819,7 @@ pub const Context = struct {
                     } else {
                         try migration.options.function.?(self);
                     }
+                    logger.debug("registering to logs...", .{});
 
                     try self.db.?.exec(
                         "INSERT INTO migration_logs (version, applied_at, description) values (?, ?, ?);",
@@ -1808,6 +1830,7 @@ pub const Context = struct {
                             .description = migration.name,
                         },
                     );
+                    logger.debug("done!", .{});
                 }
             }
         }
@@ -1878,6 +1901,7 @@ pub fn main() anyerror!void {
             given_args.version = true;
         } else {
             given_args.maybe_action = arg;
+            break;
         }
     }
 
@@ -1912,9 +1936,48 @@ pub fn main() anyerror!void {
         try ctx.createCommand();
     } else if (std.mem.eql(u8, action, "migrate")) {
         try ctx.migrateCommand();
+    } else if (std.mem.eql(u8, action, "config")) {
+        try configCommand(&ctx);
     } else {
         logger.err("unknown action {s}", .{action});
         return error.UnknownAction;
+    }
+}
+
+fn configCommand(ctx: *Context) !void {
+    try ctx.loadDatabase(.{});
+    const config_action_string = ctx.args_it.next() orelse "get";
+    const config_action = std.meta.stringToEnum(
+        enum { get, set },
+        config_action_string,
+    ) orelse return error.InvalidConfigAction;
+
+    // get or set
+    // cconst action
+    const key = ctx.args_it.next() orelse return error.ExpectedKeyArgument;
+    const maybe_value = ctx.args_it.next();
+    var stdout = std.io.getStdOut().writer();
+    switch (config_action) {
+        .get => {
+            if (std.mem.eql(u8, key, "tag_name_regex")) {
+                try ctx.wantConfigFields(.{ .tag_name_regex = true });
+                try stdout.print(
+                    "{?s}\n",
+                    .{ctx.library_config.tag_name_regex_string},
+                );
+            } else {
+                return error.InvalidKey;
+            }
+        },
+        .set => {
+            const value = maybe_value orelse return error.ExpectedValueArgument;
+            const request = if (std.mem.eql(u8, key, "tag_name_regex"))
+                LibraryConfiguration.FieldUpdateRequest{ .tag_name_regex = value }
+            else {
+                return error.InvalidKey;
+            };
+            try ctx.updateLibraryConfig(request);
+        },
     }
 }
 
@@ -2368,31 +2431,25 @@ test "tag name regex" {
     // TODO why doesnt a constant string on the stack work on this query
     const TEST_TAG_REGEX = try std.testing.allocator.dupe(u8, "[a-zA-Z0-9_]+");
     defer std.testing.allocator.free(TEST_TAG_REGEX);
-    logger.warn("RGX = {s}", .{TEST_TAG_REGEX});
-    try ctx.db.?.exec(
-        \\ insert into library_configuration(key, value) values ('tag_name_regex', ?);
-    ,
-        .{},
-        .{TEST_TAG_REGEX},
-    );
+    try ctx.updateLibraryConfig(.{ .tag_name_regex = TEST_TAG_REGEX });
 
     try std.testing.expectError(error.InvalidTagName, ctx.createNamedTag("my test tag", "en", null));
     _ = try ctx.createNamedTag("correct_tag_source", "en", null);
 }
 
 test "everyone else" {
-    std.testing.refAllDecls(@import("./include_main.zig"));
-    std.testing.refAllDecls(@import("./find_main.zig"));
-    std.testing.refAllDecls(@import("./ls_main.zig"));
-    std.testing.refAllDecls(@import("./rm_main.zig"));
+    std.testing.refAllDecls(@import("include_main.zig"));
+    std.testing.refAllDecls(@import("find_main.zig"));
+    std.testing.refAllDecls(@import("ls_main.zig"));
+    std.testing.refAllDecls(@import("rm_main.zig"));
     //std.testing.refAllDecls(@import("./hydrus_api_main.zig"));
-    std.testing.refAllDecls(@import("./tags_main.zig"));
-    std.testing.refAllDecls(@import("./janitor_main.zig"));
-    std.testing.refAllDecls(@import("./metrics_main.zig"));
-    std.testing.refAllDecls(@import("./test_migrations.zig"));
-    std.testing.refAllDecls(@import("./snowflake.zig"));
+    std.testing.refAllDecls(@import("tags_main.zig"));
+    std.testing.refAllDecls(@import("janitor_main.zig"));
+    std.testing.refAllDecls(@import("metrics_main.zig"));
+    std.testing.refAllDecls(@import("test_migrations.zig"));
+    std.testing.refAllDecls(@import("snowflake.zig"));
 
     if (builtin.os.tag == .linux) {
-        std.testing.refAllDecls(@import("./rename_watcher_main.zig"));
+        std.testing.refAllDecls(@import("rename_watcher_main.zig"));
     }
 }

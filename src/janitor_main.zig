@@ -571,16 +571,10 @@ test "tag name regex retroactive checker" {
 
     // TODO why doesnt a constant string on the stack work on this query
     // TODO API for changing library config
+
     const TEST_TAG_REGEX = try std.testing.allocator.dupe(u8, "[a-zA-Z0-9_]+");
     defer std.testing.allocator.free(TEST_TAG_REGEX);
-    try ctx.db.?.exec(
-        \\ insert into library_configuration(key, value) values ('tag_name_regex', ?);
-    ,
-        .{},
-        .{TEST_TAG_REGEX},
-    );
-
-    ctx.resetConfig();
+    try ctx.updateLibraryConfig(.{ .tag_name_regex = TEST_TAG_REGEX });
 
     var counters: ErrorCounters = .{};
     var given_args = Args{ .only = undefined };
