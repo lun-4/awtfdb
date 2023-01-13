@@ -717,6 +717,11 @@ pub const Context = struct {
         return id;
     }
 
+    pub fn resetConfig(self: *Self) void {
+        self.library_config.deinit(self.allocator);
+        self.library_config = LibraryConfiguration{};
+    }
+
     /// Ask for fields to be loaded on demand.
     pub fn wantConfigFields(self: *Self, wanted_fields: FieldRequest) !void {
         if (wanted_fields.tag_name_regex and !self.library_config.initialized_requests.tag_name_regex) {
