@@ -757,6 +757,13 @@ pub const Context = struct {
     pub fn updateLibraryConfig(self: *Self, field: LibraryConfiguration.FieldUpdateRequest) !void {
         switch (field) {
             .tag_name_regex => |new_regex| {
+                const new_regex_cstr = try std.cstr.addNullByte(self.allocator, new_regex);
+                defer self.allocator.free(new_regex_cstr);
+                const regex = libpcre.Regex.compile(new_regex_cstr, .{}) catch |err| {
+                    logger.err("failed to compile regex: {s}", .{new_regex});
+                    return err;
+                };
+                defer regex.deinit();
                 try self.db.?.exec(
                     \\ insert into library_configuration(key, value)
                     \\ values ('tag_name_regex', ?)
