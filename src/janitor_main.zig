@@ -30,6 +30,7 @@ const ErrorCounters = struct {
     incorrect_hash_files: Counter = .{},
     incorrect_hash_cores: Counter = .{},
     unused_hash: Counter = .{},
+    invalid_tag_name: Counter = .{},
 };
 
 fn parseByteAmount(text: []const u8) !usize {
@@ -190,6 +191,39 @@ pub fn janitorCheckUnusedHashes(
                 .{hash_id.sql()},
             );
             logger.info("deleted hash {d}", .{hash_id});
+        }
+    }
+}
+
+pub fn janitorCheckTagNameRegex(
+    ctx: *Context,
+    counters: *ErrorCounters,
+    given_args: Args,
+) !void {
+    var stmt = try ctx.db.?.prepare(
+        \\ select core_hash, tag_text
+        \\ from tag_names
+        \\ order by core_hash asc
+    );
+    defer stmt.deinit();
+    var it = try stmt.iterator(struct {
+        core_hash: ID.SQL,
+        tag_text: []const u8,
+    }, .{});
+    while (try it.nextAlloc(ctx.allocator, .{})) |row| {
+        defer ctx.allocator.free(row.tag_text);
+
+        //logger.warn("tag: {s}", .{row.tag_text});
+
+        ctx.verifyTagName(row.tag_text) catch |err| {
+            logger.warn("tag name '{s}' does not match regex ({s})", .{ row.tag_text, @errorName(err) });
+            counters.invalid_tag_name.total += 1;
+            counters.invalid_tag_name.unrepairable += 1;
+        };
+        //const core_hash = ID.new(row.core_hash);
+
+        if (given_args.repair) {
+            return error.UnrepairableTagName;
         }
     }
 }
@@ -474,6 +508,7 @@ pub fn main() anyerror!u8 {
     try janitorCheckFiles(&ctx, &counters, given_args);
     try janitorCheckCores(&ctx, &counters, given_args);
     try janitorCheckUnusedHashes(&ctx, &counters, given_args);
+    try janitorCheckTagNameRegex(&ctx, &counters, given_args);
 
     // garbage collect unused entires in hashes table
 
@@ -522,4 +557,30 @@ test "janitor functionality" {
     try janitorCheckFiles(&ctx, &counters, given_args);
     try janitorCheckCores(&ctx, &counters, given_args);
     try janitorCheckUnusedHashes(&ctx, &counters, given_args);
+    try janitorCheckTagNameRegex(&ctx, &counters, given_args);
+}
+
+test "tag name regex retroactive checker" {
+    var ctx = try manage_main.makeTestContext();
+    defer ctx.deinit();
+
+    _ = try ctx.createNamedTag("correct_tag", "en", null);
+    _ = try ctx.createNamedTag("incorrect tag", "en", null);
+    _ = try ctx.createNamedTag("abceddef", "en", null);
+    _ = try ctx.createNamedTag("tag2", "en", null);
+
+    // TODO why doesnt a constant string on the stack work on this query
+    // TODO API for changing library config
+
+    const TEST_TAG_REGEX = try std.testing.allocator.dupe(u8, "[a-zA-Z0-9_]+");
+    defer std.testing.allocator.free(TEST_TAG_REGEX);
+    try ctx.updateLibraryConfig(.{ .tag_name_regex = TEST_TAG_REGEX });
+
+    var counters: ErrorCounters = .{};
+    var given_args = Args{ .only = undefined };
+
+    try janitorCheckTagNameRegex(&ctx, &counters, given_args);
+
+    try std.testing.expectEqual(@as(usize, 1), counters.invalid_tag_name.total);
+    try std.testing.expectEqual(@as(usize, 1), counters.invalid_tag_name.unrepairable);
 }

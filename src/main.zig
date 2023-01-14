@@ -8,6 +8,8 @@ const RowID = i64;
 
 pub const AWTFDB_BLAKE3_CONTEXT = "awtfdb Sun Mar 20 16:58:11 AM +00 2022 main hash key";
 
+const DefaultRegexOptions = .{ .Ucp = true, .Utf8 = true };
+
 const HELPTEXT =
     \\ awtfdb-manage: main program for awtfdb file management
     \\
@@ -276,6 +278,14 @@ pub const MIGRATIONS = .{
         },
         null,
     },
+
+    .{
+        9, "add global library configuration",
+        \\ create table library_configuration (
+        \\     key text unique,
+        \\     value text
+        \\ ) strict;
+    },
 };
 
 pub const MIGRATION_LOG_TABLE =
@@ -372,6 +382,30 @@ pub const ID = struct {
     }
 };
 
+const FieldRequest = struct {
+    tag_name_regex: bool = false,
+};
+
+const libpcre = @import("libpcre");
+
+pub const LibraryConfiguration = struct {
+    initialized_requests: FieldRequest = .{},
+    tag_name_regex_string: ?[:0]const u8 = null,
+    tag_name_regex: ?libpcre.Regex = null,
+
+    const FieldUpdateRequest = union(enum) {
+        tag_name_regex: []const u8,
+    };
+    const Self = @This();
+
+    pub fn deinit(self: Self, allocator: std.mem.Allocator) void {
+        if (self.tag_name_regex) |regex| regex.deinit();
+        if (self.tag_name_regex_string) |tag_name_regex_string| {
+            allocator.free(tag_name_regex_string);
+        }
+    }
+};
+
 pub const Context = struct {
     home_path: ?[]const u8 = null,
     db_path: ?[]const u8 = null,
@@ -380,6 +414,11 @@ pub const Context = struct {
     allocator: std.mem.Allocator,
     /// Always call loadDatabase before using this attribute.
     db: ?sqlite.Db = null,
+
+    // TODO split createDatabase and migrateDatabase into possibly separate
+    // functions to that we don't keep db as a null. Context's db should be
+    // functional, given by some openDatabase.
+    library_config: LibraryConfiguration = .{},
 
     const Self = @This();
 
@@ -477,8 +516,6 @@ pub const Context = struct {
     }
 
     pub fn deinit(self: *Self) void {
-        if (self.db_path) |db_path| self.allocator.free(db_path);
-
         if (self.db) |*db| {
             logger.info("possibly optimizing database...", .{});
             // The results of analysis are not as good when only part of each index is examined,
@@ -488,6 +525,9 @@ pub const Context = struct {
             _ = db.exec("PRAGMA optimize;", .{}, .{}) catch {};
             db.deinit();
         }
+
+        if (self.db_path) |db_path| self.allocator.free(db_path);
+        self.library_config.deinit(self.allocator);
     }
 
     pub const Blake3Hash = [std.crypto.hash.Blake3.digest_length]u8;
@@ -682,12 +722,106 @@ pub const Context = struct {
         return id;
     }
 
+    pub fn resetConfig(self: *Self) void {
+        self.library_config.deinit(self.allocator);
+        self.library_config = LibraryConfiguration{};
+    }
+
+    /// Ask for fields to be loaded on demand.
+    pub fn wantConfigFields(self: *Self, wanted_fields: FieldRequest) !void {
+        if (wanted_fields.tag_name_regex and !self.library_config.initialized_requests.tag_name_regex) {
+            logger.debug("requesting tag_name_regex library config...", .{});
+            self.library_config.initialized_requests.tag_name_regex = true;
+
+            const tag_name_regex = try self.db.?.oneAlloc(
+                []const u8,
+                self.allocator,
+                "select value from library_configuration where key = 'tag_name_regex'",
+                .{},
+                .{},
+            );
+
+            if (tag_name_regex) |tag_name_regex_string| {
+                defer self.allocator.free(tag_name_regex_string);
+                self.library_config.tag_name_regex_string = try std.cstr.addNullByte(
+                    self.allocator,
+                    tag_name_regex_string,
+                );
+
+                self.library_config.tag_name_regex = try libpcre.Regex.compile(
+                    self.library_config.tag_name_regex_string.?,
+                    DefaultRegexOptions,
+                );
+            }
+        }
+    }
+
+    pub fn updateLibraryConfig(self: *Self, field: LibraryConfiguration.FieldUpdateRequest) !void {
+        switch (field) {
+            .tag_name_regex => |new_regex| {
+                const new_regex_cstr = try std.cstr.addNullByte(self.allocator, new_regex);
+                defer self.allocator.free(new_regex_cstr);
+                const regex = libpcre.Regex.compile(new_regex_cstr, DefaultRegexOptions) catch |err| {
+                    logger.err("failed to compile regex: {s}", .{@errorName(err)});
+                    return err;
+                };
+                defer regex.deinit();
+                try self.db.?.exec(
+                    \\ insert into library_configuration(key, value)
+                    \\ values ('tag_name_regex', ?)
+                    \\ on conflict do update set value = ?
+                    \\ where key = 'tag_name_regex';
+                ,
+                    .{},
+                    .{ new_regex, new_regex },
+                );
+            },
+        }
+        self.resetConfig();
+    }
+
+    pub fn verifyTagName(self: *Self, text: []const u8) !void {
+        try self.wantConfigFields(.{ .tag_name_regex = true });
+        if (self.library_config.tag_name_regex) |regex| {
+            const maybe_capture = try regex.matches(text, .{});
+            if (maybe_capture) |capture| {
+                // verify given match is the tag itslf
+                const is_at_start = capture.start == 0;
+                const is_at_end = capture.end == text.len;
+
+                if (!(is_at_start and is_at_end)) {
+                    // TODO add first-party error detail API
+                    //  (remove my logger.warn workarounds)
+                    //self.pushError(.{ .InvalidTagName = capture });
+                    logger.warn(
+                        "tag name {s} does not match regex {?s}, only '{s}' matches",
+                        .{
+                            text,
+                            self.library_config.tag_name_regex_string,
+                            text[capture.start..capture.end],
+                        },
+                    );
+                    return error.InvalidTagName;
+                }
+            } else {
+                logger.warn(
+                    "tag name {s} does not match regex {?s}",
+                    .{ text, self.library_config.tag_name_regex_string },
+                );
+                return error.InvalidTagName;
+            }
+        }
+    }
+
     pub fn createNamedTag(
         self: *Self,
         text: []const u8,
         language: []const u8,
         maybe_core: ?Hash,
     ) !Tag {
+        std.debug.assert(self.db != null);
+        try self.verifyTagName(text);
+
         var core_hash: Hash = undefined;
         if (maybe_core) |existing_core_hash| {
             core_hash = existing_core_hash;
@@ -1694,6 +1828,7 @@ pub const Context = struct {
                     } else {
                         try migration.options.function.?(self);
                     }
+                    logger.debug("registering to logs...", .{});
 
                     try self.db.?.exec(
                         "INSERT INTO migration_logs (version, applied_at, description) values (?, ?, ?);",
@@ -1704,6 +1839,7 @@ pub const Context = struct {
                             .description = migration.name,
                         },
                     );
+                    logger.debug("done!", .{});
                 }
             }
         }
@@ -1774,6 +1910,7 @@ pub fn main() anyerror!void {
             given_args.version = true;
         } else {
             given_args.maybe_action = arg;
+            break;
         }
     }
 
@@ -1808,9 +1945,48 @@ pub fn main() anyerror!void {
         try ctx.createCommand();
     } else if (std.mem.eql(u8, action, "migrate")) {
         try ctx.migrateCommand();
+    } else if (std.mem.eql(u8, action, "config")) {
+        try configCommand(&ctx);
     } else {
         logger.err("unknown action {s}", .{action});
         return error.UnknownAction;
+    }
+}
+
+fn configCommand(ctx: *Context) !void {
+    try ctx.loadDatabase(.{});
+    const config_action_string = ctx.args_it.next() orelse "get";
+    const config_action = std.meta.stringToEnum(
+        enum { get, set },
+        config_action_string,
+    ) orelse return error.InvalidConfigAction;
+
+    // get or set
+    // cconst action
+    const key = ctx.args_it.next() orelse return error.ExpectedKeyArgument;
+    const maybe_value = ctx.args_it.next();
+    var stdout = std.io.getStdOut().writer();
+    switch (config_action) {
+        .get => {
+            if (std.mem.eql(u8, key, "tag_name_regex")) {
+                try ctx.wantConfigFields(.{ .tag_name_regex = true });
+                try stdout.print(
+                    "{?s}\n",
+                    .{ctx.library_config.tag_name_regex_string},
+                );
+            } else {
+                return error.InvalidKey;
+            }
+        },
+        .set => {
+            const value = maybe_value orelse return error.ExpectedValueArgument;
+            const request = if (std.mem.eql(u8, key, "tag_name_regex"))
+                LibraryConfiguration.FieldUpdateRequest{ .tag_name_regex = value }
+            else {
+                return error.InvalidKey;
+            };
+            try ctx.updateLibraryConfig(request);
+        },
     }
 }
 
@@ -2257,19 +2433,32 @@ test "tag sources" {
     }
 }
 
+test "tag name regex" {
+    var ctx = try makeTestContextRealFile();
+    defer ctx.deinit();
+
+    // TODO why doesnt a constant string on the stack work on this query
+    const TEST_TAG_REGEX = try std.testing.allocator.dupe(u8, "[a-zA-Z0-9_]+");
+    defer std.testing.allocator.free(TEST_TAG_REGEX);
+    try ctx.updateLibraryConfig(.{ .tag_name_regex = TEST_TAG_REGEX });
+
+    try std.testing.expectError(error.InvalidTagName, ctx.createNamedTag("my test tag", "en", null));
+    _ = try ctx.createNamedTag("correct_tag_source", "en", null);
+}
+
 test "everyone else" {
-    std.testing.refAllDecls(@import("./include_main.zig"));
-    std.testing.refAllDecls(@import("./find_main.zig"));
-    std.testing.refAllDecls(@import("./ls_main.zig"));
-    std.testing.refAllDecls(@import("./rm_main.zig"));
+    std.testing.refAllDecls(@import("include_main.zig"));
+    std.testing.refAllDecls(@import("find_main.zig"));
+    std.testing.refAllDecls(@import("ls_main.zig"));
+    std.testing.refAllDecls(@import("rm_main.zig"));
     //std.testing.refAllDecls(@import("./hydrus_api_main.zig"));
-    std.testing.refAllDecls(@import("./tags_main.zig"));
-    std.testing.refAllDecls(@import("./janitor_main.zig"));
-    std.testing.refAllDecls(@import("./metrics_main.zig"));
-    std.testing.refAllDecls(@import("./test_migrations.zig"));
-    std.testing.refAllDecls(@import("./snowflake.zig"));
+    std.testing.refAllDecls(@import("tags_main.zig"));
+    std.testing.refAllDecls(@import("janitor_main.zig"));
+    std.testing.refAllDecls(@import("metrics_main.zig"));
+    std.testing.refAllDecls(@import("test_migrations.zig"));
+    std.testing.refAllDecls(@import("snowflake.zig"));
 
     if (builtin.os.tag == .linux) {
-        std.testing.refAllDecls(@import("./rename_watcher_main.zig"));
+        std.testing.refAllDecls(@import("rename_watcher_main.zig"));
     }
 }
