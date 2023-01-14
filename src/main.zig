@@ -8,6 +8,8 @@ const RowID = i64;
 
 pub const AWTFDB_BLAKE3_CONTEXT = "awtfdb Sun Mar 20 16:58:11 AM +00 2022 main hash key";
 
+const DefaultRegexOptions = .{ .Ucp = true, .Utf8 = true };
+
 const HELPTEXT =
     \\ awtfdb-manage: main program for awtfdb file management
     \\
@@ -748,7 +750,7 @@ pub const Context = struct {
 
                 self.library_config.tag_name_regex = try libpcre.Regex.compile(
                     self.library_config.tag_name_regex_string.?,
-                    .{},
+                    DefaultRegexOptions,
                 );
             }
         }
@@ -759,7 +761,7 @@ pub const Context = struct {
             .tag_name_regex => |new_regex| {
                 const new_regex_cstr = try std.cstr.addNullByte(self.allocator, new_regex);
                 defer self.allocator.free(new_regex_cstr);
-                const regex = libpcre.Regex.compile(new_regex_cstr, .{}) catch |err| {
+                const regex = libpcre.Regex.compile(new_regex_cstr, DefaultRegexOptions) catch |err| {
                     logger.err("failed to compile regex: {s}", .{@errorName(err)});
                     return err;
                 };
