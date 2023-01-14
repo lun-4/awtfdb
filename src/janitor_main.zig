@@ -213,7 +213,7 @@ pub fn janitorCheckTagNameRegex(
     while (try it.nextAlloc(ctx.allocator, .{})) |row| {
         defer ctx.allocator.free(row.tag_text);
 
-        logger.warn("tag: {s}", .{row.tag_text});
+        //logger.warn("tag: {s}", .{row.tag_text});
 
         ctx.verifyTagName(row.tag_text) catch |err| {
             logger.warn("tag name '{s}' does not match regex ({s})", .{ row.tag_text, @errorName(err) });

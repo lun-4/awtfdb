@@ -24,6 +24,7 @@ const HELPTEXT =
     \\ 	atags create tag
     \\ 	atags create --core lkdjfalskjg tag
     \\ 	atags search tag
+    \\ 	atags search --exact tag
     \\ 	atags remove --tag tag
     \\ 	atags remove --core dslkjfsldkjf
     \\ 	atags remove --only-tag-name mytag --> only deleted name, no actual tag cores deleted
@@ -117,7 +118,9 @@ const CreateAction = struct {
     }
 
     pub fn run(self: *Self) !void {
-        var stdout = std.io.getStdOut().writer();
+        var unbuffered_stdout = std.io.getStdOut().writer();
+        var buffered_stream = std.io.bufferedWriter(unbuffered_stdout);
+        var stdout = buffered_stream.writer();
 
         var raw_core_hash_buffer: [32]u8 = undefined;
         var maybe_core: ?Context.Hash = null;
@@ -542,13 +545,21 @@ test "remove action" {
 
 const SearchAction = struct {
     pub const Config = struct {
+        exact: bool = false,
         query: ?[]const u8 = null,
     };
 
     pub fn processArgs(args_it: *std.process.ArgIterator, given_args: *Args) !ActionConfig {
         _ = given_args;
         var config = Config{};
-        config.query = args_it.next() orelse return error.MissingQuery;
+        while (args_it.next()) |arg| {
+            if (std.mem.eql(u8, arg, "--exact")) {
+                config.exact = true;
+            } else {
+                config.query = arg;
+            }
+        }
+        if (config.query == null) return error.MissingQuery;
         return ActionConfig{ .Search = config };
     }
 
@@ -568,14 +579,25 @@ const SearchAction = struct {
     pub fn run(self: *Self) !void {
         var stdout = std.io.getStdOut().writer();
 
-        var stmt = try self.ctx.db.?.prepare(
-            \\ select distinct core_hash core_hash, hashes.hash_data
-            \\ from tag_names
-            \\ join hashes
-            \\  on hashes.id = tag_names.core_hash
-            \\ where tag_text LIKE '%' || ? || '%'
-            \\ order by hashes.id asc
-        );
+        var stmt = if (self.config.exact)
+            try self.ctx.db.?.prepareDynamic(
+                \\ select distinct core_hash core_hash, hashes.hash_data
+                \\ from tag_names
+                \\ join hashes
+                \\  on hashes.id = tag_names.core_hash
+                \\ where tag_text = ?
+                \\ order by hashes.id asc
+            )
+        else
+            try self.ctx.db.?.prepareDynamic(
+                \\ select distinct core_hash core_hash, hashes.hash_data
+                \\ from tag_names
+                \\ join hashes
+                \\  on hashes.id = tag_names.core_hash
+                \\ where tag_text LIKE '%' || ? || '%'
+                \\ order by hashes.id asc
+            );
+
         defer stmt.deinit();
 
         var tag_names = try stmt.all(

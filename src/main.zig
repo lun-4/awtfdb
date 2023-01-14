@@ -760,7 +760,7 @@ pub const Context = struct {
                 const new_regex_cstr = try std.cstr.addNullByte(self.allocator, new_regex);
                 defer self.allocator.free(new_regex_cstr);
                 const regex = libpcre.Regex.compile(new_regex_cstr, .{}) catch |err| {
-                    logger.err("failed to compile regex: {s}", .{new_regex});
+                    logger.err("failed to compile regex: {s}", .{@errorName(err)});
                     return err;
                 };
                 defer regex.deinit();
