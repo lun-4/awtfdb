@@ -582,7 +582,7 @@ pub const ErrorData = union(enum) {
     ) !void {
         _ = f;
         _ = options;
-        switch (self) {
+        return switch (self) {
             .tag_name_regex => |data| if (data.matched_result) |matched|
                 std.fmt.format(
                     writer,
@@ -595,13 +595,13 @@ pub const ErrorData = union(enum) {
                     "regex {s} does not match to given tag name",
                     .{data.full_regex},
                 ),
-        }
+        };
     }
 };
 
 threadlocal var last_error_data: ?ErrorData = null;
 
-fn setError(err: ErrorData) void {
+fn setLastError(err: ErrorData) void {
     last_error_data = err;
 }
 
@@ -609,8 +609,10 @@ pub fn getLastError() ?ErrorData {
     return last_error_data;
 }
 
-pub fn printLastError() void {
-    logger.err("{}", .{last_error_data});
+pub fn logLastError() void {
+    if (getLastError()) |err| {
+        logger.err("{}", .{err});
+    }
 }
 
 pub const Context = struct {
@@ -940,14 +942,14 @@ pub const Context = struct {
                 const is_at_end = capture.end == text.len;
 
                 if (!(is_at_start and is_at_end)) {
-                    setError(.{ .tag_name_regex = .{
+                    setLastError(.{ .tag_name_regex = .{
                         .full_regex = self.library_config.tag_name_regex_string.?,
                         .matched_result = text[capture.start..capture.end],
                     } });
                     return error.InvalidTagName;
                 }
             } else {
-                setError(.{ .tag_name_regex = .{
+                setLastError(.{ .tag_name_regex = .{
                     .full_regex = self.library_config.tag_name_regex_string.?,
                     .matched_result = null,
                 } });
@@ -1992,6 +1994,8 @@ pub fn main() anyerror!void {
         logger.err("action argument is required", .{});
         return error.MissingActionArgument;
     }
+
+    errdefer logLastError();
 
     switch (given_args.action.?) {
         .Create => {
