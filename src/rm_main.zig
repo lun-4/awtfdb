@@ -156,7 +156,7 @@ pub fn main() anyerror!void {
 
     defer if (given_args.pool) |pool| pool.deinit();
 
-    var savepoint = try ctx.db.?.savepoint("remove_files");
+    var savepoint = try ctx.db.savepoint("remove_files");
     errdefer savepoint.rollback();
     defer savepoint.commit();
 

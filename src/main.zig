@@ -478,9 +478,9 @@ pub fn createCommand(
 pub fn migrateCommand(args_it: *std.process.ArgIterator, ctx: *Context) !void {
     _ = args_it;
     // migration log table is forever
-    try ctx.db.?.exec(MIGRATION_LOG_TABLE, .{}, .{});
+    try ctx.db.exec(MIGRATION_LOG_TABLE, .{}, .{});
 
-    const current_version: i32 = (try ctx.db.?.one(
+    const current_version: i32 = (try ctx.db.one(
         i32,
         "select max(version) from migration_logs",
         .{},
@@ -498,10 +498,10 @@ pub fn migrateCommand(args_it: *std.process.ArgIterator, ctx: *Context) !void {
         defer ctx.allocator.free(backup_db_path);
         logger.info("starting transaction for backup from {s} to {s}", .{ db_path, backup_db_path });
 
-        try ctx.db.?.exec("begin exclusive transaction", .{}, .{});
+        try ctx.db.exec("begin exclusive transaction", .{}, .{});
         errdefer {
-            ctx.db.?.exec("rollback transaction", .{}, .{}) catch |err| {
-                const detailed_error = ctx.db.?.getDetailedError();
+            ctx.db.exec("rollback transaction", .{}, .{}) catch |err| {
+                const detailed_error = ctx.db.getDetailedError();
                 std.debug.panic(
                     "unable to rollback transaction, error: {}, message: {s}\n",
                     .{ err, detailed_error },
@@ -509,8 +509,8 @@ pub fn migrateCommand(args_it: *std.process.ArgIterator, ctx: *Context) !void {
             };
         }
         defer {
-            ctx.db.?.exec("commit transaction", .{}, .{}) catch |err| {
-                const detailed_error = ctx.db.?.getDetailedError();
+            ctx.db.exec("commit transaction", .{}, .{}) catch |err| {
+                const detailed_error = ctx.db.getDetailedError();
                 std.debug.panic(
                     "unable to commit transaction, error: {}, message: {s}\n",
                     .{ err, detailed_error },
@@ -523,7 +523,7 @@ pub fn migrateCommand(args_it: *std.process.ArgIterator, ctx: *Context) !void {
     }
 
     {
-        var savepoint = try ctx.db.?.savepoint("migrations");
+        var savepoint = try ctx.db.savepoint("migrations");
         errdefer savepoint.rollback();
         defer savepoint.commit();
 
@@ -535,7 +535,7 @@ pub fn migrateCommand(args_it: *std.process.ArgIterator, ctx: *Context) !void {
 
                 if (migration.sql) |migration_sql| {
                     var diags = sqlite.Diagnostics{};
-                    ctx.db.?.execMulti(migration_sql, .{ .diags = &diags }) catch |err| {
+                    ctx.db.execMulti(migration_sql, .{ .diags = &diags }) catch |err| {
                         logger.err(
                             "unable to prepare statement, got error {s}. diagnostics: {s}",
                             .{ @errorName(err), diags },
@@ -547,7 +547,7 @@ pub fn migrateCommand(args_it: *std.process.ArgIterator, ctx: *Context) !void {
                 }
                 logger.debug("registering to logs...", .{});
 
-                try ctx.db.?.exec(
+                try ctx.db.exec(
                     "INSERT INTO migration_logs (version, applied_at, description) values (?, ?, ?);",
                     .{},
                     .{
@@ -561,20 +561,15 @@ pub fn migrateCommand(args_it: *std.process.ArgIterator, ctx: *Context) !void {
         }
     }
 
-    const val = (try ctx.db.?.one(i64, "PRAGMA integrity_check", .{}, .{})) orelse return error.PossiblyFailedIntegrityCheck;
+    const val = (try ctx.db.one(i64, "PRAGMA integrity_check", .{}, .{})) orelse return error.PossiblyFailedIntegrityCheck;
     logger.debug("integrity check returned {d}", .{val});
-    try ctx.db.?.exec("PRAGMA foreign_key_check", .{}, .{});
+    try ctx.db.exec("PRAGMA foreign_key_check", .{}, .{});
 }
 
 pub const Context = struct {
     load_options: LoadDatabaseOptions,
     allocator: std.mem.Allocator,
-    /// Always call loadDatabase before using this attribute.
-    db: ?sqlite.Db = null,
-
-    // TODO split createDatabase and migrateDatabase into possibly separate
-    // functions to that we don't keep db as a null. Context's db should be
-    // functional, given by some openDatabase.
+    db: sqlite.Db,
     library_config: LibraryConfiguration = .{},
 
     const Self = @This();
@@ -586,7 +581,7 @@ pub const Context = struct {
     pub fn turnIntoMemoryDb(self: *Self) !void {
 
         // first, make sure our current connection can't do shit
-        try self.db.?.exec("PRAGMA query_only = ON;", .{}, .{});
+        try self.db.exec("PRAGMA query_only = ON;", .{}, .{});
 
         // open a new one in memory
         var new_db = try sqlite.Db.init(.{
@@ -599,7 +594,7 @@ pub const Context = struct {
         });
 
         // backup the one we have into the memory one
-        const maybe_backup = sqlite.c.sqlite3_backup_init(new_db.db, "main", self.db.?.db, "main");
+        const maybe_backup = sqlite.c.sqlite3_backup_init(new_db.db, "main", self.db.db, "main");
         defer if (maybe_backup) |backup| {
             const result = sqlite.c.sqlite3_backup_finish(backup);
             if (result != sqlite.c.SQLITE_OK) {
@@ -615,22 +610,20 @@ pub const Context = struct {
         }
 
         // then, close the db
-        self.db.?.deinit();
+        self.db.deinit();
 
         // then, make this new db the real db
         self.db = new_db;
     }
 
     pub fn deinit(self: *Self) void {
-        if (self.db) |*db| {
-            logger.info("possibly optimizing database...", .{});
-            // The results of analysis are not as good when only part of each index is examined,
-            // but the results are usually good enough. Setting N to 100 or 1000 allows
-            // the ANALYZE command to run very quickly, even on multi-gigabyte database files.
-            _ = db.one(i64, "PRAGMA analysis_limit=1000;", .{}, .{}) catch {};
-            _ = db.exec("PRAGMA optimize;", .{}, .{}) catch {};
-            db.deinit();
-        }
+        logger.info("possibly optimizing database...", .{});
+        // The results of analysis are not as good when only part of each index is examined,
+        // but the results are usually good enough. Setting N to 100 or 1000 allows
+        // the ANALYZE command to run very quickly, even on multi-gigabyte database files.
+        _ = self.db.one(i64, "PRAGMA analysis_limit=1000;", .{}, .{}) catch {};
+        _ = self.db.exec("PRAGMA optimize;", .{}, .{}) catch {};
+        self.db.deinit();
 
         self.dealloc();
     }
@@ -706,7 +699,7 @@ pub const Context = struct {
 
     /// Caller owns returned memory.
     pub fn fetchTagsFromCore(self: *Self, allocator: std.mem.Allocator, core_hash: Hash) !OwnedTagList {
-        var stmt = try self.db.?.prepare("select tag_text, tag_language from tag_names where core_hash = ?");
+        var stmt = try self.db.prepare("select tag_text, tag_language from tag_names where core_hash = ?");
         defer stmt.deinit();
 
         var named_tag_values = try stmt.all(
@@ -747,7 +740,7 @@ pub const Context = struct {
     };
 
     pub fn fetchNamedTag(self: *Self, text: []const u8, language: []const u8) !?Tag {
-        var maybe_core_hash = try self.db.?.oneAlloc(
+        var maybe_core_hash = try self.db.oneAlloc(
             HashSQL,
             self.allocator,
             \\ select hashes.id, hashes.hash_data
@@ -824,7 +817,7 @@ pub const Context = struct {
         else
             ID.generate();
 
-        try self.db.?.exec(
+        try self.db.exec(
             "insert into hashes (id, hash_data) values (?, ?)",
             .{},
             .{ id.sql(), hash_blob },
@@ -843,7 +836,7 @@ pub const Context = struct {
             logger.debug("requesting tag_name_regex library config...", .{});
             self.library_config.initialized_requests.tag_name_regex = true;
 
-            const tag_name_regex = try self.db.?.oneAlloc(
+            const tag_name_regex = try self.db.oneAlloc(
                 []const u8,
                 self.allocator,
                 "select value from library_configuration where key = 'tag_name_regex'",
@@ -876,7 +869,7 @@ pub const Context = struct {
                     return err;
                 };
                 defer regex.deinit();
-                try self.db.?.exec(
+                try self.db.exec(
                     \\ insert into library_configuration(key, value)
                     \\ values ('tag_name_regex', ?)
                     \\ on conflict do update set value = ?
@@ -929,7 +922,6 @@ pub const Context = struct {
         language: []const u8,
         maybe_core: ?Hash,
     ) !Tag {
-        std.debug.assert(self.db != null);
         try self.verifyTagName(text);
 
         var core_hash: Hash = undefined;
@@ -944,7 +936,7 @@ pub const Context = struct {
             hasher.update(&core_data);
             hasher.final(&core_hash_bytes);
 
-            var savepoint = try self.db.?.savepoint("named_tag");
+            var savepoint = try self.db.savepoint("named_tag");
             errdefer savepoint.rollback();
             defer savepoint.commit();
 
@@ -955,12 +947,12 @@ pub const Context = struct {
             const hash_id = try self.createHash(hash_blob, .{});
             core_hash = .{ .id = hash_id, .hash_data = core_hash_bytes };
 
-            const id_data = try self.db.?.one(ID.SQL, "select id from hashes where hash_data= ?", .{}, .{hash_blob});
+            const id_data = try self.db.one(ID.SQL, "select id from hashes where hash_data= ?", .{}, .{hash_blob});
             const id = ID.new(id_data.?);
             std.log.warn("id = {}", .{id});
 
             const core_data_blob = sqlite.Blob{ .data = &core_data };
-            try self.db.?.exec(
+            try self.db.exec(
                 "insert into tag_cores (core_hash, core_data) values (?, ?)",
                 .{},
                 .{ core_hash.id.sql(), core_data_blob },
@@ -969,7 +961,7 @@ pub const Context = struct {
             logger.warn("created tag core with hash {s}", .{core_hash});
         }
 
-        try self.db.?.exec(
+        try self.db.exec(
             "insert into tag_names (core_hash, tag_text, tag_language) values (?, ?, ?)",
             .{},
             .{ core_hash.id.sql(), text, language },
@@ -1013,7 +1005,7 @@ pub const Context = struct {
                         return error.InvalidSourceID;
                     }
 
-                    try self.ctx.db.?.exec(
+                    try self.ctx.db.exec(
                         \\insert into tag_files (core_hash, file_hash, tag_source_type, tag_source_id, parent_source_id)
                         \\values (?, ?, ?, ?, ?) on conflict do nothing
                     ,
@@ -1021,7 +1013,7 @@ pub const Context = struct {
                         .{ core_hash.id.sql(), self.hash.id.sql(), @enumToInt(source.kind), source.id, parent_source_id },
                     );
                 } else {
-                    try self.ctx.db.?.exec(
+                    try self.ctx.db.exec(
                         \\insert into tag_files (core_hash, file_hash, tag_source_type, tag_source_id)
                         \\values (?, ?, ?, ?) on conflict do nothing
                     ,
@@ -1034,7 +1026,7 @@ pub const Context = struct {
                 // provided
                 if (options.parent_source_id != null) unreachable;
 
-                try self.ctx.db.?.exec(
+                try self.ctx.db.exec(
                     "insert into tag_files (core_hash, file_hash) values (?, ?) on conflict do nothing",
                     .{},
                     .{ core_hash.id.sql(), self.hash.id.sql() },
@@ -1043,7 +1035,7 @@ pub const Context = struct {
         }
 
         pub fn removeTag(self: *FileSelf, core_hash: Hash) !void {
-            try self.ctx.db.?.exec(
+            try self.ctx.db.exec(
                 "delete from tag_files where core_hash = ? and file_hash = ?",
                 .{},
                 .{ core_hash.id.sql(), self.hash.id.sql() },
@@ -1053,7 +1045,7 @@ pub const Context = struct {
 
         // Copies ownership of given new_local_path
         pub fn setLocalPath(self: *FileSelf, new_local_path: []const u8) !void {
-            try self.ctx.db.?.exec(
+            try self.ctx.db.exec(
                 "update files set local_path = ? where file_hash = ? and local_path = ?",
                 .{},
                 .{ new_local_path, self.hash.id.sql(), self.local_path },
@@ -1065,7 +1057,7 @@ pub const Context = struct {
 
         pub fn delete(self: FileSelf) !void {
             logger.info("deleted file {d} {s}", .{ self.hash.id, self.local_path });
-            try self.ctx.db.?.exec(
+            try self.ctx.db.exec(
                 "delete from files where file_hash = ? and local_path = ?",
                 .{},
                 .{ self.hash.id.sql(), self.local_path },
@@ -1091,7 +1083,7 @@ pub const Context = struct {
             pub fn delete(self: SourceSelf) !void {
                 if (self.kind == .system) unreachable; // invalid api usage (system sources must not be manually deleted)
 
-                try self.ctx.db.?.exec(
+                try self.ctx.db.exec(
                     "delete from tag_sources where type = ? and id = ?",
                     .{},
                     .{ @enumToInt(TagSourceType.external), self.id },
@@ -1107,7 +1099,7 @@ pub const Context = struct {
 
         /// Returns all tag core hashes for the file.
         pub fn fetchTags(self: FileSelf, allocator: std.mem.Allocator) ![]FileTag {
-            var stmt = try self.ctx.db.?.prepare(
+            var stmt = try self.ctx.db.prepare(
                 \\ select hashes.id, hashes.hash_data, tag_source_type, tag_source_id, parent_source_id
                 \\ from tag_files
                 \\ join hashes
@@ -1192,11 +1184,11 @@ pub const Context = struct {
         // TODO (before merge) is this a good idea for ids?
         //   maybe a tag core-ish kind of deal would be better...
 
-        const manual_source_max_id = (try self.db.?.one(i64, "select max(id) from tag_sources where type = 1", .{}, .{})) orelse 0;
+        const manual_source_max_id = (try self.db.one(i64, "select max(id) from tag_sources where type = 1", .{}, .{})) orelse 0;
 
         const source_id = manual_source_max_id + 1;
 
-        try self.db.?.exec(
+        try self.db.exec(
             "insert into tag_sources (type, id, name) values (?, ?, ?)",
             .{},
             .{ @enumToInt(TagSourceType.external), source_id, name },
@@ -1214,7 +1206,7 @@ pub const Context = struct {
                 return File.Source{ .ctx = self, .kind = .system, .id = id };
             },
             .external => {
-                const maybe_row = try self.db.?.one(
+                const maybe_row = try self.db.one(
                     struct { type: i64, id: i64 },
                     "select type, id from tag_sources where type = ? and id = ?",
                     .{},
@@ -1259,7 +1251,7 @@ pub const Context = struct {
     };
 
     pub fn fetchHashId(self: *Self, blob: sqlite.Blob) !?ID {
-        const maybe_id_bytes = try self.db.?.one(
+        const maybe_id_bytes = try self.db.one(
             ID.SQL,
             "select id from hashes where hash_data = ?",
             .{},
@@ -1335,7 +1327,7 @@ pub const Context = struct {
         file_hash: Hash,
         absolute_local_path: []const u8,
     ) !File {
-        try self.db.?.exec(
+        try self.db.exec(
             "insert into files (file_hash, local_path) values (?, ?) on conflict do nothing",
             .{},
             .{ file_hash.id.sql(), absolute_local_path },
@@ -1378,7 +1370,7 @@ pub const Context = struct {
     // TODO create fetchFileFromHash that receives full hash object and automatically
     // prefers hash instead of id-search
     pub fn fetchFile(self: *Self, hash_id: ID) !?File {
-        var maybe_local_path = try self.db.?.oneAlloc(
+        var maybe_local_path = try self.db.oneAlloc(
             struct {
                 local_path: []const u8,
                 hash_data: sqlite.Blob,
@@ -1413,7 +1405,7 @@ pub const Context = struct {
     }
 
     pub fn fetchFileExact(self: *Self, hash_id: ID, given_local_path: []const u8) !?File {
-        var maybe_local_path = try self.db.?.oneAlloc(
+        var maybe_local_path = try self.db.oneAlloc(
             struct {
                 local_path: []const u8,
                 hash_data: sqlite.Blob,
@@ -1450,7 +1442,7 @@ pub const Context = struct {
     pub fn fetchFileByHash(self: *Self, hash_data: [32]u8) !?File {
         const hash_blob = sqlite.Blob{ .data = &hash_data };
 
-        var maybe_local_path = try self.db.?.oneAlloc(
+        var maybe_local_path = try self.db.oneAlloc(
             struct {
                 local_path: []const u8,
                 hash_id: ID.SQL,
@@ -1481,7 +1473,7 @@ pub const Context = struct {
     }
 
     pub fn fetchFileByPath(self: *Self, absolute_local_path: []const u8) !?File {
-        var maybe_hash = try self.db.?.oneAlloc(
+        var maybe_hash = try self.db.oneAlloc(
             HashSQL,
             self.allocator,
             \\ select hashes.id, hashes.hash_data
@@ -1508,7 +1500,7 @@ pub const Context = struct {
     }
 
     pub fn createTagParent(self: *Self, child_tag: Tag, parent_tag: Tag) !i64 {
-        return (try self.db.?.one(
+        return (try self.db.one(
             i64,
             "insert into tag_implications (child_tag, parent_tag) values (?, ?) returning rowid",
             .{},
@@ -1598,7 +1590,7 @@ pub const Context = struct {
     pub fn processTagTree(self: *Self, options: ProcessTagTreeOptions) !void {
         logger.info("processing tag tree...", .{});
 
-        var tree_stmt = try self.db.?.prepare(
+        var tree_stmt = try self.db.prepare(
             "select rowid, child_tag, parent_tag from tag_implications",
         );
         defer tree_stmt.deinit();
@@ -1645,7 +1637,7 @@ pub const Context = struct {
                 try self.processSingleFileIntoTagTree(file_hash, treemap);
             }
         } else {
-            var stmt = try self.db.?.prepare(
+            var stmt = try self.db.prepare(
                 \\ select file_hash
                 \\ from files
             );
@@ -1678,7 +1670,7 @@ pub const Context = struct {
         }
 
         fn availableIndex(self: PoolSelf) !usize {
-            const maybe_max_index = try self.ctx.db.?.one(
+            const maybe_max_index = try self.ctx.db.one(
                 usize,
                 "select max(entry_index) from pool_entries where pool_hash = ?",
                 .{},
@@ -1689,7 +1681,7 @@ pub const Context = struct {
         }
 
         pub fn delete(self: PoolSelf) !void {
-            try self.ctx.db.?.exec(
+            try self.ctx.db.exec(
                 "delete from pools where pool_hash = ?",
                 .{},
                 .{self.hash.id.sql()},
@@ -1699,7 +1691,7 @@ pub const Context = struct {
         pub fn addFile(self: PoolSelf, file_id: ID) !void {
             const index = try self.availableIndex();
             logger.warn("adding file {d} to pool {d} index {d}", .{ file_id, self.hash.id, index });
-            try self.ctx.db.?.exec(
+            try self.ctx.db.exec(
                 "insert into pool_entries (file_hash, pool_hash, entry_index) values (?, ?, ?)",
                 .{},
                 .{ file_id.sql(), self.hash.id.sql(), index },
@@ -1707,7 +1699,7 @@ pub const Context = struct {
         }
 
         pub fn removeFile(self: PoolSelf, file_id: ID) !void {
-            try self.ctx.db.?.exec(
+            try self.ctx.db.exec(
                 "delete from pool_entries where file_hash = ? and pool_hash = ?",
                 .{},
                 .{ file_id.sql(), self.hash.id.sql() },
@@ -1738,17 +1730,17 @@ pub const Context = struct {
             // addFile/removeFile which should be "blazing-fast"
 
             {
-                var savepoint = try self.ctx.db.?.savepoint("pool_add_at_index");
+                var savepoint = try self.ctx.db.savepoint("pool_add_at_index");
                 errdefer savepoint.rollback();
                 defer savepoint.commit();
 
-                try self.ctx.db.?.exec(
+                try self.ctx.db.exec(
                     "delete from pool_entries where pool_hash = ?",
                     .{},
                     .{self.hash.id.sql()},
                 );
                 for (all_hash_ids.items) |pool_file_id, pool_index| {
-                    try self.ctx.db.?.exec(
+                    try self.ctx.db.exec(
                         "insert into pool_entries (file_hash, pool_hash, entry_index) values (?, ?, ?)",
                         .{},
                         .{ pool_file_id.sql(), self.hash.id.sql(), pool_index },
@@ -1761,7 +1753,7 @@ pub const Context = struct {
             // TODO decrease repetition between this and File.fetchTags
 
             var diags = sqlite.Diagnostics{};
-            var stmt = self.ctx.db.?.prepareWithDiags(
+            var stmt = self.ctx.db.prepareWithDiags(
                 \\ select hashes.id, hashes.hash_data
                 \\ from pool_entries
                 \\ join hashes
@@ -1806,7 +1798,7 @@ pub const Context = struct {
         hasher.update(&core_data);
         hasher.final(&core_hash_bytes);
 
-        var savepoint = try self.db.?.savepoint("pool_core");
+        var savepoint = try self.db.savepoint("pool_core");
         errdefer savepoint.rollback();
         defer savepoint.commit();
 
@@ -1817,7 +1809,7 @@ pub const Context = struct {
         // have to worry about losing it to undefined memory hell.
 
         const core_data_blob = sqlite.Blob{ .data = &core_data };
-        try self.db.?.exec(
+        try self.db.exec(
             "insert into pools (pool_hash, pool_core_data, title) values (?, ?, ?)",
             .{},
             .{ core_hash_id.sql(), core_data_blob, title },
@@ -1833,7 +1825,7 @@ pub const Context = struct {
     }
 
     pub fn fetchPool(self: *Self, hash_id: ID) !?Pool {
-        var maybe_pool = try self.db.?.oneAlloc(
+        var maybe_pool = try self.db.oneAlloc(
             struct {
                 title: []const u8,
                 hash_data: sqlite.Blob,
@@ -1869,6 +1861,8 @@ pub const Context = struct {
 
     /// Reopen the database object
     pub fn reopenDatabase(self: *Self) !void {
+        self.db.deinit();
+
         // new_ctx does not own the memory we're giving to it through
         // load_options, so don't free it, or close its db connection,
         // as that's what we'll be stealing from it
@@ -2125,7 +2119,7 @@ test "tag creation" {
     try std.testing.expectEqualStrings(tag.core.hash_data[0..], tags_from_core.items[0].core.hash_data[0..]);
     try std.testing.expectEqualStrings(tag.core.hash_data[0..], tags_from_core.items[1].core.hash_data[0..]);
 
-    const deleted_tags = try tag.deleteAll(&ctx.db.?);
+    const deleted_tags = try tag.deleteAll(&ctx.db);
     try std.testing.expectEqual(@as(usize, 2), deleted_tags);
 
     var tags_from_core_after_deletion = try ctx.fetchTagsFromCore(std.testing.allocator, tag.core);
@@ -2239,8 +2233,6 @@ test "in memory database" {
     var tag2_inmem = try ctx.fetchNamedTag("test_tag2", "en");
     try std.testing.expect(tag2_inmem != null);
 
-    ctx.db.?.deinit();
-    ctx.db = null;
     try ctx.reopenDatabase();
 
     var tag2_infile = try ctx.fetchNamedTag("test_tag2", "en");

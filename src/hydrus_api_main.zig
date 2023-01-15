@@ -478,7 +478,7 @@ fn searchFiles(
         }
     }
 
-    var stmt = try ctx.manage.db.?.prepareDynamic(result.query);
+    var stmt = try ctx.manage.db.prepareDynamic(result.query);
     defer stmt.deinit();
 
     logger.debug("generated query: {s}", .{result.query});

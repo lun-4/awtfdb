@@ -916,7 +916,7 @@ pub fn main() anyerror!void {
             defer file.deinit();
             logger.debug("adding file '{s}'", .{file.local_path});
 
-            var savepoint = try ctx.db.?.savepoint("tags");
+            var savepoint = try ctx.db.savepoint("tags");
             errdefer savepoint.rollback();
             defer savepoint.commit();
 
@@ -983,7 +983,7 @@ pub fn main() anyerror!void {
                         try file_ids_for_tagtree.append(file.hash.id);
                         defer file.deinit();
                         {
-                            var savepoint = try ctx.db.?.savepoint("tags");
+                            var savepoint = try ctx.db.savepoint("tags");
                             errdefer savepoint.rollback();
                             defer savepoint.commit();
 

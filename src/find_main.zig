@@ -166,7 +166,7 @@ pub fn main() anyerror!void {
         }
     }
 
-    var stmt = try ctx.db.?.prepareDynamic(result.query);
+    var stmt = try ctx.db.prepareDynamic(result.query);
     defer stmt.deinit();
 
     logger.debug("generated query: {s}", .{result.query});
@@ -623,8 +623,8 @@ test "sql parser batch test" {
 
         const result = wrapped_result.Ok;
 
-        var stmt = ctx.db.?.prepareDynamic(result.query) catch |err| {
-            const detailed_error = ctx.db.?.getDetailedError();
+        var stmt = ctx.db.prepareDynamic(result.query) catch |err| {
+            const detailed_error = ctx.db.getDetailedError();
             std.debug.panic(
                 "unable to prepare statement test case {d} '{s}', error: {}, message: {s}\n",
                 .{ test_case_index, result.query, err, detailed_error },

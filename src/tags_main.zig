@@ -142,7 +142,7 @@ const CreateAction = struct {
             //  - delete tag B
             //  - create tag B, with core set to A
 
-            var savepoint = try self.ctx.db.?.savepoint("tag_aliasing");
+            var savepoint = try self.ctx.db.savepoint("tag_aliasing");
             errdefer savepoint.rollback();
             defer savepoint.commit();
 
@@ -190,7 +190,7 @@ const CreateAction = struct {
             std.debug.assert(std.mem.eql(u8, sql_result.arguments[0].tag, self.config.tag.?));
 
             // execute query and bind to tag_to_be_aliased_from
-            var stmt = try self.ctx.db.?.prepareDynamic(sql_result.query);
+            var stmt = try self.ctx.db.prepareDynamic(sql_result.query);
             defer stmt.deinit();
             var args = [1]sqlite.Text{tag_to_be_aliased_from.core.id.sql()};
             var it = try stmt.iterator(ID.SQL, args);
@@ -208,7 +208,7 @@ const CreateAction = struct {
             }
 
             // delete tag_to_be_aliased_from
-            const deleted_tag_names = try tag_to_be_aliased_from.deleteAll(&self.ctx.db.?);
+            const deleted_tag_names = try tag_to_be_aliased_from.deleteAll(&self.ctx.db);
             logger.info("deleted {d} tag names", .{deleted_tag_names});
 
             // and create the proper alias (can only be done after deletion)
@@ -284,7 +284,7 @@ fn consumeCoreHash(ctx: *Context, raw_core_hash_buffer: *[32]u8, tag_core_hex_st
     var raw_core_hash = try std.fmt.hexToBytes(raw_core_hash_buffer, tag_core_hex_string);
 
     const hash_blob = sqlite.Blob{ .data = raw_core_hash };
-    const hash_id = (try ctx.db.?.one(
+    const hash_id = (try ctx.db.one(
         ID.SQL,
         \\ select hashes.id
         \\ from hashes
@@ -370,7 +370,7 @@ const RemoveAction = struct {
             // names that are affected by this command, requiring user
             // confirmation to continue.
 
-            var stmt = try self.ctx.db.?.prepare(
+            var stmt = try self.ctx.db.prepare(
                 "select tag_text, tag_language from tag_names where core_hash = ?",
             );
             defer stmt.deinit();
@@ -417,7 +417,7 @@ const RemoveAction = struct {
                 .{},
             );
 
-            const deleted_name_count = (try self.ctx.db.?.one(
+            const deleted_name_count = (try self.ctx.db.one(
                 usize,
                 \\ delete from tag_names
                 \\ where tag_text = ?
@@ -439,7 +439,7 @@ const RemoveAction = struct {
         }
 
         {
-            const referenced_files = (try self.ctx.db.?.one(
+            const referenced_files = (try self.ctx.db.one(
                 usize,
                 "select count(*) from tag_files where core_hash = ?",
                 .{},
@@ -458,7 +458,7 @@ const RemoveAction = struct {
         if (self.config.tag_core) |tag_core_hex_string| {
             var core = try consumeCoreHash(self.ctx, &raw_core_hash_buffer, tag_core_hex_string);
             // TODO fix deleted_count here
-            deleted_count = (try self.ctx.db.?.one(
+            deleted_count = (try self.ctx.db.one(
                 usize,
                 \\ delete from tag_names
                 \\ where core_hash = ?
@@ -471,10 +471,10 @@ const RemoveAction = struct {
                 .{},
                 .{ core.id.sql(), core.id.sql() },
             )).?;
-            try self.ctx.db.?.exec("delete from tag_cores where core_hash = ?", .{}, .{core.id.sql()});
-            try self.ctx.db.?.exec("delete from hashes where id = ?", .{}, .{core.id.sql()});
+            try self.ctx.db.exec("delete from tag_cores where core_hash = ?", .{}, .{core.id.sql()});
+            try self.ctx.db.exec("delete from hashes where id = ?", .{}, .{core.id.sql()});
         } else if (self.config.tag) |tag_text| {
-            deleted_count = (try self.ctx.db.?.one(
+            deleted_count = (try self.ctx.db.one(
                 usize,
                 \\ delete from tag_names
                 \\ where tag_text = ? and tag_language = ?
@@ -580,7 +580,7 @@ const SearchAction = struct {
         var stdout = std.io.getStdOut().writer();
 
         var stmt = if (self.config.exact)
-            try self.ctx.db.?.prepareDynamic(
+            try self.ctx.db.prepareDynamic(
                 \\ select distinct core_hash core_hash, hashes.hash_data
                 \\ from tag_names
                 \\ join hashes
@@ -589,7 +589,7 @@ const SearchAction = struct {
                 \\ order by hashes.id asc
             )
         else
-            try self.ctx.db.?.prepareDynamic(
+            try self.ctx.db.prepareDynamic(
                 \\ select distinct core_hash core_hash, hashes.hash_data
                 \\ from tag_names
                 \\ join hashes
@@ -736,7 +736,7 @@ const ListParent = struct {
     pub fn run(self: *Self) !void {
         var raw_stdout = std.io.getStdOut().writer();
 
-        var stmt = try self.ctx.db.?.prepare(
+        var stmt = try self.ctx.db.prepare(
             \\ select rowid,
             \\  parent_tag,
             \\ 	(select tag_text from tag_names where core_hash = parent_tag),
@@ -823,7 +823,7 @@ const RemoveParent = struct {
         // parent_relationship is only used on that stdout call as
         // information for the user, so it can't be tested until we have
         // stdout capturing.
-        const parent_relationship = (try self.ctx.db.?.one(
+        const parent_relationship = (try self.ctx.db.one(
             struct { child_tag: ID.SQL, parent_tag: ID.SQL },
             "select child_tag, parent_tag from tag_implications where rowid = ?",
             .{},
@@ -835,7 +835,7 @@ const RemoveParent = struct {
             .{ parent_relationship.parent_tag, parent_relationship.child_tag },
         );
 
-        const tag_file_count = (try self.ctx.db.?.one(
+        const tag_file_count = (try self.ctx.db.one(
             usize,
             "select count(*) from tag_files where parent_source_id = ?",
             .{},
@@ -854,7 +854,7 @@ const RemoveParent = struct {
         );
 
         {
-            var savepoint = try self.ctx.db.?.savepoint("parent_removal");
+            var savepoint = try self.ctx.db.savepoint("parent_removal");
             errdefer savepoint.rollback();
             defer savepoint.commit();
 
@@ -862,7 +862,7 @@ const RemoveParent = struct {
 
             if (self.config.delete_file_entries) {
                 logger.info("REMOVING all tag file entries that were made by this parent...", .{});
-                const deleted_tag_file_count = (try self.ctx.db.?.one(
+                const deleted_tag_file_count = (try self.ctx.db.one(
                     usize,
                     \\ delete from tag_files
                     \\ where
@@ -885,7 +885,7 @@ const RemoveParent = struct {
                 logger.info("deleted {d} tag_files entries", .{deleted_tag_file_count});
             } else {
                 logger.info("UPDATING all tag file entries that were made by this parent and setting to null...", .{});
-                const updated_tag_file_count = (try self.ctx.db.?.one(
+                const updated_tag_file_count = (try self.ctx.db.one(
                     usize,
                     \\ update tag_files
                     \\ set
@@ -912,7 +912,7 @@ const RemoveParent = struct {
                 logger.info("updated {d} tag_files entries", .{updated_tag_file_count});
             }
 
-            try self.ctx.db.?.exec(
+            try self.ctx.db.exec(
                 "delete from tag_implications where rowid = ?",
                 .{},
                 .{self.config.rowid.?},
@@ -1171,7 +1171,7 @@ const SearchPool = struct {
     pub fn run(self: *Self) !void {
         var stdout = std.io.getStdOut().writer();
 
-        var stmt = try self.ctx.db.?.prepare(
+        var stmt = try self.ctx.db.prepare(
             \\ select pool_hash
             \\ from pools
             \\ where pools.title LIKE '%' || ? || '%'
@@ -1339,7 +1339,7 @@ const ListSource = struct {
     pub fn run(self: *Self) !void {
         var raw_stdout = std.io.getStdOut().writer();
 
-        var stmt = try self.ctx.db.?.prepare(
+        var stmt = try self.ctx.db.prepare(
             \\ select type, id, name
             \\ from tag_sources
         );

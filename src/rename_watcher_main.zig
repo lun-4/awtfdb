@@ -261,7 +261,7 @@ const RenameContext = struct {
         //  that only has 1 indexed file or not
         // if its more than 1, it's 100% a folder, and we don't need to openDir
 
-        var stmt = try self.ctx.db.?.prepare(
+        var stmt = try self.ctx.db.prepare(
             \\ select file_hash, hashes.hash_data, local_path
             \\ from files
             \\ join hashes
@@ -287,7 +287,7 @@ const RenameContext = struct {
 
         // find out if the target newpath is a folder or not by searching
         // if there are multiple entries with it already
-        var newpath_count = (try self.ctx.db.?.one(
+        var newpath_count = (try self.ctx.db.one(
             usize,
             \\ select count(*)
             \\ from files
@@ -763,7 +763,7 @@ test "rename syscalls trigger db rename" {
     while (it.next()) |line|
         try rename_ctx.processLine(line);
 
-    const oldname_count = (try ctx.db.?.one(
+    const oldname_count = (try ctx.db.one(
         usize,
         "select count(*) from files where local_path = ?",
         .{},
@@ -772,7 +772,7 @@ test "rename syscalls trigger db rename" {
 
     try std.testing.expectEqual(@as(usize, 0), oldname_count);
 
-    const newname_count = (try ctx.db.?.one(
+    const newname_count = (try ctx.db.one(
         usize,
         "select count(*) from files where local_path = ?",
         .{},
@@ -854,7 +854,7 @@ test "rename syscalls trigger db rename (target being a folder)" {
     while (it.next()) |line|
         try rename_ctx.processLine(line);
 
-    const oldname_count = (try ctx.db.?.one(
+    const oldname_count = (try ctx.db.one(
         usize,
         "select count(*) from files where local_path = ?",
         .{},
@@ -863,7 +863,7 @@ test "rename syscalls trigger db rename (target being a folder)" {
 
     try std.testing.expectEqual(@as(usize, 0), oldname_count);
 
-    const newname_count = (try ctx.db.?.one(
+    const newname_count = (try ctx.db.one(
         usize,
         "select count(*) from files where local_path = ?",
         .{},

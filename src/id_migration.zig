@@ -35,13 +35,13 @@ fn generateSqlReadonly(comptime table: []const u8) []const u8 {
 }
 
 fn assertSameCount(self: *Context, comptime table1: []const u8, comptime table2: []const u8) !void {
-    const table1_count = try self.db.?.one(usize, "select count(*) from " ++ table1, .{}, .{});
-    const table2_count = try self.db.?.one(usize, "select count(*) from " ++ table2, .{}, .{});
+    const table1_count = try self.db.one(usize, "select count(*) from " ++ table1, .{}, .{});
+    const table2_count = try self.db.one(usize, "select count(*) from " ++ table2, .{}, .{});
     try std.testing.expectEqual(table1_count, table2_count);
 }
 
 fn migrateFiles(self: *Context) !void {
-    var stmt = try self.db.?.prepare(
+    var stmt = try self.db.prepare(
         \\ select file_hash, local_path, hashes.hash_data from files
         \\ join hashes on files.file_hash = hashes.id
     );
@@ -62,7 +62,7 @@ fn migrateFiles(self: *Context) !void {
         defer self.allocator.free(data.local_path);
         defer self.allocator.free(data.hash_data.data);
 
-        const maybe_existing_hash = try self.db.?.one(
+        const maybe_existing_hash = try self.db.one(
             ID.SQL,
             "select id from hashes_v2 where hash_data = ?",
             .{},
@@ -74,7 +74,7 @@ fn migrateFiles(self: *Context) !void {
             logger.warn("existing as {s} {s}", .{ existing_hash, data.local_path });
 
             const existing_id = ID.new(existing_hash);
-            try self.db.?.exec(
+            try self.db.exec(
                 "insert into files_v2 (file_hash, local_path) VALUES (?, ?)",
                 .{},
                 .{ existing_id.sql(), data.local_path },
@@ -88,19 +88,19 @@ fn migrateFiles(self: *Context) !void {
             try std.testing.expectEqual(new_ulid.timestamp, parsed_ulid.timestamp);
 
             logger.warn("creating as {s} {s} {s}", .{ new_id, std.fmt.fmtSliceHexLower(data.hash_data.data), data.local_path });
-            try self.db.?.exec(
+            try self.db.exec(
                 "insert into hashes_v2 (id, hash_data) VALUES (?, ?)",
                 .{},
                 .{ new_id.sql(), data.hash_data },
             );
-            const must_exist = try self.db.?.one(
+            const must_exist = try self.db.one(
                 ID.SQL,
                 "select id from hashes_v2 where hash_data = ?",
                 .{},
                 .{data.hash_data},
             );
             try std.testing.expectEqualSlices(u8, new_id.str(), &(must_exist.?));
-            try self.db.?.exec(
+            try self.db.exec(
                 "insert into files_v2 (file_hash, local_path) VALUES (?, ?)",
                 .{},
                 .{ new_id.sql(), data.local_path },
@@ -117,7 +117,7 @@ fn migrateCores(self: *Context) !void {
     );
     const random = rng.random();
 
-    var stmt_tag_cores = try self.db.?.prepare(
+    var stmt_tag_cores = try self.db.prepare(
         \\ select core_hash, core_data, hashes.hash_data from tag_cores
         \\ join hashes on tag_cores.core_hash = hashes.id
         \\ order by hashes.id asc
@@ -152,12 +152,12 @@ fn migrateCores(self: *Context) !void {
         try std.testing.expectEqual(new_ulid.timestamp, parsed_ulid.timestamp);
 
         logger.warn("tag core creating as {s} {x}", .{ new_id, std.fmt.fmtSliceHexLower(data_v1.hash_data.data) });
-        try self.db.?.exec(
+        try self.db.exec(
             "insert into hashes_v2 (id, hash_data) VALUES (?, ?)",
             .{},
             .{ new_id.sql(), data_v1.hash_data },
         );
-        try self.db.?.exec(
+        try self.db.exec(
             "insert into tag_cores_v2 (core_hash, core_data) VALUES (?, ?)",
             .{},
             .{ new_id.sql(), data_v1.core_data },
@@ -167,7 +167,7 @@ fn migrateCores(self: *Context) !void {
 }
 
 fn migrateTagNames(self: *Context) !void {
-    var stmt_tag_names = try self.db.?.prepare(
+    var stmt_tag_names = try self.db.prepare(
         \\ select hashes_v2.id AS new_core_id, tag_language, tag_text from tag_names
         \\ join hashes on tag_names.core_hash = hashes.id
         \\ join hashes_v2 on hashes.hash_data = hashes_v2.hash_data;
@@ -185,7 +185,7 @@ fn migrateTagNames(self: *Context) !void {
 
         const new_id = ID.new(row.new_core_id);
         logger.warn("creating tag name {s} {s} {s}", .{ new_id, row.tag_language, row.tag_text });
-        try self.db.?.exec(
+        try self.db.exec(
             "insert into tag_names_v2 (core_hash, tag_language, tag_text) VALUES (?, ?, ?)",
             .{},
             .{ new_id.sql(), row.tag_language, row.tag_text },
@@ -194,7 +194,7 @@ fn migrateTagNames(self: *Context) !void {
 }
 
 fn migrateTagImplications(self: *Context) !void {
-    var stmt_tag_implications = try self.db.?.prepare(
+    var stmt_tag_implications = try self.db.prepare(
         \\ select rowid, child_tag, parent_tag
         \\ from tag_implications
     );
@@ -209,7 +209,7 @@ fn migrateTagImplications(self: *Context) !void {
         const new_child_tag = try snowflakeNewHash(self, row.child_tag);
         const new_parent_tag = try snowflakeNewHash(self, row.parent_tag);
         logger.warn("implication {d}->{d} => {}->{}", .{ row.parent_tag, row.child_tag, new_child_tag, new_parent_tag });
-        try self.db.?.exec(
+        try self.db.exec(
             "insert into tag_implications_v2 (rowid, child_tag, parent_tag) VALUES (?,?, ?)",
             .{},
             .{ row.rowid, new_child_tag.sql(), new_parent_tag.sql() },
@@ -218,7 +218,7 @@ fn migrateTagImplications(self: *Context) !void {
 }
 
 fn migrateTagFiles(self: *Context) !void {
-    var stmt_tag_files = try self.db.?.prepare(
+    var stmt_tag_files = try self.db.prepare(
         \\ select file_hash, core_hash, tag_source_type, tag_source_id, parent_source_id
         \\ from tag_files
     );
@@ -238,7 +238,7 @@ fn migrateTagFiles(self: *Context) !void {
         if (row.parent_source_id) |parent_source_id| {
             // assert it exists in tag_implications_v2
             logger.warn("verify source id {d}", .{parent_source_id});
-            _ = (try self.db.?.one(
+            _ = (try self.db.one(
                 ID.SQL,
                 "select parent_tag from tag_implications_v2 where rowid = ?",
                 .{},
@@ -253,7 +253,7 @@ fn migrateTagFiles(self: *Context) !void {
             "insert tag files {} {} {d} {d} {?d}",
             .{ new_file_hash, new_core_hash, row.tag_source_type, row.tag_source_id, row.parent_source_id },
         );
-        try self.db.?.exec(
+        try self.db.exec(
             "insert into tag_files_v2 (file_hash, core_hash, tag_source_type, tag_source_id, parent_source_id) VALUES (?, ?, ?, ?, ?)",
             .{},
             .{ new_file_hash.sql(), new_core_hash.sql(), row.tag_source_type, row.tag_source_id, row.parent_source_id },
@@ -265,7 +265,7 @@ fn migratePools(self: *Context) !void {
     var rng = std.rand.DefaultPrng.init(@truncate(u64, @intCast(u128, std.time.nanoTimestamp())));
     const random = rng.random();
 
-    var stmt = try self.db.?.prepare(
+    var stmt = try self.db.prepare(
         \\ select pool_hash, hashes.hash_data, pool_core_data, title
         \\ from pools
         \\ join hashes on hashes.id = pool_hash
@@ -302,12 +302,12 @@ fn migratePools(self: *Context) !void {
         try std.testing.expectEqual(new_ulid.timestamp, parsed_ulid.timestamp);
 
         logger.warn("pool creating as {s} {s} {x}", .{ row.title, new_id, std.fmt.fmtSliceHexLower(row.hash_data.data) });
-        try self.db.?.exec(
+        try self.db.exec(
             "insert into hashes_v2 (id, hash_data) VALUES (?, ?)",
             .{},
             .{ new_id.sql(), row.hash_data },
         );
-        try self.db.?.exec(
+        try self.db.exec(
             "insert into pools_v2 (pool_hash, pool_core_data, title) VALUES (?, ?, ?)",
             .{},
             .{ new_id.sql(), row.pool_core_data, row.title },
@@ -316,7 +316,7 @@ fn migratePools(self: *Context) !void {
 }
 
 fn migratePoolEntries(self: *Context) !void {
-    var stmt = try self.db.?.prepare(
+    var stmt = try self.db.prepare(
         \\ select file_hash, pool_hash, entry_index
         \\ from pool_entries
     );
@@ -333,7 +333,7 @@ fn migratePoolEntries(self: *Context) !void {
 
         const args = .{ new_file_hash.sql(), new_pool_hash.sql(), row.entry_index };
         logger.warn("creating pool entry {} {} {d}", args);
-        try self.db.?.exec(
+        try self.db.exec(
             "insert into pool_entries_v2 (file_hash,pool_hash,entry_index) VALUES (?, ?, ?)",
             .{},
             args,
@@ -342,7 +342,7 @@ fn migratePoolEntries(self: *Context) !void {
 }
 
 fn migrateTagUsageCounts(self: *Context) !void {
-    var stmt = try self.db.?.prepare(
+    var stmt = try self.db.prepare(
         \\ select timestamp, core_hash, relationship_count
         \\ from metrics_tag_usage_values
     );
@@ -363,7 +363,7 @@ fn migrateTagUsageCounts(self: *Context) !void {
         };
 
         logger.warn("creating metrics entry {d} {} {d}", .{ row.timestamp, new_core_hash, row.relationship_count });
-        try self.db.?.exec(
+        try self.db.exec(
             "insert into metrics_tag_usage_values_v2 (timestamp, core_hash, relationship_count) VALUES (?, ?, ?)",
             .{},
             .{ row.timestamp, new_core_hash.sql(), row.relationship_count },
@@ -375,12 +375,12 @@ fn lockTable(self: *Context, comptime old_table: []const u8) !void {
     const renamed_table = old_table ++ "_v1";
     const query = "ALTER TABLE " ++ old_table ++ " RENAME TO " ++ renamed_table ++ ";" ++ comptime generateSqlReadonly(renamed_table);
     //logger.warn("readonly table query {s}", .{query});
-    try self.db.?.exec(query, .{}, .{});
+    try self.db.exec(query, .{}, .{});
 }
 
 fn renameToOriginal(self: *Context, comptime table: []const u8) !void {
     const query = "ALTER TABLE " ++ table ++ "_v2 RENAME TO " ++ table ++ ";";
-    try self.db.?.exec(query, .{}, .{});
+    try self.db.exec(query, .{}, .{});
 }
 
 fn migrateSingleTable(
@@ -402,7 +402,7 @@ pub fn migrate(self: *Context) !void {
 
     var diags = sqlite.Diagnostics{};
 
-    self.db.?.execMulti(
+    self.db.execMulti(
         \\ CREATE TABLE IF NOT EXISTS hashes_v2 (
         \\     id text primary key,
         \\     hash_data blob
@@ -521,7 +521,7 @@ pub fn migrate(self: *Context) !void {
 }
 
 fn snowflakeNewHash(self: *Context, old_hash: i64) !ID {
-    const new_file_hash_id = (try self.db.?.one(
+    const new_file_hash_id = (try self.db.one(
         ID.SQL,
         \\ select hashes_v2.id
         \\ from hashes
