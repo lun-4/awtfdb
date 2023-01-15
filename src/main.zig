@@ -566,6 +566,53 @@ pub fn migrateCommand(args_it: *std.process.ArgIterator, ctx: *Context) !void {
     try ctx.db.exec("PRAGMA foreign_key_check", .{}, .{});
 }
 
+pub const ErrorData = union(enum) {
+    tag_name_regex: struct {
+        full_regex: []const u8,
+        matched_result: ?[]const u8 = null,
+    },
+
+    const Self = @This();
+
+    pub fn format(
+        self: Self,
+        comptime f: []const u8,
+        options: std.fmt.FormatOptions,
+        writer: anytype,
+    ) !void {
+        _ = f;
+        _ = options;
+        switch (self) {
+            .tag_name_regex => |data| if (data.matched_result) |matched|
+                std.fmt.format(
+                    writer,
+                    "regex {s} does not match to given tag name, only {?s}",
+                    .{ data.full_regex, matched },
+                )
+            else
+                std.fmt.format(
+                    writer,
+                    "regex {s} does not match to given tag name",
+                    .{data.full_regex},
+                ),
+        }
+    }
+};
+
+threadlocal var last_error_data: ?ErrorData = null;
+
+fn setError(err: ErrorData) void {
+    last_error_data = err;
+}
+
+pub fn getLastError() ?ErrorData {
+    return last_error_data;
+}
+
+pub fn printLastError() void {
+    logger.err("{}", .{last_error_data});
+}
+
 pub const Context = struct {
     load_options: LoadDatabaseOptions,
     allocator: std.mem.Allocator,
@@ -893,24 +940,17 @@ pub const Context = struct {
                 const is_at_end = capture.end == text.len;
 
                 if (!(is_at_start and is_at_end)) {
-                    // TODO add first-party error detail API
-                    //  (remove my logger.warn workarounds)
-                    //self.pushError(.{ .InvalidTagName = capture });
-                    logger.warn(
-                        "tag name {s} does not match regex {?s}, only '{s}' matches",
-                        .{
-                            text,
-                            self.library_config.tag_name_regex_string,
-                            text[capture.start..capture.end],
-                        },
-                    );
+                    setError(.{ .tag_name_regex = .{
+                        .full_regex = self.library_config.tag_name_regex_string.?,
+                        .matched_result = text[capture.start..capture.end],
+                    } });
                     return error.InvalidTagName;
                 }
             } else {
-                logger.warn(
-                    "tag name {s} does not match regex {?s}",
-                    .{ text, self.library_config.tag_name_regex_string },
-                );
+                setError(.{ .tag_name_regex = .{
+                    .full_regex = self.library_config.tag_name_regex_string.?,
+                    .matched_result = null,
+                } });
                 return error.InvalidTagName;
             }
         }
@@ -2467,6 +2507,7 @@ test "tag name regex" {
     try ctx.updateLibraryConfig(.{ .tag_name_regex = TEST_TAG_REGEX });
 
     try std.testing.expectError(error.InvalidTagName, ctx.createNamedTag("my test tag", "en", null));
+    try std.testing.expect(getLastError() != null);
     _ = try ctx.createNamedTag("correct_tag_source", "en", null);
 }
 
