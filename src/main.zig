@@ -470,8 +470,8 @@ pub fn createCommand(
     args_it: *std.process.ArgIterator,
 ) !void {
     var ctx = try loadDatabase(allocator, .{ .create = true });
-    errdefer ctx.logLastError();
     defer ctx.deinit();
+    errdefer ctx.logLastError();
     try migrateCommand(args_it, &ctx);
 }
 
@@ -586,7 +586,7 @@ pub const ErrorData = union(enum) {
             .tag_name_regex => |data| if (data.matched_result) |matched|
                 std.fmt.format(
                     writer,
-                    "regex {s} does not match to given tag name, only {?s}",
+                    "regex {s} does not match to given tag name, only '{?s}'",
                     .{ data.full_regex, matched },
                 )
             else
@@ -619,6 +619,8 @@ pub const Context = struct {
         return last_error_data;
     }
 
+    /// If using in an 'errdefer', this MUST be after 'defer ctx.deinit()'
+    /// as errors might hold to memory in Context
     pub fn logLastError(self: Self) void {
         if (self.getLastError()) |err| {
             logger.err("{}", .{err});
@@ -630,6 +632,7 @@ pub const Context = struct {
     ///
     /// This function is useful for '--dry-run' switches in CLI applications.
     pub fn turnIntoMemoryDb(self: *Self) !void {
+        logger.debug("turning current db connection into an in-memory db", .{});
 
         // first, make sure our current connection can't do shit
         try self.db.exec("PRAGMA query_only = ON;", .{}, .{});
@@ -2003,15 +2006,15 @@ pub fn main() anyerror!void {
         },
         .Migrate => {
             var ctx = try loadDatabase(allocator, .{});
-            errdefer ctx.logLastError();
             defer ctx.deinit();
+            errdefer ctx.logLastError();
 
             try migrateCommand(&args_it, &ctx);
         },
         .Config => {
             var ctx = try loadDatabase(allocator, .{});
-            errdefer ctx.logLastError();
             defer ctx.deinit();
+            errdefer ctx.logLastError();
 
             try configCommand(&args_it, &ctx);
         },
