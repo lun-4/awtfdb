@@ -1508,6 +1508,7 @@ pub fn main() anyerror!void {
     }
     const action_config = given_args.action_config.?;
     var ctx = try manage_main.loadDatabase(allocator, .{});
+    errdefer ctx.logLastError();
     defer ctx.deinit();
     if (given_args.dry_run) try ctx.turnIntoMemoryDb();
 

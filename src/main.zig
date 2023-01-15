@@ -470,7 +470,7 @@ pub fn createCommand(
     args_it: *std.process.ArgIterator,
 ) !void {
     var ctx = try loadDatabase(allocator, .{ .create = true });
-
+    errdefer ctx.logLastError();
     defer ctx.deinit();
     try migrateCommand(args_it, &ctx);
 }
@@ -601,20 +601,6 @@ pub const ErrorData = union(enum) {
 
 threadlocal var last_error_data: ?ErrorData = null;
 
-fn setLastError(err: ErrorData) void {
-    last_error_data = err;
-}
-
-pub fn getLastError() ?ErrorData {
-    return last_error_data;
-}
-
-pub fn logLastError() void {
-    if (getLastError()) |err| {
-        logger.err("{}", .{err});
-    }
-}
-
 pub const Context = struct {
     load_options: LoadDatabaseOptions,
     allocator: std.mem.Allocator,
@@ -622,6 +608,22 @@ pub const Context = struct {
     library_config: LibraryConfiguration = .{},
 
     const Self = @This();
+
+    fn setLastError(self: Self, err: ErrorData) void {
+        _ = self;
+        last_error_data = err;
+    }
+
+    pub fn getLastError(self: Self) ?ErrorData {
+        _ = self;
+        return last_error_data;
+    }
+
+    pub fn logLastError(self: Self) void {
+        if (self.getLastError()) |err| {
+            logger.err("{}", .{err});
+        }
+    }
 
     /// Convert the current connection into an in-memory database connection
     /// so that operations are done non-destructively
@@ -942,14 +944,14 @@ pub const Context = struct {
                 const is_at_end = capture.end == text.len;
 
                 if (!(is_at_start and is_at_end)) {
-                    setLastError(.{ .tag_name_regex = .{
+                    self.setLastError(.{ .tag_name_regex = .{
                         .full_regex = self.library_config.tag_name_regex_string.?,
                         .matched_result = text[capture.start..capture.end],
                     } });
                     return error.InvalidTagName;
                 }
             } else {
-                setLastError(.{ .tag_name_regex = .{
+                self.setLastError(.{ .tag_name_regex = .{
                     .full_regex = self.library_config.tag_name_regex_string.?,
                     .matched_result = null,
                 } });
@@ -1995,20 +1997,20 @@ pub fn main() anyerror!void {
         return error.MissingActionArgument;
     }
 
-    errdefer logLastError();
-
     switch (given_args.action.?) {
         .Create => {
             try createCommand(allocator, &args_it);
         },
         .Migrate => {
             var ctx = try loadDatabase(allocator, .{});
+            errdefer ctx.logLastError();
             defer ctx.deinit();
 
             try migrateCommand(&args_it, &ctx);
         },
         .Config => {
             var ctx = try loadDatabase(allocator, .{});
+            errdefer ctx.logLastError();
             defer ctx.deinit();
 
             try configCommand(&args_it, &ctx);
@@ -2511,7 +2513,7 @@ test "tag name regex" {
     try ctx.updateLibraryConfig(.{ .tag_name_regex = TEST_TAG_REGEX });
 
     try std.testing.expectError(error.InvalidTagName, ctx.createNamedTag("my test tag", "en", null));
-    try std.testing.expect(getLastError() != null);
+    try std.testing.expect(ctx.getLastError() != null);
     _ = try ctx.createNamedTag("correct_tag_source", "en", null);
 }
 
