@@ -92,17 +92,8 @@ pub fn main() anyerror!u8 {
         std.debug.print("awtfdb-metrics {s}\n", .{VERSION});
         return 1;
     }
-
-    var ctx = Context{
-        .home_path = null,
-        .args_it = undefined,
-        .stdout = undefined,
-        .db = null,
-        .allocator = allocator,
-    };
+    var ctx = try manage_main.loadDatabase(allocator, .{});
     defer ctx.deinit();
-
-    try ctx.loadDatabase(.{});
 
     // if metrics tables are count 0, insert first row:
     // timestamp = db creation (migration 0), count 0

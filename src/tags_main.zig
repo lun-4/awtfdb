@@ -1507,17 +1507,8 @@ pub fn main() anyerror!void {
         return error.MissingAction;
     }
     const action_config = given_args.action_config.?;
-
-    var ctx = Context{
-        .home_path = null,
-        .args_it = undefined,
-        .stdout = undefined,
-        .db = null,
-        .allocator = allocator,
-    };
+    var ctx = try manage_main.loadDatabase(allocator, .{});
     defer ctx.deinit();
-
-    try ctx.loadDatabase(.{});
     if (given_args.dry_run) try ctx.turnIntoMemoryDb();
 
     switch (action_config) {

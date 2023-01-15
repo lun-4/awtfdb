@@ -406,11 +406,168 @@ pub const LibraryConfiguration = struct {
     }
 };
 
-pub const Context = struct {
+pub const LoadDatabaseOptions = struct {
     home_path: ?[]const u8 = null,
     db_path: ?[]const u8 = null,
+    create: bool = false,
+};
+
+pub fn loadDatabase(allocator: std.mem.Allocator, given_options: LoadDatabaseOptions) !Context {
+    var options = given_options;
+
+    // try to create the file always. this is done because
+    // i give up. tried a lot of things to make sqlite create the db file
+    // itself but it just hates me (SQLITE_CANTOPEN my beloathed).
+    if (options.db_path == null) {
+        const home_path = options.home_path orelse std.os.getenv("HOME");
+        const resolved_path = try std.fs.path.resolve(
+            allocator,
+            &[_][]const u8{ home_path.?, "awtf.db" },
+        );
+
+        if (options.create) {
+            var file = try std.fs.cwd().createFile(resolved_path, .{ .truncate = false });
+            defer file.close();
+        } else {
+            try std.fs.cwd().access(resolved_path, .{});
+        }
+        options.db_path = resolved_path;
+    }
+
+    const db_path_cstr = try std.cstr.addNullByte(allocator, options.db_path.?);
+    defer allocator.free(db_path_cstr);
+
+    var diags: sqlite.Diagnostics = undefined;
+    var db = try sqlite.Db.init(.{
+        .mode = sqlite.Db.Mode{ .File = db_path_cstr },
+        .open_flags = .{
+            .write = true,
+            .create = true,
+        },
+        .threading_mode = .MultiThread,
+        .diags = &diags,
+    });
+
+    // ensure our database functions work
+    const result = try db.one(i32, "select 123;", .{}, .{});
+    if (result != @as(?i32, 123)) {
+        const result_packed = result orelse 0;
+        logger.err("error on test statement: expected 123, got {?d} {d} ({})", .{ result, result_packed, (result orelse 0) == 123 });
+        return error.TestStatementFailed;
+    }
+
+    try db.exec("PRAGMA foreign_keys = ON", .{}, .{});
+
+    return Context{
+        .allocator = allocator,
+        .db = db,
+        .load_options = options,
+    };
+}
+
+pub fn createCommand(
+    allocator: std.mem.Allocator,
     args_it: *std.process.ArgIterator,
-    stdout: std.fs.File,
+) !void {
+    var ctx = try loadDatabase(allocator, .{ .create = true });
+
+    defer ctx.deinit();
+    try migrateCommand(args_it, &ctx);
+}
+
+pub fn migrateCommand(args_it: *std.process.ArgIterator, ctx: *Context) !void {
+    _ = args_it;
+    // migration log table is forever
+    try ctx.db.?.exec(MIGRATION_LOG_TABLE, .{}, .{});
+
+    const current_version: i32 = (try ctx.db.?.one(
+        i32,
+        "select max(version) from migration_logs",
+        .{},
+        .{},
+    )) orelse 0;
+    logger.info("db version: {d}", .{current_version});
+
+    // before running migrations, copy the database over
+
+    if (ctx.load_options.db_path) |db_path| {
+        const backup_db_path = try std.fs.path.resolve(
+            ctx.allocator,
+            &[_][]const u8{ ctx.load_options.home_path.?, ".awtf.before-migration.db" },
+        );
+        defer ctx.allocator.free(backup_db_path);
+        logger.info("starting transaction for backup from {s} to {s}", .{ db_path, backup_db_path });
+
+        try ctx.db.?.exec("begin exclusive transaction", .{}, .{});
+        errdefer {
+            ctx.db.?.exec("rollback transaction", .{}, .{}) catch |err| {
+                const detailed_error = ctx.db.?.getDetailedError();
+                std.debug.panic(
+                    "unable to rollback transaction, error: {}, message: {s}\n",
+                    .{ err, detailed_error },
+                );
+            };
+        }
+        defer {
+            ctx.db.?.exec("commit transaction", .{}, .{}) catch |err| {
+                const detailed_error = ctx.db.?.getDetailedError();
+                std.debug.panic(
+                    "unable to commit transaction, error: {}, message: {s}\n",
+                    .{ err, detailed_error },
+                );
+            };
+        }
+
+        logger.info("copying database to {s}", .{backup_db_path});
+        try std.fs.copyFileAbsolute(db_path, backup_db_path, .{});
+    }
+
+    {
+        var savepoint = try ctx.db.?.savepoint("migrations");
+        errdefer savepoint.rollback();
+        defer savepoint.commit();
+
+        inline for (MIGRATIONS) |migration_decl| {
+            const migration = Migration.fromTuple(migration_decl);
+
+            if (current_version < migration.version) {
+                logger.info("running migration {d} '{s}'", .{ migration.version, migration.name });
+
+                if (migration.sql) |migration_sql| {
+                    var diags = sqlite.Diagnostics{};
+                    ctx.db.?.execMulti(migration_sql, .{ .diags = &diags }) catch |err| {
+                        logger.err(
+                            "unable to prepare statement, got error {s}. diagnostics: {s}",
+                            .{ @errorName(err), diags },
+                        );
+                        return err;
+                    };
+                } else {
+                    try migration.options.function.?(ctx);
+                }
+                logger.debug("registering to logs...", .{});
+
+                try ctx.db.?.exec(
+                    "INSERT INTO migration_logs (version, applied_at, description) values (?, ?, ?);",
+                    .{},
+                    .{
+                        .version = migration.version,
+                        .applied_at = std.time.timestamp(),
+                        .description = migration.name,
+                    },
+                );
+                logger.debug("done!", .{});
+            }
+        }
+    }
+
+    const val = (try ctx.db.?.one(i64, "PRAGMA integrity_check", .{}, .{})) orelse return error.PossiblyFailedIntegrityCheck;
+    logger.debug("integrity check returned {d}", .{val});
+    try ctx.db.?.exec("PRAGMA foreign_key_check", .{}, .{});
+}
+
+pub const Context = struct {
+    load_options: LoadDatabaseOptions,
     allocator: std.mem.Allocator,
     /// Always call loadDatabase before using this attribute.
     db: ?sqlite.Db = null,
@@ -421,57 +578,6 @@ pub const Context = struct {
     library_config: LibraryConfiguration = .{},
 
     const Self = @This();
-
-    pub const LoadDatabaseOptions = struct {
-        create: bool = false,
-    };
-
-    pub fn loadDatabase(self: *Self, options: LoadDatabaseOptions) !void {
-        if (self.db != null) return;
-
-        // try to create the file always. this is done because
-        // i give up. tried a lot of things to make sqlite create the db file
-        // itself but it just hates me (SQLITE_CANTOPEN my beloathed).
-        if (self.db_path == null) {
-            self.home_path = self.home_path orelse std.os.getenv("HOME");
-            const resolved_path = try std.fs.path.resolve(
-                self.allocator,
-                &[_][]const u8{ self.home_path.?, "awtf.db" },
-            );
-
-            if (options.create) {
-                var file = try std.fs.cwd().createFile(resolved_path, .{ .truncate = false });
-                defer file.close();
-            } else {
-                try std.fs.cwd().access(resolved_path, .{});
-            }
-            self.db_path = resolved_path;
-        }
-
-        const db_path_cstr = try std.cstr.addNullByte(self.allocator, self.db_path.?);
-        defer self.allocator.free(db_path_cstr);
-
-        var diags: sqlite.Diagnostics = undefined;
-        self.db = try sqlite.Db.init(.{
-            .mode = sqlite.Db.Mode{ .File = db_path_cstr },
-            .open_flags = .{
-                .write = true,
-                .create = true,
-            },
-            .threading_mode = .MultiThread,
-            .diags = &diags,
-        });
-
-        // ensure our database functions work
-        const result = try self.db.?.one(i32, "select 123;", .{}, .{});
-        if (result != @as(?i32, 123)) {
-            const result_packed = result orelse 0;
-            logger.err("error on test statement: expected 123, got {?d} {d} ({})", .{ result, result_packed, (result orelse 0) == 123 });
-            return error.TestStatementFailed;
-        }
-
-        try self.db.?.exec("PRAGMA foreign_keys = ON", .{}, .{});
-    }
 
     /// Convert the current connection into an in-memory database connection
     /// so that operations are done non-destructively
@@ -526,7 +632,11 @@ pub const Context = struct {
             db.deinit();
         }
 
-        if (self.db_path) |db_path| self.allocator.free(db_path);
+        self.dealloc();
+    }
+
+    fn dealloc(self: *Self) void {
+        if (self.load_options.db_path) |db_path| self.allocator.free(db_path);
         self.library_config.deinit(self.allocator);
     }
 
@@ -1757,104 +1867,13 @@ pub const Context = struct {
         }
     }
 
-    pub fn createCommand(self: *Self) !void {
-        try self.loadDatabase(.{ .create = true });
-        try self.migrateCommand();
-    }
-
-    pub fn migrateCommand(self: *Self) !void {
-        try self.loadDatabase(.{});
-
-        // migration log table is forever
-        try self.db.?.exec(MIGRATION_LOG_TABLE, .{}, .{});
-
-        const current_version: i32 = (try self.db.?.one(i32, "select max(version) from migration_logs", .{}, .{})) orelse 0;
-        logger.info("db version: {d}", .{current_version});
-
-        // before running migrations, copy the database over
-
-        if (self.db_path) |db_path| {
-            const backup_db_path = try std.fs.path.resolve(
-                self.allocator,
-                &[_][]const u8{ self.home_path.?, ".awtf.before-migration.db" },
-            );
-            defer self.allocator.free(backup_db_path);
-            logger.info("starting transaction for backup from {s} to {s}", .{ db_path, backup_db_path });
-
-            try self.db.?.exec("begin exclusive transaction", .{}, .{});
-            errdefer {
-                self.db.?.exec("rollback transaction", .{}, .{}) catch |err| {
-                    const detailed_error = self.db.?.getDetailedError();
-                    std.debug.panic(
-                        "unable to rollback transaction, error: {}, message: {s}\n",
-                        .{ err, detailed_error },
-                    );
-                };
-            }
-            defer {
-                self.db.?.exec("commit transaction", .{}, .{}) catch |err| {
-                    const detailed_error = self.db.?.getDetailedError();
-                    std.debug.panic(
-                        "unable to commit transaction, error: {}, message: {s}\n",
-                        .{ err, detailed_error },
-                    );
-                };
-            }
-
-            logger.info("copying database to {s}", .{backup_db_path});
-            try std.fs.copyFileAbsolute(db_path, backup_db_path, .{});
-        }
-
-        {
-            var savepoint = try self.db.?.savepoint("migrations");
-            errdefer savepoint.rollback();
-            defer savepoint.commit();
-
-            inline for (MIGRATIONS) |migration_decl| {
-                const migration = Migration.fromTuple(migration_decl);
-
-                if (current_version < migration.version) {
-                    logger.info("running migration {d} '{s}'", .{ migration.version, migration.name });
-
-                    if (migration.sql) |migration_sql| {
-                        var diags = sqlite.Diagnostics{};
-                        self.db.?.execMulti(migration_sql, .{ .diags = &diags }) catch |err| {
-                            logger.err(
-                                "unable to prepare statement, got error {s}. diagnostics: {s}",
-                                .{ @errorName(err), diags },
-                            );
-                            return err;
-                        };
-                    } else {
-                        try migration.options.function.?(self);
-                    }
-                    logger.debug("registering to logs...", .{});
-
-                    try self.db.?.exec(
-                        "INSERT INTO migration_logs (version, applied_at, description) values (?, ?, ?);",
-                        .{},
-                        .{
-                            .version = migration.version,
-                            .applied_at = std.time.timestamp(),
-                            .description = migration.name,
-                        },
-                    );
-                    logger.debug("done!", .{});
-                }
-            }
-        }
-
-        const val = (try self.db.?.one(i64, "PRAGMA integrity_check", .{}, .{})) orelse return error.PossiblyFailedIntegrityCheck;
-        logger.debug("integrity check returned {d}", .{val});
-        try self.db.?.exec("PRAGMA foreign_key_check", .{}, .{});
-    }
-
-    pub fn statsCommand(self: *Self) !void {
-        try self.loadDatabase(.{});
-    }
-
-    pub fn jobsCommand(self: *Self) !void {
-        try self.loadDatabase(.{});
+    /// Reopen the database object
+    pub fn reopenDatabase(self: *Self) !void {
+        // new_ctx does not own the memory we're giving to it through
+        // load_options, so don't free it, or close its db connection,
+        // as that's what we'll be stealing from it
+        var new_ctx = try loadDatabase(self.allocator, self.load_options);
+        self.db = new_ctx.db;
     }
 };
 
@@ -1897,7 +1916,7 @@ pub fn main() anyerror!void {
         help: bool = false,
         verbose: bool = false,
         version: bool = false,
-        maybe_action: ?[]const u8 = null,
+        action: ?enum { Create, Migrate, Config } = null,
     };
 
     var given_args = Args{};
@@ -1909,7 +1928,16 @@ pub fn main() anyerror!void {
         } else if (std.mem.eql(u8, arg, "-V")) {
             given_args.version = true;
         } else {
-            given_args.maybe_action = arg;
+            if (std.mem.eql(u8, arg, "create")) {
+                given_args.action = .Create;
+            } else if (std.mem.eql(u8, arg, "migrate")) {
+                given_args.action = .Migrate;
+            } else if (std.mem.eql(u8, arg, "config")) {
+                given_args.action = .Config;
+            } else {
+                logger.err("unknown action {s}", .{arg});
+                return error.UnknownAction;
+            }
             break;
         }
     }
@@ -1926,36 +1954,32 @@ pub fn main() anyerror!void {
         current_log_level = .debug;
     }
 
-    if (given_args.maybe_action == null) {
+    if (given_args.action == null) {
         logger.err("action argument is required", .{});
         return error.MissingActionArgument;
     }
 
-    var ctx = Context{
-        .home_path = null,
-        .args_it = &args_it,
-        .stdout = stdout,
-        .allocator = allocator,
-        .db = null,
-    };
-    defer ctx.deinit();
+    switch (given_args.action.?) {
+        .Create => {
+            try createCommand(allocator, &args_it);
+        },
+        .Migrate => {
+            var ctx = try loadDatabase(allocator, .{});
+            defer ctx.deinit();
 
-    const action = given_args.maybe_action.?;
-    if (std.mem.eql(u8, action, "create")) {
-        try ctx.createCommand();
-    } else if (std.mem.eql(u8, action, "migrate")) {
-        try ctx.migrateCommand();
-    } else if (std.mem.eql(u8, action, "config")) {
-        try configCommand(&ctx);
-    } else {
-        logger.err("unknown action {s}", .{action});
-        return error.UnknownAction;
+            try migrateCommand(&args_it, &ctx);
+        },
+        .Config => {
+            var ctx = try loadDatabase(allocator, .{});
+            defer ctx.deinit();
+
+            try configCommand(&args_it, &ctx);
+        },
     }
 }
 
-fn configCommand(ctx: *Context) !void {
-    try ctx.loadDatabase(.{});
-    const config_action_string = ctx.args_it.next() orelse "get";
+fn configCommand(args_it: *std.process.ArgIterator, ctx: *Context) !void {
+    const config_action_string = args_it.next() orelse "get";
     const config_action = std.meta.stringToEnum(
         enum { get, set },
         config_action_string,
@@ -1963,8 +1987,8 @@ fn configCommand(ctx: *Context) !void {
 
     // get or set
     // cconst action
-    const key = ctx.args_it.next() orelse return error.ExpectedKeyArgument;
-    const maybe_value = ctx.args_it.next();
+    const key = args_it.next() orelse return error.ExpectedKeyArgument;
+    const maybe_value = args_it.next();
     var stdout = std.io.getStdOut().writer();
     switch (config_action) {
         .get => {
@@ -1994,7 +2018,11 @@ pub var test_db_path_buffer: [std.os.PATH_MAX]u8 = undefined;
 
 pub var test_set_log = false;
 
-pub fn makeTestContext() !Context {
+pub const MakeTestContextOptions = struct {
+    load_migrations: bool = true,
+};
+
+pub fn makeTestContextWithOptions(options: MakeTestContextOptions) !Context {
     if (!test_set_log) {
         _ = sqlite.c.sqlite3_shutdown();
 
@@ -2010,16 +2038,8 @@ pub fn makeTestContext() !Context {
     }
 
     const homepath = try std.fs.cwd().realpath(".", &test_db_path_buffer);
-    var ctx = Context{
-        .args_it = undefined,
-        .stdout = undefined,
-        .db = null,
-        .allocator = std.testing.allocator,
-        .home_path = homepath,
-        .db_path = null,
-    };
 
-    ctx.db = try sqlite.Db.init(.{
+    var db = try sqlite.Db.init(.{
         .mode = sqlite.Db.Mode{ .Memory = {} },
         .open_flags = .{
             .write = true,
@@ -2028,13 +2048,24 @@ pub fn makeTestContext() !Context {
         .threading_mode = .MultiThread,
     });
 
-    try ctx.createCommand();
+    var ctx = Context{
+        .load_options = LoadDatabaseOptions{ .home_path = homepath },
+        .allocator = std.testing.allocator,
+        .db = db,
+    };
+
+    if (options.load_migrations) {
+        try migrateCommand(undefined, &ctx);
+    }
 
     return ctx;
 }
 
-/// Create a test context backed up by a real file, rather than memory.
-pub fn makeTestContextRealFile() !Context {
+pub fn makeTestContext() !Context {
+    return try makeTestContextWithOptions(.{});
+}
+
+pub fn makeTestContextRealFileWithOptions(options: MakeTestContextOptions) !Context {
     var tmp = std.testing.tmpDir(.{});
     // lol, lmao, etc
     //defer tmp.cleanup();
@@ -2047,18 +2078,19 @@ pub fn makeTestContextRealFile() !Context {
 
     logger.warn("using test context database file '{s}'", .{dbpath});
 
-    var ctx = Context{
-        .args_it = undefined,
-        .stdout = undefined,
-        .db = null,
-        .allocator = std.testing.allocator,
+    var ctx = try loadDatabase(std.testing.allocator, .{
+        .create = true,
         .home_path = homepath,
         .db_path = try std.testing.allocator.dupe(u8, dbpath),
-    };
+    });
 
-    try ctx.createCommand();
-
+    if (options.load_migrations) try migrateCommand(undefined, &ctx);
     return ctx;
+}
+
+/// Create a test context backed up by a real file, rather than memory.
+pub fn makeTestContextRealFile() !Context {
+    return try makeTestContextRealFileWithOptions(.{});
 }
 
 test "basic db initialization" {
@@ -2209,7 +2241,7 @@ test "in memory database" {
 
     ctx.db.?.deinit();
     ctx.db = null;
-    try ctx.loadDatabase(.{});
+    try ctx.reopenDatabase();
 
     var tag2_infile = try ctx.fetchNamedTag("test_tag2", "en");
     try std.testing.expect(tag2_infile == null);

@@ -458,16 +458,8 @@ pub fn main() anyerror!u8 {
         return 1;
     }
 
-    var ctx = Context{
-        .home_path = null,
-        .args_it = undefined,
-        .stdout = undefined,
-        .db = null,
-        .allocator = allocator,
-    };
+    var ctx = try manage_main.loadDatabase(allocator, .{});
     defer ctx.deinit();
-
-    try ctx.loadDatabase(.{});
 
     var counters: ErrorCounters = .{};
 

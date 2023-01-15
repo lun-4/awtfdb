@@ -245,8 +245,8 @@ const RenameContext = struct {
             try std.fs.path.resolve(self.allocator, &[_][]const u8{relative_new_name});
         defer self.allocator.free(newpath);
 
-        const is_old_in_home = std.mem.startsWith(u8, oldpath, self.ctx.home_path.?);
-        const is_new_in_home = std.mem.startsWith(u8, newpath, self.ctx.home_path.?);
+        const is_old_in_home = std.mem.startsWith(u8, oldpath, self.ctx.load_options.home_path.?);
+        const is_new_in_home = std.mem.startsWith(u8, newpath, self.ctx.load_options.home_path.?);
 
         if (!(is_new_in_home or is_old_in_home)) {
             logger.debug("{d}: neither {s} or {s} are in home", .{ pid, oldpath, newpath });
@@ -567,16 +567,11 @@ pub fn main() anyerror!void {
         return;
     }
 
-    var ctx = Context{
-        .home_path = given_args.home_path,
-        .args_it = undefined,
-        .stdout = undefined,
-        .db = null,
-        .allocator = allocator,
-    };
+    var ctx = try manage_main.loadDatabase(
+        allocator,
+        .{ .home_path = given_args.home_path },
+    );
     defer ctx.deinit();
-
-    try ctx.loadDatabase(.{});
 
     logger.info("args: {}", .{given_args});
 

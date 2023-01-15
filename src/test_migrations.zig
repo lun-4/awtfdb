@@ -9,76 +9,17 @@ const Migration = manage_main.Migration;
 
 const logger = std.log.scoped(.migration_tests);
 
-/// Make test context without any migrations loaded for proper testing.
-///
-/// Inspired by manage_main.makeTestContext
 pub fn makeTestContext() !Context {
-    if (!manage_main.test_set_log) {
-        _ = sqlite.c.sqlite3_shutdown();
-
-        const rc = sqlite.c.sqlite3_config(sqlite.c.SQLITE_CONFIG_LOG, manage_main.sqliteLog, @as(?*anyopaque, null));
-        manage_main.test_set_log = true;
-        if (rc != sqlite.c.SQLITE_OK) {
-            logger.err("failed to configure ({}): {d} '{s}'", .{
-                manage_main.test_set_log, rc, sqlite.c.sqlite3_errstr(rc),
-            });
-            return error.ConfigFail;
-        }
-        _ = sqlite.c.sqlite3_initialize();
-    }
-    const homepath = try std.fs.cwd().realpath(".", &manage_main.test_db_path_buffer);
-    var ctx = Context{
-        .args_it = undefined,
-        .stdout = undefined,
-        .db = null,
-        .allocator = std.testing.allocator,
-        .home_path = homepath,
-        .db_path = null,
-    };
-
-    ctx.db = try sqlite.Db.init(.{
-        .mode = sqlite.Db.Mode{ .Memory = {} },
-        .open_flags = .{
-            .write = true,
-            .create = true,
-        },
-        .threading_mode = .MultiThread,
-    });
-
-    try ctx.loadDatabase(.{ .create = true });
-    return ctx;
+    return manage_main.makeTestContextWithOptions(.{ .load_migrations = false });
 }
 
 /// Create a test context backed up by a real file, rather than memory.
 pub fn makeTestContextRealFile() !Context {
-    var tmp = std.testing.tmpDir(.{});
-    // lol, lmao, etc
-    //defer tmp.cleanup();
-
-    const homepath = try tmp.dir.realpath(".", &manage_main.test_db_path_buffer);
-
-    var file = try tmp.dir.createFile("test.db", .{});
-    defer file.close();
-    const dbpath = try tmp.dir.realpath("test.db", manage_main.test_db_path_buffer[homepath.len..]);
-
-    logger.warn("using test context database file '{s}'", .{dbpath});
-
-    var ctx = Context{
-        .args_it = undefined,
-        .stdout = undefined,
-        .db = null,
-        .allocator = std.testing.allocator,
-        .home_path = homepath,
-        .db_path = try std.testing.allocator.dupe(u8, dbpath),
-    };
-
-    try ctx.loadDatabase(.{ .create = true });
-    return ctx;
+    return manage_main.makeTestContextRealFileWithOptions(.{ .load_migrations = false });
 }
 
 // Inspired by loadMigration
 fn loadSingleMigration(ctx: *Context, comptime index: usize) !void {
-    try ctx.loadDatabase(.{});
     try ctx.db.?.exec(manage_main.MIGRATION_LOG_TABLE, .{}, .{});
 
     const current_version: i32 = (try ctx.db.?.one(i32, "select max(version) from migration_logs", .{}, .{})) orelse 0;
@@ -143,7 +84,6 @@ test "validate migration 2 works" {
 }
 
 fn loadMigrationUpTo(ctx: *Context, comptime upper_index: usize) !void {
-    try ctx.loadDatabase(.{});
     try ctx.db.?.exec(manage_main.MIGRATION_LOG_TABLE, .{}, .{});
 
     const current_version: i32 = (try ctx.db.?.one(i32, "select max(version) from migration_logs", .{}, .{})) orelse 0;

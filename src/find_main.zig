@@ -114,16 +114,8 @@ pub fn main() anyerror!void {
     const query = try std.mem.join(allocator, " ", given_args.query.items);
     defer allocator.free(query);
 
-    var ctx = Context{
-        .home_path = null,
-        .args_it = undefined,
-        .stdout = undefined,
-        .db = null,
-        .allocator = allocator,
-    };
+    var ctx = try manage_main.loadDatabase(allocator, .{});
     defer ctx.deinit();
-
-    try ctx.loadDatabase(.{});
 
     // afind tag (all files with tag)
     // afind 'tag1 tag2' (tag1 AND tag2)

@@ -743,16 +743,8 @@ pub fn main() anyerror!void {
     };
     defer given_args.deinit();
 
-    var ctx = Context{
-        .home_path = null,
-        .args_it = undefined,
-        .stdout = undefined,
-        .db = null,
-        .allocator = allocator,
-    };
+    var ctx = try manage_main.loadDatabase(allocator, .{});
     defer ctx.deinit();
-
-    try ctx.loadDatabase(.{});
 
     var arg: []const u8 = undefined;
     while (args_it.next()) |arg_from_loop| {
