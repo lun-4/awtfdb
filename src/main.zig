@@ -1005,7 +1005,7 @@ pub const Context = struct {
                 .{ core_hash.id.sql(), core_data_blob },
             );
 
-            logger.warn("created tag core with hash {s}", .{core_hash});
+            logger.info("created tag core with hash {s}", .{core_hash});
         }
 
         try self.db.exec(
@@ -1013,7 +1013,7 @@ pub const Context = struct {
             .{},
             .{ core_hash.id.sql(), text, language },
         );
-        logger.warn("created name tag with value {s} language {s} core {s}", .{ text, language, core_hash });
+        logger.info("created name tag with value {s} language {s} core {s}", .{ text, language, core_hash });
 
         return Tag{
             .core = core_hash,
@@ -1737,7 +1737,7 @@ pub const Context = struct {
 
         pub fn addFile(self: PoolSelf, file_id: ID) !void {
             const index = try self.availableIndex();
-            logger.warn("adding file {d} to pool {d} index {d}", .{ file_id, self.hash.id, index });
+            logger.info("adding file {d} to pool {d} index {d}", .{ file_id, self.hash.id, index });
             try self.ctx.db.exec(
                 "insert into pool_entries (file_hash, pool_hash, entry_index) values (?, ?, ?)",
                 .{},
