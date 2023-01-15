@@ -9,82 +9,23 @@ const Migration = manage_main.Migration;
 
 const logger = std.log.scoped(.migration_tests);
 
-/// Make test context without any migrations loaded for proper testing.
-///
-/// Inspired by manage_main.makeTestContext
 pub fn makeTestContext() !Context {
-    if (!manage_main.test_set_log) {
-        _ = sqlite.c.sqlite3_shutdown();
-
-        const rc = sqlite.c.sqlite3_config(sqlite.c.SQLITE_CONFIG_LOG, manage_main.sqliteLog, @as(?*anyopaque, null));
-        manage_main.test_set_log = true;
-        if (rc != sqlite.c.SQLITE_OK) {
-            logger.err("failed to configure ({}): {d} '{s}'", .{
-                manage_main.test_set_log, rc, sqlite.c.sqlite3_errstr(rc),
-            });
-            return error.ConfigFail;
-        }
-        _ = sqlite.c.sqlite3_initialize();
-    }
-    const homepath = try std.fs.cwd().realpath(".", &manage_main.test_db_path_buffer);
-    var ctx = Context{
-        .args_it = undefined,
-        .stdout = undefined,
-        .db = null,
-        .allocator = std.testing.allocator,
-        .home_path = homepath,
-        .db_path = null,
-    };
-
-    ctx.db = try sqlite.Db.init(.{
-        .mode = sqlite.Db.Mode{ .Memory = {} },
-        .open_flags = .{
-            .write = true,
-            .create = true,
-        },
-        .threading_mode = .MultiThread,
-    });
-
-    try ctx.loadDatabase(.{ .create = true });
-    return ctx;
+    return manage_main.makeTestContextWithOptions(.{ .load_migrations = false });
 }
 
 /// Create a test context backed up by a real file, rather than memory.
 pub fn makeTestContextRealFile() !Context {
-    var tmp = std.testing.tmpDir(.{});
-    // lol, lmao, etc
-    //defer tmp.cleanup();
-
-    const homepath = try tmp.dir.realpath(".", &manage_main.test_db_path_buffer);
-
-    var file = try tmp.dir.createFile("test.db", .{});
-    defer file.close();
-    const dbpath = try tmp.dir.realpath("test.db", manage_main.test_db_path_buffer[homepath.len..]);
-
-    logger.warn("using test context database file '{s}'", .{dbpath});
-
-    var ctx = Context{
-        .args_it = undefined,
-        .stdout = undefined,
-        .db = null,
-        .allocator = std.testing.allocator,
-        .home_path = homepath,
-        .db_path = try std.testing.allocator.dupe(u8, dbpath),
-    };
-
-    try ctx.loadDatabase(.{ .create = true });
-    return ctx;
+    return manage_main.makeTestContextRealFileWithOptions(.{ .load_migrations = false });
 }
 
 // Inspired by loadMigration
 fn loadSingleMigration(ctx: *Context, comptime index: usize) !void {
-    try ctx.loadDatabase(.{});
-    try ctx.db.?.exec(manage_main.MIGRATION_LOG_TABLE, .{}, .{});
+    try ctx.db.exec(manage_main.MIGRATION_LOG_TABLE, .{}, .{});
 
-    const current_version: i32 = (try ctx.db.?.one(i32, "select max(version) from migration_logs", .{}, .{})) orelse 0;
+    const current_version: i32 = (try ctx.db.one(i32, "select max(version) from migration_logs", .{}, .{})) orelse 0;
     logger.info("db version: {d}", .{current_version});
 
-    var savepoint = try ctx.db.?.savepoint("migrations");
+    var savepoint = try ctx.db.savepoint("migrations");
     errdefer savepoint.rollback();
     defer savepoint.commit();
 
@@ -98,7 +39,7 @@ fn loadSingleMigration(ctx: *Context, comptime index: usize) !void {
             if (migration.sql) |migration_sql| {
                 logger.info("running migration {d} '{s}'", .{ migration.version, migration.name });
                 var diags = sqlite.Diagnostics{};
-                ctx.db.?.execMulti(migration_sql, .{ .diags = &diags }) catch |err| {
+                ctx.db.execMulti(migration_sql, .{ .diags = &diags }) catch |err| {
                     logger.err("unable to prepare statement, got error {s}. diagnostics: {s}", .{ @errorName(err), diags });
                     return err;
                 };
@@ -106,7 +47,7 @@ fn loadSingleMigration(ctx: *Context, comptime index: usize) !void {
                 try migration.options.function.?(ctx);
             }
 
-            try ctx.db.?.exec(
+            try ctx.db.exec(
                 "INSERT INTO migration_logs (version, applied_at, description) values (?, ?, ?);",
                 .{},
                 .{
@@ -124,7 +65,7 @@ test "single migration test" {
     defer ctx.deinit();
 
     try loadSingleMigration(&ctx, 1);
-    const count = try ctx.db.?.one(usize, "select count(*) from hashes", .{}, .{});
+    const count = try ctx.db.one(usize, "select count(*) from hashes", .{}, .{});
     try std.testing.expectEqual(@as(?usize, 0), count);
 }
 
@@ -133,23 +74,22 @@ test "validate migration 2 works" {
     defer ctx.deinit();
 
     try loadSingleMigration(&ctx, 1);
-    try ctx.db.?.execMulti(
+    try ctx.db.execMulti(
         \\ insert into hashes (id, hash_data) values (1, X'7cecc98d9dc7503dcdad71adbbdf45d06667fd38c386f5d37489ea2c24d7a4dc');
         \\ insert into files (file_hash, local_path) values (1, '/test.file');
     , .{});
     try loadSingleMigration(&ctx, 2);
-    const file_hash = try ctx.db.?.one(i64, "select file_hash from files where local_path = '/test.file'", .{}, .{});
+    const file_hash = try ctx.db.one(i64, "select file_hash from files where local_path = '/test.file'", .{}, .{});
     try std.testing.expectEqual(@as(?i64, 1), file_hash);
 }
 
 fn loadMigrationUpTo(ctx: *Context, comptime upper_index: usize) !void {
-    try ctx.loadDatabase(.{});
-    try ctx.db.?.exec(manage_main.MIGRATION_LOG_TABLE, .{}, .{});
+    try ctx.db.exec(manage_main.MIGRATION_LOG_TABLE, .{}, .{});
 
-    const current_version: i32 = (try ctx.db.?.one(i32, "select max(version) from migration_logs", .{}, .{})) orelse 0;
+    const current_version: i32 = (try ctx.db.one(i32, "select max(version) from migration_logs", .{}, .{})) orelse 0;
     logger.info("db version: {d}", .{current_version});
 
-    var savepoint = try ctx.db.?.savepoint("migrations");
+    var savepoint = try ctx.db.savepoint("migrations");
     errdefer savepoint.rollback();
     defer savepoint.commit();
 
@@ -164,7 +104,7 @@ fn loadMigrationUpTo(ctx: *Context, comptime upper_index: usize) !void {
             if (migration.sql) |migration_sql| {
                 logger.info("running migration {d} '{s}'", .{ migration.version, migration.name });
                 var diags = sqlite.Diagnostics{};
-                ctx.db.?.execMulti(migration_sql, .{ .diags = &diags }) catch |err| {
+                ctx.db.execMulti(migration_sql, .{ .diags = &diags }) catch |err| {
                     logger.err("unable to prepare statement, got error {s}. diagnostics: {s}", .{ @errorName(err), diags });
                     return err;
                 };
@@ -172,7 +112,7 @@ fn loadMigrationUpTo(ctx: *Context, comptime upper_index: usize) !void {
                 try migration.options.function.?(ctx);
             }
 
-            try ctx.db.?.exec(
+            try ctx.db.exec(
                 "INSERT INTO migration_logs (version, applied_at, description) values (?, ?, ?);",
                 .{},
                 .{
@@ -251,25 +191,25 @@ test "validate snowflake migration works" {
     try loadMigrationUpTo(&ctx, 7);
     var diags = sqlite.Diagnostics{};
     logger.warn("error before exec={s}", .{diags.message});
-    ctx.db.?.execMulti(query_cstr, .{ .diags = &diags }) catch |err| {
+    ctx.db.execMulti(query_cstr, .{ .diags = &diags }) catch |err| {
         logger.warn("err={s}", .{diags});
         return err;
     };
 
     try loadSingleMigration(&ctx, 8);
 
-    const file_hash = (try ctx.db.?.one([26]u8, "select file_hash from files where local_path = ?", .{}, .{file_realpath})).?;
+    const file_hash = (try ctx.db.one([26]u8, "select file_hash from files where local_path = ?", .{}, .{file_realpath})).?;
     const new_file_hash = try ulid.ULID.parse(&file_hash);
     try std.testing.expectEqual(@divTrunc(stat.mtime, std.time.ns_per_ms), new_file_hash.timestamp);
 
-    const file2_hash = (try ctx.db.?.one([26]u8, "select file_hash from files where local_path = ?", .{}, .{file2_realpath})).?;
+    const file2_hash = (try ctx.db.one([26]u8, "select file_hash from files where local_path = ?", .{}, .{file2_realpath})).?;
     try std.testing.expectEqualSlices(u8, &file_hash, &file2_hash);
 
-    const file3_hash = (try ctx.db.?.one([26]u8, "select file_hash from files where local_path = ?", .{}, .{file3_realpath})).?;
+    const file3_hash = (try ctx.db.one([26]u8, "select file_hash from files where local_path = ?", .{}, .{file3_realpath})).?;
     const new_file3_hash = try ulid.ULID.parse(&file3_hash);
     try std.testing.expectEqual(@divTrunc(stat3.mtime, std.time.ns_per_ms), new_file3_hash.timestamp);
 
-    const core_hash = (try ctx.db.?.one(
+    const core_hash = (try ctx.db.one(
         [26]u8,
         "select core_hash from tag_cores where hex(core_data) = ?",
         .{},
@@ -278,7 +218,7 @@ test "validate snowflake migration works" {
     const new_core_hash = try ulid.ULID.parse(&core_hash);
     try std.testing.expect(new_core_hash.timestamp > 1000);
 
-    const name_data = (try ctx.db.?.oneAlloc(
+    const name_data = (try ctx.db.oneAlloc(
         []const u8,
         ctx.allocator,
         "select tag_text from tag_names where core_hash = ?",
@@ -288,7 +228,7 @@ test "validate snowflake migration works" {
     defer ctx.allocator.free(name_data);
     try std.testing.expectEqualStrings("amongus", name_data);
 
-    const tagfile_count = (try ctx.db.?.one(
+    const tagfile_count = (try ctx.db.one(
         usize,
         "select count(*) from tag_files where core_hash = ?",
         .{},

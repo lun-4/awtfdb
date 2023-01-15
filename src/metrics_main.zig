@@ -38,10 +38,10 @@ fn runMetricsCounter(
     comptime input_table: []const u8,
     comptime output_metrics_table: []const u8,
 ) !void {
-    const row_count = (try ctx.db.?.one(i64, "select count(*) from " ++ input_table, .{}, .{})).?;
+    const row_count = (try ctx.db.one(i64, "select count(*) from " ++ input_table, .{}, .{})).?;
     logger.info("{d} rows in table '{s}'", .{ row_count, input_table });
 
-    try ctx.db.?.exec(
+    try ctx.db.exec(
         "insert into " ++ output_metrics_table ++ " (timestamp, value) values (?, ?)",
         .{},
         .{ metrics_timestamp, row_count },
@@ -92,17 +92,8 @@ pub fn main() anyerror!u8 {
         std.debug.print("awtfdb-metrics {s}\n", .{VERSION});
         return 1;
     }
-
-    var ctx = Context{
-        .home_path = null,
-        .args_it = undefined,
-        .stdout = undefined,
-        .db = null,
-        .allocator = allocator,
-    };
+    var ctx = try manage_main.loadDatabase(allocator, .{});
     defer ctx.deinit();
-
-    try ctx.loadDatabase(.{});
 
     // if metrics tables are count 0, insert first row:
     // timestamp = db creation (migration 0), count 0
@@ -112,7 +103,7 @@ pub fn main() anyerror!u8 {
 
     // execute inserts here
     {
-        var savepoint = try ctx.db.?.savepoint("metrics");
+        var savepoint = try ctx.db.savepoint("metrics");
         errdefer savepoint.rollback();
         defer savepoint.commit();
 
@@ -123,7 +114,7 @@ pub fn main() anyerror!u8 {
 }
 
 fn runMetricsTagUsage(ctx: *Context, metrics_timestamp: Timestamp) !void {
-    try ctx.db.?.exec(
+    try ctx.db.exec(
         "insert into metrics_tag_usage_timestamps (timestamp) values (?)",
         .{},
         .{metrics_timestamp},
@@ -131,7 +122,7 @@ fn runMetricsTagUsage(ctx: *Context, metrics_timestamp: Timestamp) !void {
 
     // for every tag core, run count(*) over tag_files
 
-    var stmt = try ctx.db.?.prepare(
+    var stmt = try ctx.db.prepare(
         \\ select distinct tag_names.core_hash,
         \\   (select count(*) from tag_files where core_hash = tag_names.core_hash) AS relationship_count
         \\ from tag_names;
@@ -146,7 +137,7 @@ fn runMetricsTagUsage(ctx: *Context, metrics_timestamp: Timestamp) !void {
 
         const core_hash = ID.new(row.core_hash);
 
-        try ctx.db.?.exec(
+        try ctx.db.exec(
             "insert into metrics_tag_usage_values (timestamp, core_hash, relationship_count) values (?, ?, ?)",
             .{},
             .{ metrics_timestamp, core_hash.sql(), row.relationship_count },
@@ -155,7 +146,7 @@ fn runMetricsTagUsage(ctx: *Context, metrics_timestamp: Timestamp) !void {
 }
 
 fn runTagSourceCounters(ctx: *Context, metrics_timestamp: Timestamp) !void {
-    var stmt = try ctx.db.?.prepare(
+    var stmt = try ctx.db.prepare(
         \\ select distinct type, id,
         \\  (select count(*) from tag_files where tag_source_type  = tag_sources.type and tag_source_id=tag_sources.id) AS relationship_count
         \\  from tag_sources;
@@ -172,7 +163,7 @@ fn runTagSourceCounters(ctx: *Context, metrics_timestamp: Timestamp) !void {
         const exec_time_ns = timer.lap();
         logger.info("{} took {:.2}ms to fetch", .{ row, exec_time_ns / std.time.ns_per_ms });
 
-        try ctx.db.?.exec(
+        try ctx.db.exec(
             "insert into metrics_tag_source_usage (timestamp, tag_source_type, tag_source_id, relationship_count) values (?, ?, ?, ?)",
             .{},
             .{ metrics_timestamp, row.tag_source_type, row.tag_source_id, row.relationship_count },
@@ -208,8 +199,8 @@ test "metrics (tags)" {
 
     // fact on this test: names > cores
 
-    const last_metrics_tag_core = (try ctx.db.?.one(usize, "select value from metrics_count_tag_cores", .{}, .{})).?;
-    const last_metrics_tag_name = (try ctx.db.?.one(usize, "select value from metrics_count_tag_names", .{}, .{})).?;
+    const last_metrics_tag_core = (try ctx.db.one(usize, "select value from metrics_count_tag_cores", .{}, .{})).?;
+    const last_metrics_tag_name = (try ctx.db.one(usize, "select value from metrics_count_tag_names", .{}, .{})).?;
 
     try std.testing.expect(last_metrics_tag_name > last_metrics_tag_core);
 }
@@ -263,11 +254,11 @@ test "metrics (tags and files)" {
     try runAllMetricsCounters(.{ .full = true }, &ctx, std.time.timestamp());
 
     // fact on this test: there are 6 file<->tag relations
-    const last_metrics_tag_file = (try ctx.db.?.one(usize, "select value from metrics_count_tag_files", .{}, .{})).?;
+    const last_metrics_tag_file = (try ctx.db.one(usize, "select value from metrics_count_tag_files", .{}, .{})).?;
     try std.testing.expectEqual(@as(usize, 6), last_metrics_tag_file);
 
     // fact on this test: there are 3 files
-    const last_metrics_file = (try ctx.db.?.one(usize, "select value from metrics_count_files", .{}, .{})).?;
+    const last_metrics_file = (try ctx.db.one(usize, "select value from metrics_count_files", .{}, .{})).?;
     try std.testing.expectEqual(@as(usize, 3), last_metrics_file);
 
     // fact on this test:
@@ -275,9 +266,9 @@ test "metrics (tags and files)" {
     // 	tag2 has 1 relationship,
     // 	tag3 has 2 relationships
 
-    const last_metrics_tag_usage_timestamp = (try ctx.db.?.one(usize, "select timestamp from metrics_tag_usage_timestamps", .{}, .{})).?;
+    const last_metrics_tag_usage_timestamp = (try ctx.db.one(usize, "select timestamp from metrics_tag_usage_timestamps", .{}, .{})).?;
 
-    var metrics_tag_usage_values_stmt = try ctx.db.?.prepare(
+    var metrics_tag_usage_values_stmt = try ctx.db.prepare(
         \\ select core_hash, relationship_count
         \\ from metrics_tag_usage_values
         \\ where timestamp = ?
@@ -309,7 +300,7 @@ test "metrics (tags and files)" {
     // fact on this test
     // source type=0 and id=0 has 6 relationships
 
-    const source_usage = try ctx.db.?.one(usize,
+    const source_usage = try ctx.db.one(usize,
         \\ select relationship_count
         \\ from metrics_tag_source_usage
         \\ where timestamp = ? and tag_source_type = 0 and tag_source_id = 0

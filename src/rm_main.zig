@@ -92,17 +92,8 @@ pub fn main() anyerror!void {
     defer given_args.tags.deinit();
 
     var state: enum { FetchTag, None, FetchPool } = .None;
-
-    var ctx = Context{
-        .home_path = null,
-        .args_it = undefined,
-        .stdout = undefined,
-        .db = null,
-        .allocator = allocator,
-    };
+    var ctx = try manage_main.loadDatabase(allocator, .{});
     defer ctx.deinit();
-
-    try ctx.loadDatabase(.{});
 
     while (args_it.next()) |arg| {
         switch (state) {
@@ -165,7 +156,7 @@ pub fn main() anyerror!void {
 
     defer if (given_args.pool) |pool| pool.deinit();
 
-    var savepoint = try ctx.db.?.savepoint("remove_files");
+    var savepoint = try ctx.db.savepoint("remove_files");
     errdefer savepoint.rollback();
     defer savepoint.commit();
 

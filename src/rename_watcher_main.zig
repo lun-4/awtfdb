@@ -245,8 +245,8 @@ const RenameContext = struct {
             try std.fs.path.resolve(self.allocator, &[_][]const u8{relative_new_name});
         defer self.allocator.free(newpath);
 
-        const is_old_in_home = std.mem.startsWith(u8, oldpath, self.ctx.home_path.?);
-        const is_new_in_home = std.mem.startsWith(u8, newpath, self.ctx.home_path.?);
+        const is_old_in_home = std.mem.startsWith(u8, oldpath, self.ctx.load_options.home_path.?);
+        const is_new_in_home = std.mem.startsWith(u8, newpath, self.ctx.load_options.home_path.?);
 
         if (!(is_new_in_home or is_old_in_home)) {
             logger.debug("{d}: neither {s} or {s} are in home", .{ pid, oldpath, newpath });
@@ -261,7 +261,7 @@ const RenameContext = struct {
         //  that only has 1 indexed file or not
         // if its more than 1, it's 100% a folder, and we don't need to openDir
 
-        var stmt = try self.ctx.db.?.prepare(
+        var stmt = try self.ctx.db.prepare(
             \\ select file_hash, hashes.hash_data, local_path
             \\ from files
             \\ join hashes
@@ -287,7 +287,7 @@ const RenameContext = struct {
 
         // find out if the target newpath is a folder or not by searching
         // if there are multiple entries with it already
-        var newpath_count = (try self.ctx.db.?.one(
+        var newpath_count = (try self.ctx.db.one(
             usize,
             \\ select count(*)
             \\ from files
@@ -567,16 +567,11 @@ pub fn main() anyerror!void {
         return;
     }
 
-    var ctx = Context{
-        .home_path = given_args.home_path,
-        .args_it = undefined,
-        .stdout = undefined,
-        .db = null,
-        .allocator = allocator,
-    };
+    var ctx = try manage_main.loadDatabase(
+        allocator,
+        .{ .home_path = given_args.home_path },
+    );
     defer ctx.deinit();
-
-    try ctx.loadDatabase(.{});
 
     logger.info("args: {}", .{given_args});
 
@@ -768,7 +763,7 @@ test "rename syscalls trigger db rename" {
     while (it.next()) |line|
         try rename_ctx.processLine(line);
 
-    const oldname_count = (try ctx.db.?.one(
+    const oldname_count = (try ctx.db.one(
         usize,
         "select count(*) from files where local_path = ?",
         .{},
@@ -777,7 +772,7 @@ test "rename syscalls trigger db rename" {
 
     try std.testing.expectEqual(@as(usize, 0), oldname_count);
 
-    const newname_count = (try ctx.db.?.one(
+    const newname_count = (try ctx.db.one(
         usize,
         "select count(*) from files where local_path = ?",
         .{},
@@ -859,7 +854,7 @@ test "rename syscalls trigger db rename (target being a folder)" {
     while (it.next()) |line|
         try rename_ctx.processLine(line);
 
-    const oldname_count = (try ctx.db.?.one(
+    const oldname_count = (try ctx.db.one(
         usize,
         "select count(*) from files where local_path = ?",
         .{},
@@ -868,7 +863,7 @@ test "rename syscalls trigger db rename (target being a folder)" {
 
     try std.testing.expectEqual(@as(usize, 0), oldname_count);
 
-    const newname_count = (try ctx.db.?.one(
+    const newname_count = (try ctx.db.one(
         usize,
         "select count(*) from files where local_path = ?",
         .{},

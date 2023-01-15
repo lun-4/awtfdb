@@ -114,16 +114,8 @@ pub fn main() anyerror!void {
     const query = try std.mem.join(allocator, " ", given_args.query.items);
     defer allocator.free(query);
 
-    var ctx = Context{
-        .home_path = null,
-        .args_it = undefined,
-        .stdout = undefined,
-        .db = null,
-        .allocator = allocator,
-    };
+    var ctx = try manage_main.loadDatabase(allocator, .{});
     defer ctx.deinit();
-
-    try ctx.loadDatabase(.{});
 
     // afind tag (all files with tag)
     // afind 'tag1 tag2' (tag1 AND tag2)
@@ -174,7 +166,7 @@ pub fn main() anyerror!void {
         }
     }
 
-    var stmt = try ctx.db.?.prepareDynamic(result.query);
+    var stmt = try ctx.db.prepareDynamic(result.query);
     defer stmt.deinit();
 
     logger.debug("generated query: {s}", .{result.query});
@@ -631,8 +623,8 @@ test "sql parser batch test" {
 
         const result = wrapped_result.Ok;
 
-        var stmt = ctx.db.?.prepareDynamic(result.query) catch |err| {
-            const detailed_error = ctx.db.?.getDetailedError();
+        var stmt = ctx.db.prepareDynamic(result.query) catch |err| {
+            const detailed_error = ctx.db.getDetailedError();
             std.debug.panic(
                 "unable to prepare statement test case {d} '{s}', error: {}, message: {s}\n",
                 .{ test_case_index, result.query, err, detailed_error },

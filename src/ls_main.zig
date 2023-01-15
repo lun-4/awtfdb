@@ -88,17 +88,8 @@ pub fn main() anyerror!void {
         std.debug.print("ainclude {s}\n", .{VERSION});
         return;
     }
-
-    var ctx = Context{
-        .home_path = null,
-        .args_it = undefined,
-        .stdout = undefined,
-        .db = null,
-        .allocator = allocator,
-    };
+    var ctx = try manage_main.loadDatabase(allocator, .{});
     defer ctx.deinit();
-
-    try ctx.loadDatabase(.{});
 
     var stdout = std.io.getStdOut().writer();
 

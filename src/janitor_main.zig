@@ -69,7 +69,7 @@ pub fn janitorCheckCores(
     counters: *ErrorCounters,
     given_args: Args,
 ) !void {
-    var cores_stmt = try ctx.db.?.prepare(
+    var cores_stmt = try ctx.db.prepare(
         \\ select core_hash, core_data
         \\ from tag_cores
         \\ order by core_hash asc
@@ -89,7 +89,7 @@ pub fn janitorCheckCores(
             .{ .insert_new_hash = false },
         );
 
-        var hash_with_blob = (try ctx.db.?.oneAlloc(
+        var hash_with_blob = (try ctx.db.oneAlloc(
             Context.HashSQL,
             ctx.allocator,
             \\ select id, hash_data
@@ -128,7 +128,7 @@ pub fn janitorCheckUnusedHashes(
     counters: *ErrorCounters,
     given_args: Args,
 ) !void {
-    var hashes_stmt = try ctx.db.?.prepare(
+    var hashes_stmt = try ctx.db.prepare(
         \\ select id
         \\ from hashes
         \\ order by id asc
@@ -137,7 +137,7 @@ pub fn janitorCheckUnusedHashes(
     var hashes_iter = try hashes_stmt.iterator(ID.SQL, .{});
     while (try hashes_iter.next(.{})) |hash_id_sql| {
         const hash_id = ID.new(hash_id_sql);
-        const doublecheck_id_sql = (try ctx.db.?.one(
+        const doublecheck_id_sql = (try ctx.db.one(
             ID.SQL,
             "select id from hashes where id = ?",
             .{},
@@ -145,7 +145,7 @@ pub fn janitorCheckUnusedHashes(
         )).?;
         try std.testing.expectEqualStrings(&hash_id_sql, &doublecheck_id_sql);
 
-        const core_count = (try ctx.db.?.one(
+        const core_count = (try ctx.db.one(
             usize,
             \\ select count(*) from tag_cores
             \\ where core_hash = ?
@@ -156,7 +156,7 @@ pub fn janitorCheckUnusedHashes(
 
         if (core_count > 0) continue;
 
-        const file_count = (try ctx.db.?.one(
+        const file_count = (try ctx.db.one(
             usize,
             \\ select count(*) from files
             \\ where file_hash = ?
@@ -167,7 +167,7 @@ pub fn janitorCheckUnusedHashes(
 
         if (file_count > 0) continue;
 
-        const pool_count = (try ctx.db.?.one(
+        const pool_count = (try ctx.db.one(
             usize,
             \\ select count(*) from pools
             \\ where pool_hash = ?
@@ -183,7 +183,7 @@ pub fn janitorCheckUnusedHashes(
         counters.unused_hash.total += 1;
 
         if (given_args.repair) {
-            try ctx.db.?.exec(
+            try ctx.db.exec(
                 \\ delete from hashes
                 \\ where id = ?
             ,
@@ -200,7 +200,7 @@ pub fn janitorCheckTagNameRegex(
     counters: *ErrorCounters,
     given_args: Args,
 ) !void {
-    var stmt = try ctx.db.?.prepare(
+    var stmt = try ctx.db.prepare(
         \\ select core_hash, tag_text
         \\ from tag_names
         \\ order by core_hash asc
@@ -233,7 +233,7 @@ pub fn janitorCheckFiles(
     counters: *ErrorCounters,
     given_args: Args,
 ) !void {
-    var stmt = try ctx.db.?.prepare(
+    var stmt = try ctx.db.prepare(
         \\ select file_hash, local_path
         \\ from files
         \\ order by file_hash asc
@@ -262,7 +262,7 @@ pub fn janitorCheckFiles(
                 logger.err("file {s} not found", .{row.local_path});
                 counters.file_not_found.total += 1;
 
-                const repeated_count = (try ctx.db.?.one(
+                const repeated_count = (try ctx.db.one(
                     usize,
                     \\ select count(*)
                     \\ from files
@@ -344,7 +344,7 @@ pub fn janitorCheckFiles(
                     logger.warn("repair: forcefully setting hash for file {d} '{s}'", .{ row.file_hash, calculated_hash.toHex() });
                     const hash_blob = sqlite.Blob{ .data = &calculated_hash.hash_data };
 
-                    const maybe_preexisting_hash_id = try ctx.db.?.one(
+                    const maybe_preexisting_hash_id = try ctx.db.one(
                         i64,
                         "select id from hashes where hash_data = ?",
                         .{},
@@ -360,7 +360,7 @@ pub fn janitorCheckFiles(
                         // janitor run
                         logger.info("target hash already exists {d}, setting file to it", .{preexisting_hash_id});
 
-                        try ctx.db.?.exec(
+                        try ctx.db.exec(
                             \\ update files
                             \\ set file_hash = ?
                             \\ where file_hash = ?
@@ -369,7 +369,7 @@ pub fn janitorCheckFiles(
                             .{ preexisting_hash_id, file_hash.sql() },
                         );
                     } else {
-                        try ctx.db.?.exec(
+                        try ctx.db.exec(
                             \\ update hashes
                             \\ set hash_data = ?
                             \\ where id = ?
@@ -458,21 +458,13 @@ pub fn main() anyerror!u8 {
         return 1;
     }
 
-    var ctx = Context{
-        .home_path = null,
-        .args_it = undefined,
-        .stdout = undefined,
-        .db = null,
-        .allocator = allocator,
-    };
+    var ctx = try manage_main.loadDatabase(allocator, .{});
     defer ctx.deinit();
-
-    try ctx.loadDatabase(.{});
 
     var counters: ErrorCounters = .{};
 
     logger.info("running PRAGMA integrity_check", .{});
-    var stmt = try ctx.db.?.prepare("PRAGMA integrity_check;");
+    var stmt = try ctx.db.prepare("PRAGMA integrity_check;");
     defer stmt.deinit();
 
     var it = try stmt.iterator([]const u8, .{});
@@ -486,7 +478,7 @@ pub fn main() anyerror!u8 {
         }
         return error.FailedIntegrityCheck;
     }
-    var maybe_row = try ctx.db.?.oneAlloc(struct {
+    var maybe_row = try ctx.db.oneAlloc(struct {
         source_table: []const u8,
         invalid_rowid: ?i64,
         referenced_table: []const u8,
@@ -500,7 +492,7 @@ pub fn main() anyerror!u8 {
         return error.FailedForeignKeyCheck;
     }
 
-    var savepoint = try ctx.db.?.savepoint("janitor");
+    var savepoint = try ctx.db.savepoint("janitor");
     errdefer savepoint.rollback();
     defer savepoint.commit();
 
