@@ -26,6 +26,7 @@ pub fn build(b: *std.build.Builder) !void {
 
     const exe_tests = b.addTest("src/main.zig");
     exe_tests.setTarget(target);
+    exe_tests.addIncludePath("/usr/include/GraphicsMagick/");
     exe_tests.setBuildMode(mode);
     deps.addAllTo(exe_tests);
 
