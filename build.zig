@@ -13,6 +13,10 @@ const EXECUTABLES = .{
     .{ "awtfdb-metrics", "src/metrics_main.zig" },
 };
 
+fn addGraphicsMagick(thing: anytype) void {
+    thing.addIncludePath("/usr/include/GraphicsMagick/");
+}
+
 pub fn build(b: *std.build.Builder) !void {
     // Standard target options allows the person running `zig build` to choose
     // what target to build for. Here we do not override the defaults, which
@@ -26,7 +30,7 @@ pub fn build(b: *std.build.Builder) !void {
 
     const exe_tests = b.addTest("src/main.zig");
     exe_tests.setTarget(target);
-    exe_tests.addIncludePath("/usr/include/GraphicsMagick/");
+    addGraphicsMagick(exe_tests);
     exe_tests.setBuildMode(mode);
     deps.addAllTo(exe_tests);
 
@@ -38,6 +42,7 @@ pub fn build(b: *std.build.Builder) !void {
         single_exe.setTarget(target);
         single_exe.setBuildMode(mode);
         deps.addAllTo(single_exe);
+        addGraphicsMagick(single_exe);
 
         const hardlink_install = try b.allocator.create(CustomHardLinkStep);
         hardlink_install.* = .{
@@ -62,6 +67,7 @@ pub fn build(b: *std.build.Builder) !void {
             tool_exe.setTarget(target);
             tool_exe.setBuildMode(mode);
             tool_exe.install();
+            addGraphicsMagick(tool_exe);
             deps.addAllTo(tool_exe);
         }
     }
