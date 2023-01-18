@@ -212,19 +212,16 @@ pub fn janitorCheckTagNameRegex(
     }, .{});
     while (try it.nextAlloc(ctx.allocator, .{})) |row| {
         defer ctx.allocator.free(row.tag_text);
-
-        //logger.warn("tag: {s}", .{row.tag_text});
+        logger.debug("verify tag: {s}", .{row.tag_text});
 
         ctx.verifyTagName(row.tag_text) catch |err| {
-            logger.warn("tag name '{s}' does not match regex ({s})", .{ row.tag_text, @errorName(err) });
+            logger.err("tag name '{s}' does not match regex ({s})", .{ row.tag_text, @errorName(err) });
             counters.invalid_tag_name.total += 1;
             counters.invalid_tag_name.unrepairable += 1;
+            if (given_args.repair) {
+                return error.UnrepairableTagName;
+            }
         };
-        //const core_hash = ID.new(row.core_hash);
-
-        if (given_args.repair) {
-            return error.UnrepairableTagName;
-        }
     }
 }
 
