@@ -369,26 +369,29 @@ const RegexTagInferrer = struct {
             };
             defer gm_api.DestroyImage(image);
 
-            const maybe_attr = gm_api.GetImageAttribute(image, "comment");
-            if (maybe_attr) |attr| {
-                logger.warn("attr value {?s}", .{attr.*.value});
-                _ = try input_text_writer.write(" ");
-                _ = try input_text_writer.write(std.mem.span(attr.*.value.?));
+            const COOL_PARAMS = .{ "parameters", "comment" };
+
+            inline for (COOL_PARAMS) |param| {
+                const maybe_attr = gm_api.GetImageAttribute(image, param);
+                if (maybe_attr) |attr| {
+                    logger.debug("image attr key={s} value={?s}", .{ param, attr.*.value });
+                    _ = try input_text_writer.write(" ");
+                    _ = try input_text_writer.write(std.mem.span(attr.*.value.?));
+                }
             }
         }
 
         const input_text = input_text_list.items;
         var offset: usize = 0;
         while (true) {
-            logger.warn("input: {s}", .{input_text});
+            logger.debug("regex input input: {s}", .{input_text});
             var maybe_captures = try self.regex.captures(self.allocator, input_text[offset..], .{});
 
             if (maybe_captures) |captures| {
-                logger.warn("capture!", .{});
                 defer self.allocator.free(captures);
 
                 const full_match = captures[0].?;
-                logger.warn("captures {d}! {s}", .{ captures.len, input_text[offset + full_match.start ..] });
+                logger.debug("captures array len={d} full_text={s}", .{ captures.len, input_text[offset + full_match.start ..] });
 
                 // we got a match, add tag_on_match
                 if (self.config.tag_on_match) |tag_on_match| {
