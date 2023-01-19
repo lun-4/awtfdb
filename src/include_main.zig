@@ -207,11 +207,73 @@ const TagInferrerContext = union(TagInferrer) {
     mime: MimeTagInferrer.RunContext,
 };
 
+pub const magick_c = @cImport({
+    @cInclude("GraphicsMagick/wand/magick_wand.h");
+    @cInclude("GraphicsMagick/wand/magick_wand.h");
+    @cInclude("GraphicsMagick/wand/pixel_wand.h");
+    @cInclude("GraphicsMagick/wand/drawing_wand.h");
+    @cInclude("GraphicsMagick/magick/log.h");
+});
+
+const GraphicsMagickApi = struct {
+    InitializeMagick: *@TypeOf(magick_c.InitializeMagick),
+    DestroyImage: *@TypeOf(magick_c.DestroyImage),
+    DestroyImageInfo: *@TypeOf(magick_c.DestroyImageInfo),
+    CloneImageInfo: *@TypeOf(magick_c.CloneImageInfo),
+    ReadImage: *@TypeOf(magick_c.ReadImage),
+    GetImageAttribute: *@TypeOf(magick_c.GetImageAttribute),
+    GetExceptionInfo: *@TypeOf(magick_c.GetExceptionInfo),
+    CatchException: *@TypeOf(magick_c.CatchException),
+};
+
+var cached_graphics_magick: ?union(enum) {
+    not_found: void,
+    found: GraphicsMagickApi,
+} = null;
+
+/// Dynamically get an object that represents the GraphicsMagick library
+/// in the system.
+fn getGraphicsMagickApi() ?GraphicsMagickApi {
+    if (cached_graphics_magick) |cached_gm_api| {
+        return switch (cached_gm_api) {
+            .found => |api| api,
+            .not_found => null,
+        };
+    }
+
+    var gm_clib = std.DynLib.open("/usr/lib/libGraphicsMagickWand.so") catch {
+        cached_graphics_magick = .{ .not_found = {} };
+        return null;
+    };
+    var buf: [256]u8 = undefined;
+    var fba = std.heap.FixedBufferAllocator{ .end_index = 0, .buffer = &buf };
+    var alloc = fba.allocator();
+
+    var api: GraphicsMagickApi = undefined;
+    inline for (@typeInfo(GraphicsMagickApi).Struct.fields) |field_decl| {
+        const name_cstr = std.cstr.addNullByte(alloc, field_decl.name) catch unreachable;
+        defer fba.reset();
+
+        @field(api, field_decl.name) = gm_clib.lookup(field_decl.type, name_cstr).?;
+    }
+    cached_graphics_magick = .{ .found = api };
+    return api;
+}
+
 const RegexTagInferrer = struct {
     pub const Config = struct {
+        // Regex text
         text: ?[]const u8 = null,
-        use_full_path: bool = false,
+
+        // Outputs: either tag_scope or tag_on_match must be set
         tag_scope: ?[]const u8 = null,
+        tag_on_match: ?[]const u8 = null,
+
+        // which file inputs to use?
+        use_full_path: bool = false,
+        use_exif: bool = false,
+
+        // Cast inputs to lowercase?
         cast_lowercase: bool = false,
     };
 
@@ -220,11 +282,16 @@ const RegexTagInferrer = struct {
         config: Config,
         regex_cstr: [:0]const u8,
         regex: libpcre.Regex,
+        gm_api: ?GraphicsMagickApi = null,
     };
 
     pub fn consumeArguments(args_it: *std.process.ArgIterator) !TagInferrerConfig {
-        var arg_state: enum { None, Text, TagScope } = .None;
-        var config: TagInferrerConfig = .{ .last_argument = undefined, .config = .{ .regex = .{} } };
+        var arg_state: enum { None, Text, TagScope, TagOnMatch } = .None;
+        var config = TagInferrerConfig{
+            .last_argument = undefined,
+            .config = .{ .regex = .{} },
+        };
+
         var arg: []const u8 = undefined;
         while (args_it.next()) |arg_from_loop| {
             arg = arg_from_loop;
@@ -234,6 +301,7 @@ const RegexTagInferrer = struct {
                 .None => {},
                 .Text => config.config.regex.text = arg,
                 .TagScope => config.config.regex.tag_scope = arg,
+                .TagOnMatch => config.config.regex.tag_on_match = arg,
             }
 
             // if we hit non-None states, we need to know if we're going
@@ -254,6 +322,10 @@ const RegexTagInferrer = struct {
                 config.config.regex.cast_lowercase = true;
             } else if (std.mem.eql(u8, arg, "--regex-use-full-path")) {
                 config.config.regex.use_full_path = true;
+            } else if (std.mem.eql(u8, arg, "--regex-use-exif")) {
+                config.config.regex.use_exif = true;
+            } else if (std.mem.eql(u8, arg, "--regex-tag-on-match")) {
+                arg_state = .TagOnMatch;
             } else {
                 config.last_argument = arg;
                 break;
@@ -267,11 +339,13 @@ const RegexTagInferrer = struct {
     pub fn init(config: TagInferrerConfig, allocator: std.mem.Allocator) !RunContext {
         const regex_config = config.config.regex;
         const regex_cstr = try std.cstr.addNullByte(allocator, regex_config.text.?);
+        var gm_api = if (regex_config.use_exif) getGraphicsMagickApi().? else null;
         return RunContext{
             .allocator = allocator,
             .config = regex_config,
             .regex_cstr = regex_cstr,
             .regex = try libpcre.Regex.compile(regex_cstr, .{}),
+            .gm_api = gm_api,
         };
     }
 
@@ -284,26 +358,79 @@ const RegexTagInferrer = struct {
         file: *const Context.File,
         tags_to_add: *std.ArrayList([]const u8),
     ) !void {
-        const basename = if (self.config.use_full_path) file.local_path else std.fs.path.basename(file.local_path);
+        var input_text_list = std.ArrayList(u8).init(self.allocator);
+        defer input_text_list.deinit();
 
+        var input_text_writer = input_text_list.writer();
+        _ = try input_text_writer.write(
+            if (self.config.use_full_path) file.local_path else std.fs.path.basename(file.local_path),
+        );
+
+        if (self.gm_api) |gm_api| {
+            var info = (gm_api.CloneImageInfo(0)).?;
+            defer gm_api.DestroyImageInfo(info);
+
+            var buf: [std.os.PATH_MAX]u8 = undefined;
+            var fba = std.heap.FixedBufferAllocator{ .end_index = 0, .buffer = &buf };
+            var alloc = fba.allocator();
+            const path_cstr = std.cstr.addNullByte(alloc, file.local_path) catch unreachable;
+
+            gm_api.InitializeMagick(null);
+            std.mem.copy(u8, &info.*.filename, path_cstr);
+            var exception: magick_c.ExceptionInfo = undefined;
+            gm_api.GetExceptionInfo(&exception);
+            var image = gm_api.ReadImage(info, &exception) orelse {
+                gm_api.CatchException(&exception);
+                return error.GmApiException;
+            };
+            defer gm_api.DestroyImage(image);
+
+            const COOL_PARAMS = .{ "parameters", "comment" };
+
+            inline for (COOL_PARAMS) |param| {
+                const maybe_attr = gm_api.GetImageAttribute(image, param);
+                if (maybe_attr) |attr| {
+                    logger.debug("image attr key={s} value={?s}", .{ param, attr.*.value });
+                    _ = try input_text_writer.write(" ");
+                    _ = try input_text_writer.write(std.mem.span(attr.*.value.?));
+                }
+            }
+        }
+
+        const input_text = input_text_list.items;
         var offset: usize = 0;
         while (true) {
-            var maybe_captures = try self.regex.captures(self.allocator, basename[offset..], .{});
+            logger.debug("regex input input: {s}", .{input_text});
+            var maybe_captures = try self.regex.captures(self.allocator, input_text[offset..], .{});
 
             if (maybe_captures) |captures| {
                 defer self.allocator.free(captures);
 
                 const full_match = captures[0].?;
+                logger.debug("captures array len={d} full_text={s}", .{ captures.len, input_text[offset + full_match.start ..] });
+
+                // we got a match, add tag_on_match
+                if (self.config.tag_on_match) |tag_on_match| {
+                    try tags_to_add.append(try self.allocator.dupe(u8, tag_on_match));
+                }
+
                 for (captures[1..]) |capture| {
                     const tag_group = capture.?;
 
-                    const raw_tag_text = basename[offset + tag_group.start .. offset + tag_group.end];
+                    const raw_tag_text = input_text[offset + tag_group.start .. offset + tag_group.end];
                     var tag_text_list = std.ArrayList(u8).init(self.allocator);
                     defer tag_text_list.deinit();
 
                     var writer = tag_text_list.writer();
-                    _ = try utilAddScope(self.config.tag_scope, &writer);
-                    _ = try utilAddRawTag(self.config, raw_tag_text, &writer);
+                    // if using tag_on_match, don't add autotags based on
+                    // regex captures.
+                    //
+                    // i wonder if at this rate i should plug in some sort
+                    // of scripting language for automated tagging...
+                    if (self.config.tag_on_match == null) {
+                        _ = try utilAddScope(self.config.tag_scope, &writer);
+                        _ = try utilAddRawTag(self.config, raw_tag_text, &writer);
+                    }
 
                     try tags_to_add.append(try tag_text_list.toOwnedSlice());
                 }
@@ -342,6 +469,40 @@ test "regex tag inferrer" {
         .{&context},
         &ctx,
         .{ "tag1", "tag2", "tag3", "tag4" },
+    );
+}
+
+test "regex tag inferrer with exif" {
+    if (getGraphicsMagickApi() == null) return error.SkipZigTest;
+
+    var ctx = try manage_main.makeTestContext();
+    defer ctx.deinit();
+
+    // setup regex inferrer
+
+    const regex_config = RegexTagInferrer.Config{
+        .text = "TEST IMAGE!",
+        .tag_on_match = "real_test_image",
+        .use_exif = true,
+    };
+
+    const allocator = std.testing.allocator;
+
+    var context = try RegexTagInferrer.init(
+        .{ .last_argument = undefined, .config = .{ .regex = regex_config } },
+        allocator,
+    );
+    defer RegexTagInferrer.deinit(&context);
+
+    const test_file_bytes = @embedFile("test_vectors/sample-green-100x75.jpg");
+    try TestUtil.runTestInferrerFile(
+        allocator,
+        "test_file.jpg",
+        test_file_bytes,
+        RegexTagInferrer,
+        .{&context},
+        &ctx,
+        .{"real_test_image"},
     );
 }
 
