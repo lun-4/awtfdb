@@ -37,9 +37,12 @@ const HELPTEXT =
     \\ 		search all files with mytag1 but they do NOT have mytag2
 ;
 
-pub const log_level = .debug;
+pub const std_options = struct {
+    pub const log_level = .debug;
+    pub const logFn = manage_main.log;
+};
+
 pub var current_log_level: std.log.Level = .info;
-pub const log = manage_main.log;
 
 pub fn main() anyerror!void {
     const rc = sqlite.c.sqlite3_config(sqlite.c.SQLITE_CONFIG_LOG, manage_main.sqliteLog, @as(?*anyopaque, null));

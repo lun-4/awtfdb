@@ -28,9 +28,11 @@ const HELPTEXT =
     \\  	list file by id
 ;
 
-pub const log_level = .debug;
 pub var current_log_level: std.log.Level = .info;
-pub const log = manage_main.log;
+pub const std_options = struct {
+    pub const log_level = .debug;
+    pub const logFn = manage_main.log;
+};
 
 pub fn main() anyerror!void {
     const rc = sqlite.c.sqlite3_config(sqlite.c.SQLITE_CONFIG_LOG, manage_main.sqliteLog, @as(?*anyopaque, null));

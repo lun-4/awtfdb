@@ -1922,7 +1922,10 @@ pub export fn sqliteLog(_: ?*anyopaque, level: c_int, message: ?[*:0]const u8) c
     logger.warn("sqlite logged level={d} msg={?s}", .{ level, message });
 }
 
-pub const log_level = .debug;
+pub const std_options = struct {
+    pub const log_level = .debug;
+    pub const logFn = log;
+};
 
 pub var current_log_level: std.log.Level = .info;
 
