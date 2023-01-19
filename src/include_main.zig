@@ -226,10 +226,25 @@ const GraphicsMagickApi = struct {
     CatchException: *@TypeOf(magick_c.CatchException),
 };
 
+var cached_graphics_magick: ?union(enum) {
+    not_found: void,
+    found: GraphicsMagickApi,
+} = null;
+
 /// Dynamically get an object that represents the GraphicsMagick library
 /// in the system.
 fn getGraphicsMagickApi() ?GraphicsMagickApi {
-    var gm_clib = std.DynLib.open("/usr/lib/libGraphicsMagickWand.so") catch return null;
+    if (cached_graphics_magick) |cached_gm_api| {
+        return switch (cached_gm_api) {
+            .found => |api| api,
+            .not_found => null,
+        };
+    }
+
+    var gm_clib = std.DynLib.open("/usr/lib/libGraphicsMagickWand.so") catch {
+        cached_graphics_magick = .{ .not_found = {} };
+        return null;
+    };
     var buf: [256]u8 = undefined;
     var fba = std.heap.FixedBufferAllocator{ .end_index = 0, .buffer = &buf };
     var alloc = fba.allocator();
@@ -241,6 +256,7 @@ fn getGraphicsMagickApi() ?GraphicsMagickApi {
 
         @field(api, field_decl.name) = gm_clib.lookup(field_decl.type, name_cstr).?;
     }
+    cached_graphics_magick = .{ .found = api };
     return api;
 }
 
