@@ -432,6 +432,7 @@ pub fn loadDatabase(allocator: std.mem.Allocator, given_options: LoadDatabaseOpt
             try std.fs.cwd().access(resolved_path, .{});
         }
         options.db_path = resolved_path;
+        options.home_path = home_path;
     }
 
     const db_path_cstr = try std.cstr.addNullByte(allocator, options.db_path.?);
