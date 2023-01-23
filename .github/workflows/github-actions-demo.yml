@@ -19,3 +19,4 @@ jobs:
       - run: zigmod ci
       - run: sudo apt install -y libmagic1
       - run: zig build test
+      - run: ci/smoketest.sh
