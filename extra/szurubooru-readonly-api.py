@@ -486,7 +486,7 @@ def blocking_thumbnail_any_text(file_path, thumbnail_path, size, text):
     # draw file_path's name
     draw = ImageDraw.Draw(thumbnail_image)
 
-    offset_y = 10
+    offset_y = 120
     for line in textwrap.wrap(text, width=25):
         draw.text((15, offset_y), line, fill=(0, 0, 0), font=font)
         bbox = font.getbbox(line)
