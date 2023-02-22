@@ -14,7 +14,9 @@ const EXECUTABLES = .{
 };
 
 fn addGraphicsMagick(thing: anytype) void {
-    thing.addIncludePath("/usr/include/GraphicsMagick/");
+    thing.linkLibC();
+    thing.addIncludePath("/usr/include");
+    thing.addIncludePath("/usr/include/GraphicsMagick");
 }
 
 pub fn build(b: *std.build.Builder) !void {
@@ -26,21 +28,32 @@ pub fn build(b: *std.build.Builder) !void {
 
     // Standard release options allow the person running `zig build` to select
     // between Debug, ReleaseSafe, ReleaseFast, and ReleaseSmall.
-    const mode = b.standardReleaseOptions();
+    const optimize = b.standardOptimizeOption(.{});
 
-    const exe_tests = b.addTest("src/main.zig");
-    exe_tests.setTarget(target);
+    const exe_tests = b.addTest(
+        .{
+            .root_source_file = .{ .path = "src/main.zig" },
+            .optimize = optimize,
+            .target = target,
+        },
+    );
+
     addGraphicsMagick(exe_tests);
-    exe_tests.setBuildMode(mode);
     deps.addAllTo(exe_tests);
 
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&exe_tests.step);
 
-    if (mode == .Debug) {
-        var single_exe = b.addExecutable("wrapper-awtfdb", "src/wrapmain.zig");
-        single_exe.setTarget(target);
-        single_exe.setBuildMode(mode);
+    if (optimize == .Debug) {
+        const single_exe = b.addExecutable(
+            .{
+                .name = "wrapper-awtfdb",
+                .root_source_file = .{ .path = "src/wrapmain.zig" },
+                .optimize = optimize,
+                .target = target,
+            },
+        );
+
         deps.addAllTo(single_exe);
         addGraphicsMagick(single_exe);
 
@@ -63,9 +76,16 @@ pub fn build(b: *std.build.Builder) !void {
         inline for (EXECUTABLES) |exec_decl| {
             const exec_name = exec_decl.@"0";
             const exec_entrypoint = exec_decl.@"1";
-            var tool_exe = b.addExecutable(exec_name, exec_entrypoint);
-            tool_exe.setTarget(target);
-            tool_exe.setBuildMode(mode);
+
+            var tool_exe = b.addExecutable(
+                .{
+                    .name = exec_name,
+                    .root_source_file = .{ .path = exec_entrypoint },
+                    .optimize = optimize,
+                    .target = target,
+                },
+            );
+
             tool_exe.install();
             addGraphicsMagick(tool_exe);
             deps.addAllTo(tool_exe);
