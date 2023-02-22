@@ -824,7 +824,7 @@ pub const Context = struct {
         _ = self;
         const seed = @truncate(u64, @bitCast(u128, std.time.nanoTimestamp()));
         var r = std.rand.DefaultPrng.init(seed);
-        for (core_output) |_, index| {
+        for (core_output, 0..) |_, index| {
             var random_byte = r.random().uintAtMost(u8, 255);
             core_output[index] = random_byte;
         }
@@ -1787,7 +1787,7 @@ pub const Context = struct {
                     .{},
                     .{self.hash.id.sql()},
                 );
-                for (all_hash_ids.items) |pool_file_id, pool_index| {
+                for (all_hash_ids.items, 0..) |pool_file_id, pool_index| {
                     try self.ctx.db.exec(
                         "insert into pool_entries (file_hash, pool_hash, entry_index) values (?, ?, ?)",
                         .{},

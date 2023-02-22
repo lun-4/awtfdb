@@ -169,11 +169,11 @@ pub fn main() anyerror!void {
         }
     }
 
+    logger.debug("generated query: {s}", .{result.query});
+    logger.debug("found arguments: {s}", .{resolved_arguments.items});
+
     var stmt = try ctx.db.prepareDynamic(result.query);
     defer stmt.deinit();
-
-    logger.debug("generated query: {s}", .{result.query});
-    logger.debug("found arguments: {any}", .{resolved_arguments.items});
 
     var it = try stmt.iterator(ID.SQL, resolved_arguments.items);
 
@@ -442,7 +442,7 @@ pub const SqlGiver = struct {
 
             var maybe_captures: ?[]?libpcre.Capture = null;
             var maybe_captured_regex_index: ?CaptureType = null;
-            for (self.operators) |regex, current_regex_index| {
+            for (self.operators, 0..) |regex, current_regex_index| {
                 logger.debug("try regex {d} on query '{s}'", .{ current_regex_index, query_slice });
                 maybe_captures = try regex.captures(allocator, query_slice, .{});
                 maybe_captured_regex_index = @intToEnum(CaptureType, current_regex_index);
@@ -544,7 +544,7 @@ test "sql parser" {
 
     const expected_tags = .{ "a", "b", "cd", "e" };
 
-    inline for (expected_tags) |expected_tag, index| {
+    inline for (expected_tags, 0..) |expected_tag, index| {
         try std.testing.expectEqualStrings(expected_tag, result.arguments[index].tag);
     }
 }
@@ -617,7 +617,7 @@ test "sql parser batch test" {
         .{ "-d", .{"d"} },
     };
 
-    inline for (TEST_DATA) |test_case, test_case_index| {
+    inline for (TEST_DATA, 0..) |test_case, test_case_index| {
         const input_text = test_case.@"0";
         const expected_tags = test_case.@"1";
 
@@ -636,7 +636,7 @@ test "sql parser batch test" {
         defer stmt.deinit();
 
         try std.testing.expectEqual(@as(usize, expected_tags.len), result.arguments.len);
-        inline for (expected_tags) |expected_tag, index| {
+        inline for (expected_tags, 0..) |expected_tag, index| {
             try std.testing.expectEqualStrings(expected_tag, result.arguments[index].tag);
         }
     }

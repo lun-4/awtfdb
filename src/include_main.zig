@@ -153,7 +153,7 @@ const TestUtil = struct {
 
         var found_tags: [wanted_tags.len]bool = undefined;
         // initialize
-        for (found_tags) |_, idx| found_tags[idx] = false;
+        for (found_tags, 0..) |_, idx| found_tags[idx] = false;
 
         for (file_tags_after) |file_tag| {
             const tag_list = try ctx.fetchTagsFromCore(allocator, file_tag.core);
@@ -162,7 +162,7 @@ const TestUtil = struct {
             try std.testing.expectEqual(@as(usize, 1), tag_list.items.len);
             const tag = tag_list.items[0];
             try std.testing.expectEqual(file_tag.core.id, tag.core.id);
-            inline for (wanted_tags) |wanted_tag, index| {
+            inline for (wanted_tags, 0..) |wanted_tag, index| {
                 if (std.mem.eql(u8, wanted_tag, tag.kind.Named.text)) {
                     found_tags[index] = true;
                 }
@@ -171,7 +171,7 @@ const TestUtil = struct {
 
         // assert its all true
 
-        for (found_tags) |value, index| {
+        for (found_tags, 0..) |value, index| {
             if (!value) {
                 logger.err("tag on index {d} not found", .{index});
                 for (tags_to_add.items) |tag| {
@@ -1094,7 +1094,7 @@ pub fn main() anyerror!void {
                 tags_to_add.deinit();
             }
 
-            for (given_args.wanted_inferrers.items) |inferrer_config, index| {
+            for (given_args.wanted_inferrers.items, 0..) |inferrer_config, index| {
                 logger.info("found config for  {}", .{inferrer_config});
                 var inferrer_ctx = &contexts.items[index];
                 switch (inferrer_ctx.*) {
@@ -1161,7 +1161,7 @@ pub fn main() anyerror!void {
                                 try file.addTag(tag_core, .{ .source = given_args.tag_source });
                             }
 
-                            for (given_args.wanted_inferrers.items) |inferrer_config, index| {
+                            for (given_args.wanted_inferrers.items, 0..) |inferrer_config, index| {
                                 logger.info("found config for  {}", .{inferrer_config});
                                 var inferrer_ctx = &contexts.items[index];
                                 switch (inferrer_ctx.*) {
