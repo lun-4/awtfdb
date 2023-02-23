@@ -4,9 +4,9 @@ git https://github.com/lun-4/libmagic.zig commit-8a683de07f86238cb1985abb3c6905e
 git https://github.com/nektro/zig-extras commit-6ebab3dab47268e28599ac396e785f8a76acc7b6
 git https://github.com/nektro/zig-range commit-4b2f12808aa09be4b27a163efc424dd4e0415992
 git https://github.com/truemedian/hzzp commit-3508b1760237e8f166e8c281a68b3d42e45034d8
-git https://github.com/vrischmann/zig-sqlite commit-e0d1d51fac881f38aad5f811f9fa4f6b49b0b4fc
 git https://github.com/file/file tag-FILE5_42
 git https://github.com/lun-4/libpcre.zig commit-e63a8087c768f313b0568ffa3b0341c0450dbde9
 git https://github.com/lun-4/pcre-8.45 commit-d9246b592f055655ab903e5996bbff7405eba6ff
 git https://github.com/lun-4/tunez commit-548fc9cc9e5fa4cb109a482ba471f0f8f2e58928
 git https://github.com/lun-4/zig-ulid commit-53fcdfae6c9af4f6cb142c106bb0e052d72982c4
+git https://github.com/vrischmann/zig-sqlite commit-1333830fcf6b8e99bb0d9497ceaea79251e5195c
