@@ -3,18 +3,80 @@
 # pip install fuse-python
 
 import os
-import sys
 import errno
 import stat
 import logging
 import sqlite3
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import List, Tuple, Dict
 
 import fuse
 
 
 log = logging.getLogger(__name__)
+
+
+@dataclass
+class File:
+    id: str
+
+    def __hash__(self):
+        return hash(self.id)
+
+    def __eq__(self, other):
+        return self.id == other.id
+
+    @classmethod
+    def from_part(cls, part):
+        assert part.startswith("@")
+        _, id = part.split("@")
+        return cls(id)
+
+    def fetch_paths(self, db) -> List[Path]:
+        cursor = db.execute(
+            "select local_path from files where file_hash = ?", (self.id,)
+        )
+        rows = cursor.fetchall()
+        if rows:
+            return [Path(rows[0][0])]
+        else:
+            raise FileNotFoundError(f"file id not found ({self.id})")
+
+
+@dataclass
+class Pool:
+    id: str
+
+    def __hash__(self):
+        return hash(self.id)
+
+    def __eq__(self, other):
+        return self.id == other.id
+
+    @classmethod
+    def from_part(cls, part):
+        assert part.startswith("!")
+        _, id = part.split("!")
+        return cls(id)
+
+    def fetch_paths(self, db, filename=None) -> List[Path]:
+        cursor = db.execute(
+            """
+            select local_path
+            from files
+            join pool_entries
+            on pool_entries.file_hash = files.file_hash
+            where pool_entries.pool_hash = ?
+            order by pool_entries.entry_index asc;
+            """,
+            (self.id,),
+        )
+        rows = cursor.fetchall()
+        if rows:
+            return [Path(row[0]) for row in rows]
+        else:
+            raise FileNotFoundError(f"pool id not found ({self.id})")
 
 
 class FuseServer(fuse.Fuse):
@@ -23,6 +85,7 @@ class FuseServer(fuse.Fuse):
 
         indexpath = Path(os.getenv("HOME")) / "awtf.db"
         self.db = sqlite3.connect(str(indexpath))
+        self.local_path_cache: Dict[Tuple[str, str], str] = {}
 
     def _fallback(self, field):
         def wrapped(*args, **kwargs):
@@ -84,47 +147,53 @@ class FuseServer(fuse.Fuse):
     def statfs(self):
         return os.statvfs(".")
 
-    def to_local_path(self, vfs_path: Path) -> Tuple[bool, Path]:
-        possible_file_id = None
-        for part in vfs_path.parts[:3]:
-            if not part.startswith("@"):
-                continue
-            else:
-                possible_file_id = part
-                break
+    def to_local_path(self, vfs_path: Path) -> Tuple[bool, List[Path]]:
+        possible_id = None
 
-        wants_file = not vfs_path.parts[-1].startswith("@")
-
-        if possible_file_id is None:
-            raise FileNotFoundError(f"not a file ({vfs_path!r})")
-
-        _, file_hash_str = possible_file_id.split("@")
         try:
-            file_hash = str(file_hash_str)
-        except ValueError:
-            raise FileNotFoundError(f"invalid file id ({file_hash_str!r})")
-
-        cur = self.db.execute(
-            "select local_path from files where file_hash = ?", (file_hash,)
-        )
-        rows = cur.fetchall()
-        if rows:
-            return wants_file, Path(rows[0][0])
+            fuse_request = vfs_path.parts[1]
+        except IndexError:
+            fuse_request = ""
+        if fuse_request.startswith("@"):
+            possible_id = File.from_part(fuse_request)
+        elif fuse_request.startswith("!"):
+            possible_id = Pool.from_part(fuse_request)
         else:
-            raise FileNotFoundError(f"file id not found ({file_hash})")
+            raise FileNotFoundError(f"not any actionable request ({vfs_path!r})")
+
+        assert possible_id
+        wants_listing = len(vfs_path.parts) == 2
+        if wants_listing:
+            local_paths = possible_id.fetch_paths(self.db)
+            return wants_listing, local_paths
+        else:
+            # we want a specific file, send only one.
+            wanted_filename = vfs_path.parts[2]
+            cached_value = self.local_path_cache.get((possible_id, vfs_path.name))
+            if cached_value:
+                return False, [cached_value]
+            else:
+                local_paths = possible_id.fetch_paths(self.db)
+                for local_path in local_paths:
+                    if local_path.name == wanted_filename:
+                        cached_value = local_path
+                    self.local_path_cache[(possible_id, local_path.name)] = local_path
+
+            return False, [cached_value]
 
     def readlink(self, vfs_path):
         log.info("getattr req %r", vfs_path)
         try:
-            wants_file, local_path = self.to_local_path(Path(vfs_path))
+            wants_listing, local_paths = self.to_local_path(Path(vfs_path))
         except FileNotFoundError:
             return -errno.ENOENT
 
-        if not wants_file:
-            log.error("vfs %r not the final file")
+        if wants_listing:
+            log.error("vfs %r not the final file", vfs_path)
             return -errno.ENOENT
 
-        return str(local_path)
+        assert len(local_paths) == 1
+        return str(local_paths[0])
 
     def getattr(self, vfs_path: str):
         if vfs_path == "/":  # make it work for root always (its a folder lol)
@@ -134,36 +203,14 @@ class FuseServer(fuse.Fuse):
         vfs_path = Path(vfs_path)
 
         try:
-            wants_file, local_path = self.to_local_path(vfs_path)
+            wants_listing, local_paths = self.to_local_path(vfs_path)
         except FileNotFoundError:
             return -errno.ENOENT
 
-        log.info("getattr ok %r -> %r", vfs_path, local_path)
-        original_stat = os.lstat(local_path)
-        if wants_file:
-            mode = original_stat.st_mode
-            mode |= stat.S_IFLNK
-
-            new_stat = os.stat_result(
-                [
-                    mode,
-                    original_stat.st_ino,
-                    original_stat.st_dev,
-                    original_stat.st_nlink,
-                    original_stat.st_uid,
-                    original_stat.st_gid,
-                    len(str(local_path)),
-                    original_stat.st_atime,
-                    original_stat.st_mtime,
-                    original_stat.st_ctime,
-                ]
-            )
-
-            # log.info("old stat %r", stat)
-            # log.info("new stat %r", new_stat)
-
-            return new_stat
-        else:
+        log.info("getattr ok %r -> %r", vfs_path, local_paths)
+        assert local_paths
+        original_stat = os.lstat(local_paths[0])
+        if wants_listing:
             mode = 0
             mode |= stat.S_IFDIR
             mode |= stat.S_IRWXU
@@ -178,7 +225,31 @@ class FuseServer(fuse.Fuse):
                     original_stat.st_nlink,
                     original_stat.st_uid,
                     original_stat.st_gid,
-                    len(str(local_path)),
+                    len(str(local_paths[0])),
+                    original_stat.st_atime,
+                    original_stat.st_mtime,
+                    original_stat.st_ctime,
+                ]
+            )
+
+            # log.info("old stat %r", stat)
+            # log.info("new stat %r", new_stat)
+
+            return new_stat
+        else:
+
+            mode = original_stat.st_mode
+            mode |= stat.S_IFLNK
+
+            new_stat = os.stat_result(
+                [
+                    mode,
+                    original_stat.st_ino,
+                    original_stat.st_dev,
+                    original_stat.st_nlink,
+                    original_stat.st_uid,
+                    original_stat.st_gid,
+                    len(str(local_paths[0])),
                     original_stat.st_atime,
                     original_stat.st_mtime,
                     original_stat.st_ctime,
@@ -197,23 +268,25 @@ class FuseServer(fuse.Fuse):
         log.info("readdir %r %r", vfs_path, _offset)
 
         try:
-            wants_file, local_path = self.to_local_path(Path(vfs_path))
+            wants_listing, local_paths = self.to_local_path(Path(vfs_path))
         except FileNotFoundError:
             return -errno.ENOENT
 
-        if wants_file:
-            raise AssertionError("should not readdir from the symlink")
+        if wants_listing:
+            for path in local_paths:
+                yield fuse.Direntry(path.name)
         else:
-            yield fuse.Direntry(local_path.name)
+            raise AssertionError("should not readdir from the symlink")
 
     def access(self, vfs_path, mode):
         try:
-            _, local_path = self.to_local_path(Path(vfs_path))
+            _, local_paths = self.to_local_path(Path(vfs_path))
         except FileNotFoundError:
             return -errno.ENOENT
 
-        if not os.access(local_path, mode):
-            return -errno.EACCES
+        for path in local_paths:
+            if not os.access(path, mode):
+                return -errno.EACCES
 
     def fsinit(self):
         log.info("fsinit!")
