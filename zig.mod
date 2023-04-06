@@ -3,7 +3,7 @@ name: awtfdb
 license: MIT
 description: The Anime Woman Tagged Files Database
 root_dependencies:
-  - src: git https://github.com/vrischmann/zig-sqlite branch-fix-latest
+  - src: git https://github.com/vrischmann/zig-sqlite branch-master
   - src: git https://github.com/lun-4/libpcre.zig branch-luna-pcre
   - src: git https://github.com/truemedian/hzzp
   - src: git https://github.com/lun-4/libmagic.zig
