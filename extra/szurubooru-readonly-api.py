@@ -1095,16 +1095,17 @@ async def fetch_pool_entity(pool_hash: str, micro=False):
 @app.get("/pools/")
 async def pools_fetch():
     # GET /pools/?offset=<initial-pos>&limit=<page-size>&query=<query>
-    query = request.args.get("query", "")
+    query = request.args.get("query", "").split(" ")[0].replace("*", "%").lower()
     offset = int(request.args.get("offset", 0))
     limit = int(request.args.get("limit", 15))
     query = query.replace("\\:", ":")
+    print(query)
 
     count_rows = await app.db.execute_fetchall(
         """
         select count(pool_hash)
         from pools
-        where pools.title LIKE '%' || ? || '%'
+        where lower(pools.title) LIKE '%' || ? || '%'
         """,
         [query],
     )
