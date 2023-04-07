@@ -60,12 +60,12 @@ pub fn build(b: *std.build.Builder) !void {
         const hardlink_install = try b.allocator.create(CustomHardLinkStep);
         hardlink_install.* = .{
             .builder = b,
-            .step = std.build.Step.init(
-                .custom,
-                "link the utils",
-                b.allocator,
-                CustomHardLinkStep.make,
-            ),
+            .step = std.build.Step.init(.{
+                .id = .custom,
+                .name = "link the utils",
+                .owner = b,
+                .makeFn = CustomHardLinkStep.make,
+            }),
             .exe = single_exe,
         };
         hardlink_install.step.dependOn(&single_exe.step);
@@ -100,14 +100,23 @@ const CustomHardLinkStep = struct {
 
     const Self = @This();
 
-    fn make(step: *std.build.Step) !void {
+    fn make(step: *std.build.Step, node: *std.Progress.Node) !void {
+        _ = node;
         const self: *Self = @fieldParentPtr(Self, "step", step);
         const builder = self.builder;
 
         inline for (EXECUTABLES) |exec_decl| {
             const exec_name = exec_decl.@"0";
             const full_dest_path = builder.getInstallPath(.{ .bin = {} }, exec_name);
-            try builder.updateFile(self.exe.output_path_source.path.?, full_dest_path);
+            _ = try std.fs.Dir.updateFile(
+                std.fs.cwd(),
+                self.exe.output_path_source.path.?,
+                std.fs.cwd(),
+                full_dest_path,
+                .{},
+            );
+
+            //try builder.updateFile(self.exe.output_path_source.path.?, full_dest_path);
         }
     }
 };

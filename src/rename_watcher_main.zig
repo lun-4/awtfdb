@@ -603,7 +603,7 @@ pub fn main() anyerror!void {
 
     var pidfd: ?std.os.fd_t = null;
 
-    const pidfd_rc = std.os.linux.pidfd_open(proc.pid, 0);
+    const pidfd_rc = std.os.linux.pidfd_open(proc.id, 0);
     switch (std.os.errno(pidfd_rc)) {
         .SUCCESS => pidfd = @intCast(std.os.fd_t, pidfd_rc),
         .INVAL => unreachable,
