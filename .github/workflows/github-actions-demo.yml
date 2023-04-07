@@ -1,7 +1,7 @@
 name: do-the-thing
 on: [push]
 jobs:
-  test:
+  test-awtfdb:
     strategy:
       matrix:
         # TODO https://github.com/lun-4/awtfdb/issues/1
