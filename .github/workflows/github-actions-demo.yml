@@ -18,6 +18,6 @@ jobs:
       - run: chmod +x /usr/local/bin/zigmod
       - run: zigmod ci
       - run: zig fmt .zigmod
-      - run: sudo apt install -y libmagic1 graphicsmagick-dev
+      - run: sudo apt install -y libmagic1 libgraphicsmagick-q16-3 libgraphicsmagick1-dev
       - run: zig build test
       - run: ci/smoketest.sh
