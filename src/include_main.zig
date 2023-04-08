@@ -739,11 +739,36 @@ const MimeTagInferrer = struct {
     }
 
     pub fn init(config: TagInferrerConfig, allocator: std.mem.Allocator) !RunContext {
-        return RunContext{
+        var self = RunContext{
             .allocator = allocator,
             .cookie = try MimeCookie.init(allocator, .{}),
             .config = config.config.mime,
         };
+
+        // This is an absolute hack.
+        //
+        // When building in ReleaseSafe mode *without* this assert,
+        // self.config.tag_for_all_video.?.ptr will be set to a different value,
+        // a completely useless one, which leads to crashing as other pieces
+        // of code attempt to use that value
+        //
+        // When this assert statement is added (or a log statement of
+        // the value, which makes me call this a "Schrodinger's bug"), the
+        // memory address becomes correct.
+        //
+        // This is a weird optimization bug that I have no idea about how to
+        // solve it. It's not a libmagic bug, because if I set cookie to
+        // `undefined`, not calling libmagic at all, the bug still happens.
+        // I have attempted to run gdb (I can't watch -l on unions properly),
+        // or lldb, or rr, or valgrind, and nothing here properly helps me.
+        //
+        // Only adding log statements made me even realize the error location
+        if (config.config.mime.tag_for_all_video) |tag_for_all_video| {
+            std.debug.assert(@ptrToInt(tag_for_all_video.ptr) ==
+                @ptrToInt(self.config.tag_for_all_video.?.ptr));
+        }
+
+        return self;
     }
 
     pub fn deinit(self: *RunContext) void {
