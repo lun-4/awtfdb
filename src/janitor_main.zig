@@ -342,7 +342,7 @@ pub fn janitorCheckFiles(
                     const hash_blob = sqlite.Blob{ .data = &calculated_hash.hash_data };
 
                     const maybe_preexisting_hash_id = try ctx.db.one(
-                        i64,
+                        ID.SQL,
                         "select id from hashes where hash_data = ?",
                         .{},
                         .{hash_blob},
@@ -355,7 +355,7 @@ pub fn janitorCheckFiles(
                         // the fix here is to repoint file hash to the existing
                         // one, then garbage collect the old one in a separate
                         // janitor run
-                        logger.info("target hash already exists {d}, setting file to it", .{preexisting_hash_id});
+                        logger.info("target hash already exists {s}, setting file to it", .{preexisting_hash_id});
 
                         try ctx.db.exec(
                             \\ update files
@@ -363,7 +363,10 @@ pub fn janitorCheckFiles(
                             \\ where file_hash = ?
                         ,
                             .{},
-                            .{ preexisting_hash_id, file_hash.sql() },
+                            .{
+                                sqlite.Text{ .data = &preexisting_hash_id },
+                                file_hash.sql(),
+                            },
                         );
                     } else {
                         try ctx.db.exec(
