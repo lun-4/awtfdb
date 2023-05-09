@@ -22,7 +22,6 @@ def main():
         from files f1
         where
             repeated_count > 1
-        and lower(local_path) LIKE '%mp4%'
         order by
             repeated_count desc;
         """
