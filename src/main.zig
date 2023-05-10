@@ -1617,6 +1617,10 @@ pub const Context = struct {
             }
             if (already_has_it) continue;
 
+            logger.debug("tag tree said {} from tree_rowid={} to file {}", .{
+                tag_entry.tag_id, tag_entry.parent_entry_id, file,
+            });
+
             try file.addTag(.{ .id = tag_entry.tag_id, .hash_data = undefined }, .{
                 .source = try self.fetchTagSource(.system, @enumToInt(SystemTagSources.tag_parenting)),
                 .parent_source_id = tag_entry.parent_entry_id,
@@ -1681,10 +1685,12 @@ pub const Context = struct {
         }
 
         if (options.files) |files_array| {
+            logger.debug("tag tree is processing {d} files", .{files_array.len});
             for (files_array) |file_hash| {
                 try self.processSingleFileIntoTagTree(file_hash, treemap);
             }
         } else {
+            logger.debug("tag tree is processing all files...", .{});
             var stmt = try self.db.prepare(
                 \\ select file_hash
                 \\ from files
