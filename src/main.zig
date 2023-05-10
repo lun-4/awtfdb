@@ -1331,7 +1331,7 @@ pub const Context = struct {
             if (options.insert_new_hash) {
                 if (options.use_file_timestamp) {
                     const stat = try file.stat();
-                    const timestamp_as_milliseconds = @divTrunc(stat.ctime, std.time.ns_per_ms);
+                    const timestamp_as_milliseconds = @divTrunc(stat.mtime, std.time.ns_per_ms);
                     file_hash.id = try self.createHash(hash_blob, .{
                         .milliTimestamp = timestamp_as_milliseconds,
                     });

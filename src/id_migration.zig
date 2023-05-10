@@ -81,7 +81,7 @@ fn migrateFiles(self: *Context) !void {
             );
         } else {
             const stat = try std.fs.cwd().statFile(data.local_path);
-            const timestamp_as_milliseconds = @divTrunc(stat.ctime, std.time.ns_per_ms);
+            const timestamp_as_milliseconds = @divTrunc(stat.mtime, std.time.ns_per_ms);
             const new_ulid = main.ulidFromTimestamp(random, timestamp_as_milliseconds);
             const new_id = ID.new(new_ulid.bytes());
             const parsed_ulid = try ulid.ULID.parse(new_id.str());
