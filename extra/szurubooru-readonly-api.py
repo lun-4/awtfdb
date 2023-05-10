@@ -856,7 +856,7 @@ ALL_FILE_FIELDS = (
 
 async def fetch_file_entity(
     file_id: str, *, micro=False, fields: Optional[List[str]] = None
-) -> dict:
+) -> Optional[dict]:
     fields = fields or ALL_FILE_FIELDS
     if micro:
         fields = MICRO_FILE_FIELDS
@@ -935,13 +935,18 @@ async def fetch_file_entity(
 
     file_local_path = app.file_cache.local_path.get(file_id)
     if file_local_path is None:
-        file_local_path = (
-            await app.db.execute_fetchall(
-                "select local_path from files where file_hash = ?",
-                (file_id,),
-            )
-        )[0][0]
+        rows = await app.db.execute_fetchall(
+            "select local_path from files where file_hash = ?",
+            (file_id,),
+        )
+        if rows:
+            file_local_path = rows[0][0]
+        else:
+            log.warning("failed to fetch file id %r", file_id)
+            file_local_path = None
         app.file_cache.local_path[file_id] = file_local_path
+    if not file_local_path:
+        return None
 
     file_mime = fetch_mimetype(file_local_path)
     returned_file["mimeType"] = file_mime
