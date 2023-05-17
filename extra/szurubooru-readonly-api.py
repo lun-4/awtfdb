@@ -272,7 +272,6 @@ def handle_exception(exception):
 @app.get("/tags/")
 async def tags_fetch():
     # GET /tags/?offset=<initial-pos>&limit=<page-size>&query=<query>
-    print(request.args)
     query = request_query_field()
     offset = request.args.get("offset", 0)
     query = query.replace("*", "")
@@ -708,11 +707,10 @@ def request_query_field():
 
 @app.get("/posts/")
 async def posts_fetch():
-    query = request.args.get("query", "")
+    query = request_query_field()
+    fields = request_wanted_fields()
     offset = int(request.args.get("offset", 0))
     limit = int(request.args.get("limit", 15))
-    query = query.replace("\\:", ":")
-    fields = request_wanted_fields()
 
     if "pool:" in query:
         # switch logic to fetching stuff from pool only in order lol
@@ -1164,7 +1162,7 @@ async def fetch_pool_entity(pool_hash: str, micro=False):
 @app.get("/pools/")
 async def pools_fetch():
     # GET /pools/?offset=<initial-pos>&limit=<page-size>&query=<query>
-    query = request.args.get("query", "").split(" ")[0].replace("*", "%").lower()
+    query = request_query_field().split(" ")[0].replace("*", "%").lower()
     offset = int(request.args.get("offset", 0))
     limit = int(request.args.get("limit", 15))
     query = query.replace("\\:", ":")
