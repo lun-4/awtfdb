@@ -1052,15 +1052,11 @@ async def _fetch_around_file(
         row = await cursor.fetchone()
         return row[0] if row else None
     else:
-
         wanted_file_id = None
-        log.info(exclude)
         async for row in cursor:
-            log.info(row[0])
             if row[0] not in exclude:
                 wanted_file_id = row[0]
                 break
-        log.info(wanted_file_id)
         return wanted_file_id
 
 
