@@ -817,7 +817,7 @@ async def fetch_tag(core_hash) -> list:
                     (core_hash,),
                 )
             )[0][0]
-            log.info("tag %s has %d posts!", usages)
+            log.info("tag %s has %d posts!", core_hash, usages)
         else:
             usages = usages_from_metrics[0][0]
 
