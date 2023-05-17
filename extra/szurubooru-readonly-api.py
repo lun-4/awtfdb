@@ -9,7 +9,7 @@ import mimetypes
 import uvloop
 import textwrap
 from pathlib import Path
-from typing import Optional, List, Dict, Tuple
+from typing import Optional, List, Dict, Tuple, Any
 from dataclasses import dataclass
 from expiringdict import ExpiringDict
 from hypercorn.asyncio import serve, Config
@@ -52,7 +52,8 @@ def base32_parse(string):
 
 
 def get_ulid_timestamp(ulid_string: str) -> int:
-    assert len(ulid_string) == 26
+    if len(ulid_string) != 26:
+        raise AssertionError(f"given string {ulid_string!r} is not 26 characters")
     encoded_timestamp = ulid_string[0:10]
     decoded_timestamp = base32_parse(encoded_timestamp)
     # turn into u50
@@ -816,6 +817,7 @@ async def fetch_tag(core_hash) -> list:
                     (core_hash,),
                 )
             )[0][0]
+            log.info("tag %s has %d posts!", usages)
         else:
             usages = usages_from_metrics[0][0]
 
@@ -1026,36 +1028,100 @@ async def single_post_fetch(file_id: int):
     return await fetch_file_entity(file_id)
 
 
+async def _fetch_around_file(
+    file_id: str, mode="next", exclude: Optional[list] = None
+) -> Optional[str]:
+    assert mode in ("next", "previous")
+    comparator = "<" if mode == "previous" else ">"
+    selector = "desc" if mode == "previous" else "asc"
+
+    # optimization: if not exclude, 'limit 1' is wanted
+    limit = "limit 1" if not exclude else ""
+    cursor = await app.db.execute(
+        f"""
+        select file_hash
+        from files
+        where file_hash {comparator} ?
+        order by file_hash {selector}
+        {limit}
+        """,
+        (file_id,),
+    )
+    log.info("exclude %r", exclude)
+    if not exclude:
+        row = await cursor.fetchone()
+        return row[0] if row else None
+    else:
+
+        wanted_file_id = None
+        log.info(exclude)
+        async for row in cursor:
+            log.info(row[0])
+            if row[0] not in exclude:
+                wanted_file_id = row[0]
+                break
+        log.info(wanted_file_id)
+        return wanted_file_id
+
+
+def list_get(lst: List[Any], index: int) -> Optional[Any]:
+    if index < 0:
+        return None
+    return lst[index] if index < len(lst) else None
+
+
 @app.get("/post/<file_id>/around/")
-async def single_post_fetch_around(file_id: int):
+async def single_post_fetch_around(file_id: str):
     fields = request_fields()
-    prev_cursor = await app.db.execute(
-        """
-        select file_hash
-        from files
-        where file_hash < ?
-        order by file_hash desc
-        limit 1
-        """,
-        (file_id,),
-    )
-    next_cursor = await app.db.execute(
-        """
-        select file_hash
-        from files
-        where file_hash > ?
-        order by file_hash asc
-        limit 1
-        """,
-        (file_id,),
-    )
-    prev_value = await prev_cursor.fetchone()
-    prev_id = prev_value[0] if prev_value else None
-    next_value = await next_cursor.fetchone()
-    next_id = next_value[0] if next_value else None
+    # TODO move to request_query()
+    query = request.args.get("query", "").strip().replace("\\:", ":")
+
+    prev_file, next_file = None, None
+    pool_entry_ids = None
+
+    if query.startswith("pool:"):
+        # operate in the context of a pool, as in, next will be next page in
+        # the pool, next on the last page will operate as usual, as well as
+        # previous
+
+        _, pool_id = query.split(":")
+        pool = await fetch_pool_entity(pool_id)
+        posts = pool["posts"]
+        pool_entry_ids = [f["id"] for f in posts]
+        try:
+            current_file_as_pool_index = pool_entry_ids.index(file_id)
+        except ValueError:
+            current_file_as_pool_index = None
+
+        if current_file_as_pool_index is not None:
+            prev_file = list_get(posts, current_file_as_pool_index - 1)
+            next_file = list_get(posts, current_file_as_pool_index + 1)
+        else:
+            # do not exclude pool ids when outside of the pool
+            # in that way we dont skip it when scrolling through files normally
+            # when coming from a pool
+            pool_entry_ids = None
+
+    if prev_file is None:
+        # if pool doesnt provide it, query db
+        # also prevent from entering a black hole where once in a pool
+        # you cant ever get out of it if files of it arent orderedd correctly
+        # (the whole point of fixing this UX in the first place)
+        prev_id = await _fetch_around_file(
+            file_id, mode="previous", exclude=pool_entry_ids
+        )
+        if prev_id:
+            prev_file = await fetch_file_entity(prev_id, fields=fields)
+
+    # same logic for next_file
+    if next_file is None:
+        next_id = await _fetch_around_file(file_id, mode="next", exclude=pool_entry_ids)
+        if next_id:
+            next_file = await fetch_file_entity(next_id, fields=fields)
+
     return {
-        "prev": await fetch_file_entity(prev_id, fields=fields) if prev_id else None,
-        "next": await fetch_file_entity(next_id, fields=fields) if next_id else None,
+        "prev": prev_file,
+        "next": next_file,
     }
 
 
