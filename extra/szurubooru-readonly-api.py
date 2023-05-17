@@ -273,8 +273,7 @@ def handle_exception(exception):
 async def tags_fetch():
     # GET /tags/?offset=<initial-pos>&limit=<page-size>&query=<query>
     print(request.args)
-    query = request.args["query"]
-    query = query.replace("\\:", ":")
+    query = request_query_field()
     offset = request.args.get("offset", 0)
     query = query.replace("*", "")
     query = query.replace(" sort:usages", "")
@@ -696,11 +695,15 @@ async def thumbnail(file_id: int):
         return "", 500
 
 
-def request_fields() -> Optional[List[str]]:
+def request_wanted_fields() -> Optional[List[str]]:
     fields = request.args.get("fields")
     if not fields:
         return None
     return fields.split(",")
+
+
+def request_query_field():
+    return request.args.get("query", "").strip().replace("\\:", ":")
 
 
 @app.get("/posts/")
@@ -709,7 +712,7 @@ async def posts_fetch():
     offset = int(request.args.get("offset", 0))
     limit = int(request.args.get("limit", 15))
     query = query.replace("\\:", ":")
-    fields = request_fields()
+    fields = request_wanted_fields()
 
     if "pool:" in query:
         # switch logic to fetching stuff from pool only in order lol
@@ -1068,9 +1071,8 @@ def list_get(lst: List[Any], index: int) -> Optional[Any]:
 
 @app.get("/post/<file_id>/around/")
 async def single_post_fetch_around(file_id: str):
-    fields = request_fields()
-    # TODO move to request_query()
-    query = request.args.get("query", "").strip().replace("\\:", ":")
+    fields = request_wanted_fields()
+    query = request_query_field()
 
     prev_file, next_file = None, None
     pool_entry_ids = None
