@@ -749,7 +749,7 @@ async def posts_fetch():
     log.debug("tags: %r", result.tags)
     log.debug("mapped: %r", mapped_tag_args)
     tag_rows = await app.db.execute(
-        result.query + f" limit {limit} offset {offset}",
+        result.query + f" order by file_hash desc limit {limit} offset {offset}",
         mapped_tag_args,
     )
     total_rows_count = await app.db.execute(
