@@ -36,6 +36,7 @@ const HELPTEXT =
 
 const MigrationOptions = struct {
     function: ?*const fn (*Context) anyerror!void = null,
+    transaction: bool = true,
 };
 
 pub const Migration = struct {
@@ -286,6 +287,12 @@ pub const MIGRATIONS = .{
         \\     value text
         \\ ) strict;
     },
+    .{
+        10,
+        "move to WAL",
+        .{ .transaction = false },
+        \\ PRAGMA journal_mode=WAL;
+    },
 };
 
 pub const MIGRATION_LOG_TABLE =
@@ -524,29 +531,42 @@ pub fn migrateCommand(args_it: *std.process.ArgIterator, ctx: *Context) !void {
     }
 
     {
-        var savepoint = try ctx.db.savepoint("migrations");
-        errdefer savepoint.rollback();
-        defer savepoint.commit();
-
         inline for (MIGRATIONS) |migration_decl| {
             const migration = Migration.fromTuple(migration_decl);
 
             if (current_version < migration.version) {
+
+                // NOTE: i don't think transactions work for
+                // ALTER TABLE, but i'm using it regardless because
+                // i am not 100% sure
+                var maybe_savepoint = if (migration.options.transaction)
+                    try ctx.db.savepoint("migration")
+                else
+                    null;
+
+                errdefer if (maybe_savepoint) |*savepoint| savepoint.rollback();
+                defer if (maybe_savepoint) |*savepoint| savepoint.commit();
+
                 logger.info("running migration {d} '{s}'", .{ migration.version, migration.name });
 
                 if (migration.sql) |migration_sql| {
                     var diags = sqlite.Diagnostics{};
                     ctx.db.execMulti(migration_sql, .{ .diags = &diags }) catch |err| {
-                        logger.err(
-                            "unable to prepare statement, got error {s}. diagnostics: {s}",
-                            .{ @errorName(err), diags },
-                        );
-                        return err;
+                        switch (err) {
+                            error.ExecReturnedData => {},
+                            else => {
+                                logger.err(
+                                    "unable to prepare statement, got error {s}. diagnostics: {s}",
+                                    .{ @errorName(err), diags },
+                                );
+                                return err;
+                            },
+                        }
                     };
                 } else {
                     try migration.options.function.?(ctx);
                 }
-                logger.debug("registering to logs...", .{});
+                logger.debug("registering migration run to logs...", .{});
 
                 try ctx.db.exec(
                     "INSERT INTO migration_logs (version, applied_at, description) values (?, ?, ?);",
@@ -562,9 +582,13 @@ pub fn migrateCommand(args_it: *std.process.ArgIterator, ctx: *Context) !void {
         }
     }
 
+    logger.info("running PRAGMA integrity_check...", .{});
     const val = (try ctx.db.one(i64, "PRAGMA integrity_check", .{}, .{})) orelse return error.PossiblyFailedIntegrityCheck;
-    logger.debug("integrity check returned {d}", .{val});
+    logger.info("integrity check returned {d}", .{val});
+
+    logger.info("running PRAGMA foreign_key_check...", .{});
     try ctx.db.exec("PRAGMA foreign_key_check", .{}, .{});
+    logger.info("done!", .{});
 }
 
 pub const ErrorData = union(enum) {
