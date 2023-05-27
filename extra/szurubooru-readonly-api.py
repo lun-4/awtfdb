@@ -1264,5 +1264,6 @@ if __name__ == "__main__":
     )
     uvloop.install()
     config = Config()
+    config.accesslog = "-"
     config.bind = ["0.0.0.0:6666"]
     asyncio.run(serve(app, config))
