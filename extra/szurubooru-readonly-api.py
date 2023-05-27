@@ -107,6 +107,7 @@ async def app_before_serving():
         local_path=ExpiringDict(max_len=1000, max_age_seconds=3600),
     )
     app.tag_cache = ExpiringDict(max_len=4000, max_age_seconds=1800)
+    app.tag_usage_semaphore = asyncio.Semaphore(2)
 
     @copy_current_app_context
     async def thumbnail_cleaner_run():
@@ -786,6 +787,26 @@ def extract_canvas_size(path: Path) -> tuple:
         return (None, None)
 
 
+async def calculate_usages_manually(core_hash):
+    async with app.tag_usage_semaphore:
+        try:
+            usages = (
+                await app.db.execute_fetchall(
+                    "select count(core_hash) from tag_files where core_hash = ?",
+                    (core_hash,),
+                )
+            )[0][0]
+            log.info("tag %s has %d posts!", core_hash, usages)
+
+            # replace usages in tag cache
+            tag_entries = app.tag_cache[core_hash]
+            for entry in tag_entries:
+                entry.usages = usages
+        except Exception as e:
+            log.exception("failed to calculate usages")
+            raise e
+
+
 async def fetch_tag(core_hash) -> list:
 
     tag_entry = app.tag_cache.get(core_hash)
@@ -810,24 +831,26 @@ async def fetch_tag(core_hash) -> list:
             """,
             (core_hash,),
         )
-        if not usages_from_metrics:
-            log.info("tag %s has no metrics, calculating manually...", core_hash)
-            usages = (
-                await app.db.execute_fetchall(
-                    "select count(core_hash) from tag_files where core_hash = ?",
-                    (core_hash,),
-                )
-            )[0][0]
-            log.info("tag %s has %d posts!", core_hash, usages)
-        else:
+        if usages_from_metrics:
             usages = usages_from_metrics[0][0]
+        else:
+            # we'll schedule in the background
+            # after inserting it into the tag_cache
+            # to prevent race conditions
+            #
+            # we do know its at least 1 lol
+            usages = 1
 
         tag_entry = []
         async for named_tag in named_tag_cursor:
             tag_entry.append(TagEntry(named_tag[0], usages))
 
-    assert tag_entry is not None
-    app.tag_cache[core_hash] = tag_entry
+        assert tag_entry
+        app.tag_cache[core_hash] = tag_entry
+
+        if not usages_from_metrics:
+            log.info("tag %s has no metrics, calculating in background...", core_hash)
+            asyncio.create_task(calculate_usages_manually(core_hash))
 
     tags_result = []
 
