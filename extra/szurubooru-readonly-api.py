@@ -106,7 +106,7 @@ async def app_before_serving():
         mime_type=ExpiringDict(max_len=1000, max_age_seconds=300),
         local_path=ExpiringDict(max_len=1000, max_age_seconds=3600),
     )
-    app.tag_cache = ExpiringDict(max_len=4000, max_age_seconds=259200)
+    app.tag_cache = ExpiringDict(max_len=80000, max_age_seconds=259200)
     app.tag_usage_semaphore = asyncio.Semaphore(2)
 
     @copy_current_app_context
