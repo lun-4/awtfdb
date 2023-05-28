@@ -8,6 +8,7 @@ import logging
 import mimetypes
 import uvloop
 import textwrap
+import io
 from pathlib import Path
 from typing import Optional, List, Dict, Tuple, Any
 from dataclasses import dataclass
@@ -15,6 +16,7 @@ from expiringdict import ExpiringDict
 from hypercorn.asyncio import serve, Config
 
 import magic
+import eyed3
 import aiosqlite
 from quart import Quart, request, send_file as quart_send_file
 from quart.ctx import copy_current_app_context
@@ -480,17 +482,33 @@ async def thumbnail_given_path(path: Path, thumbnail_path: Path, size=(350, 350)
 font = ImageFont.truetype("Arial", size=35)
 
 
+def draw_text_on_image(
+    draw,
+    text: str,
+    *,
+    offset_y: int = 120,
+    border_color: Tuple[int, int, int] = (0, 0, 0),
+    text_color: Tuple[int] = (255, 255, 255),
+):
+    for line in textwrap.wrap(text, width=25):
+        x, y = 15, offset_y
+
+        draw.text((x - 1, y - 1), line, font=font, fill=border_color)
+        draw.text((x + 1, y - 1), line, font=font, fill=border_color)
+        draw.text((x - 1, y + 1), line, font=font, fill=border_color)
+        draw.text((x + 1, y + 1), line, font=font, fill=border_color)
+
+        draw.text((x, y), line, fill=text_color, font=font)
+        bbox = font.getbbox(line)
+        offset_y = offset_y + (bbox[3] - bbox[1]) + 2
+
+
 def blocking_thumbnail_any_text(file_path, thumbnail_path, size, text):
     thumbnail_image = Image.new("RGB", (500, 500), (255, 255, 255))
 
     # draw file_path's name
     draw = ImageDraw.Draw(thumbnail_image)
-
-    offset_y = 120
-    for line in textwrap.wrap(text, width=25):
-        draw.text((15, offset_y), line, fill=(0, 0, 0), font=font)
-        bbox = font.getbbox(line)
-        offset_y = offset_y + (bbox[3] - bbox[1]) + 2
+    draw_text_on_image(draw, text)
 
     thumbnail_image.save(thumbnail_path)
 
@@ -507,6 +525,23 @@ def blocking_thumbnail_file_contents(file_path, thumbnail_path, size):
     blocking_thumbnail_any_text(file_path, thumbnail_path, size, first_256_bytes)
 
 
+def blocking_thumbnail_audio(file_path, thumbnail_path, size):
+    audio_file = eyed3.load(file_path)
+    thumbnail_image = Image.new("RGB", size, (255, 255, 255))
+    draw = ImageDraw.Draw(thumbnail_image)
+    text_offset = 50
+    if audio_file and audio_file.tag:
+        text_offset = 230
+        for audio_image_bytes in audio_file.tag.images:
+            audio_image = Image.open(io.BytesIO(audio_image_bytes.image_data))
+            resized_audio_image = audio_image.resize(size)
+            # slap it on top of thumbnail_image
+            thumbnail_image.paste(resized_audio_image)
+            break
+    draw_text_on_image(draw, Path(file_path).name, offset_y=text_offset)
+    thumbnail_image.save(thumbnail_path)
+
+
 async def thumbnail_given_path_only_filename(
     path: Path, thumbnail_path: Path, size=(350, 350)
 ):
@@ -514,6 +549,12 @@ async def thumbnail_given_path_only_filename(
     as a thumbnail"""
     return await app.loop.run_in_executor(
         None, blocking_thumbnail_filepath, path, thumbnail_path, size
+    )
+
+
+async def thumbnail_given_audio(path: Path, thumbnail_path: Path, size=(350, 350)):
+    return await app.loop.run_in_executor(
+        None, blocking_thumbnail_audio, path, thumbnail_path, size
     )
 
 
@@ -642,7 +683,7 @@ async def submit_thumbnail(file_id, mimetype, file_local_path, thumbnail_path):
         semaphore = app.expensive_thumbnail_semaphore
     elif mimetype.startswith("audio/"):
         thumbnail_path = thumbnail_path.parent / f"{file_id}.png"
-        thumbnailing_function = thumbnail_given_path_only_filename
+        thumbnailing_function = thumbnail_given_audio
         semaphore = app.image_thumbnail_semaphore
     elif mimetype.startswith("text/"):
         thumbnail_path = thumbnail_path.parent / f"{file_id}.png"
@@ -808,7 +849,6 @@ async def calculate_usages_manually(core_hash):
 
 
 async def fetch_tag(core_hash) -> list:
-
     tag_entry = app.tag_cache.get(core_hash)
     if tag_entry is None:
         named_tag_cursor = await app.db.execute(

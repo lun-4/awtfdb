@@ -5,3 +5,4 @@ Pillow==9.3.0
 expiringdict==1.2.2
 # max perf
 uvloop==0.17.0
+eyed3==0.9.7
