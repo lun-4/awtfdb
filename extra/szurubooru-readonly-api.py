@@ -885,7 +885,6 @@ async def fetch_tag(core_hash) -> list:
         async for named_tag in named_tag_cursor:
             tag_entry.append(TagEntry(named_tag[0], usages))
 
-        assert tag_entry
         app.tag_cache[core_hash] = tag_entry
 
         if not usages_from_metrics:
