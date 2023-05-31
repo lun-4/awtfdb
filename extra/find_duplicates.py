@@ -37,10 +37,13 @@ def main():
         else:
             filemap[row["file_hash"]].append(row["local_path"])
 
+    total_duplicate_files = 0
+
     for file_hash, paths in filemap.items():
         stat = Path(paths[0]).stat()
         full_size_map[file_hash] = stat.st_size * len(paths)
         single_size_map[file_hash] = stat.st_size
+        total_duplicate_files += len(paths) - 1
 
     total_space = sum(full_size_map.values())
 
@@ -64,6 +67,13 @@ def main():
 
     total_space_mb = total_space // 1024 // 1024
     claimable_space_mb = claimable_space // 1024 // 1024
+
+    print(
+        "there are",
+        len(filemap),
+        "duplicate entries (with more than one file in them)",
+    )
+    print("in total", total_duplicate_files, "duplicate files")
 
     print("total", total_space_mb, "MB")
     print("claimable", claimable_space_mb, "MB")
