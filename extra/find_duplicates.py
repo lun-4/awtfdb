@@ -3,6 +3,7 @@
 import sys
 import sqlite3
 from pathlib import Path
+from typing import Dict, List
 
 
 def main():
@@ -26,30 +27,38 @@ def main():
             repeated_count desc;
         """
     )
-    filemap = {}
-    sizemap = {}
-    total_space = 0
+    filemap: Dict[str, List[str]] = {}
+    single_size_map: Dict[str, int] = {}
+    full_size_map: Dict[str, int] = {}
+
     for row in res:
         if row["file_hash"] not in filemap:
             filemap[row["file_hash"]] = [row["local_path"]]
         else:
             filemap[row["file_hash"]].append(row["local_path"])
 
-        if row["file_hash"] not in sizemap:
-            stats = Path(row["local_path"]).stat()
-            sizemap[row["file_hash"]] = stats.st_size
+    for file_hash, paths in filemap.items():
+        stat = Path(paths[0]).stat()
+        full_size_map[file_hash] = stat.st_size * len(paths)
+        single_size_map[file_hash] = stat.st_size
 
-        total_space += sizemap[row["file_hash"]]
+    total_space = sum(full_size_map.values())
 
-    sorted_keys = sorted(sizemap.keys(), key=lambda k: sizemap[k])
+    sorted_keys = sorted(filemap.keys(), key=lambda k: full_size_map[k])
     claimable_space = 0
     for filehash in sorted_keys:
-        size = sizemap[filehash]
+        full_size = full_size_map[filehash]
+        single_size = single_size_map[filehash]
         paths = filemap[filehash]
-        claimable_space += size * (len(paths) - 1)
-        size_mb = round(size / 1024 / 1024, 2)
+        paths = sorted(paths, key=lambda path: Path(path).stat().st_mtime)
+        claimable_size = full_size - single_size
+        claimable_space += claimable_size
+        full_size_mb = round(full_size / 1024 / 1024, 2)
+        claimable_size_mb = round(claimable_size / 1024 / 1024, 2)
 
-        print(f"file {filehash}, size {size_mb} MB")
+        print(
+            f"file {filehash}, consumes {full_size_mb} MB ({claimable_size_mb}MB claimable)"
+        )
         for path in paths:
             print(f"\t{path}")
 
