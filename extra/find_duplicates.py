@@ -47,7 +47,9 @@ def main():
 
     total_space = sum(full_size_map.values())
 
-    sorted_keys = sorted(filemap.keys(), key=lambda k: full_size_map[k])
+    sorted_keys = sorted(
+        filemap.keys(), key=lambda k: full_size_map[k] - single_size_map[k]
+    )
     claimable_space = 0
     for filehash in sorted_keys:
         full_size = full_size_map[filehash]
