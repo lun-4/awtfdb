@@ -8,15 +8,21 @@ understand what's up with it here: https://blog.l4.pm/the-system-is-the-solution
 
 v0.2 is released.
 
+i run master branch, which may be unstable and corrupt your database (like it did to mine,
+that was fun)
+
+v0.3 with the goodies of `master` branch will be carved onto stone once Zig reaches v0.11.0
+(i'll also attempt to only pin down zig stable versions after that release)
+
 i have been working on this since April 2022, and also been using it on a daily
 basis. the base is relatively solid enough, but there are unanswered design
 questions, see issues tab.
 
-here are my awtfdb statistics for the past 7 months (November 2022):
- - i have indexed 18240 files.
- - i have created 18338 tags.
- - i have 367258 file<->tag mappings in the database.
- - my database is 34MB.
+here are my awtfdb statistics for the past 7 months (May 2023):
+ - i have indexed 167405 files.
+ - i have created 56190 tags.
+ - i have 2425603 file<->tag mappings in the database.
+ - my database is 336MB.
 
 there is no specification yet that would enable others to contribute to the
 system by writing their own tools on top, but _that is planned_.
