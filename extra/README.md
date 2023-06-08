@@ -40,7 +40,7 @@ server {
 	listen 80;
 	server_name home.example.net;
 	location / {
-		root /home/luna;
+		root /;
 	}
 }
 ```
