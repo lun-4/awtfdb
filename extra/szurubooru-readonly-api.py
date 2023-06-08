@@ -18,7 +18,7 @@ from hypercorn.asyncio import serve, Config
 import magic
 import eyed3
 import aiosqlite
-from quart import Quart, request, send_file as quart_send_file
+from quart import Quart, request, send_file as quart_send_file, redirect
 from quart.ctx import copy_current_app_context
 from PIL import Image, ImageDraw, ImageFont, UnidentifiedImageError
 
@@ -460,7 +460,11 @@ async def content(file_id: int):
         return "", 404
 
     mimetype = fetch_mimetype(file_local_path)
-    return await send_file(file_local_path, mimetype=mimetype)
+    nginx_host = os.environ.get("NGINX")
+    if nginx_host:
+        return redirect(f"http://{nginx_host}/{file_local_path}")
+    else:
+        return await send_file(file_local_path, mimetype=mimetype)
 
 
 def blocking_thumbnail_image(path, thumbnail_path, size):
@@ -860,7 +864,6 @@ async def fetch_tag(core_hash) -> list:
             (core_hash,),
         )
 
-        start_ts = time.monotonic()
         usages_from_metrics = await app.db.execute_fetchall(
             """
             select relationship_count

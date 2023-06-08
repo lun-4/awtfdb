@@ -31,6 +31,29 @@ docker run --add-host=host.docker.internal:host-gateway -e BACKEND_HOST=host.doc
 
 then enter `localhost:6969` in your browser and watch the magic happen.
 
+### szurubooru fast mode
+
+requires nginx with the following block
+
+```
+server {
+	listen 80;
+	server_name home.example.net;
+	location / {
+		root /home/luna;
+	}
+}
+```
+
+and `/etc/hosts` with: `127.0.0.1  home.example.net  localhost`
+
+then run the script with the following env var set `NGINX=home.example.net`
+but the domain can be anything, it all just has to match
+
+(if you use tailscale to share the booru across machines, set NGINX to the main
+machine's tailscale ip, and set `server_name` to that same ip, things will
+Just Work.)
+
 ## fuse frontend
 
 ```
