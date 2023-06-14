@@ -1554,6 +1554,7 @@ pub const Context = struct {
     }
 
     pub fn fetchFileByPath(self: *Self, absolute_local_path: []const u8) !?File {
+        std.debug.assert(std.fs.path.isAbsolute(absolute_local_path));
         var maybe_hash = try self.db.oneAlloc(
             HashSQL,
             self.allocator,
