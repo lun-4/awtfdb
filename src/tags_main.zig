@@ -203,7 +203,7 @@ const CreateAction = struct {
                 try file.addTag(tag_to_be_aliased_to, .{});
 
                 try stdout.print("relinked {s}", .{file.local_path});
-                try file.printTagsTo(self.ctx.allocator, stdout);
+                try file.printTagsTo(self.ctx.allocator, stdout, .{});
                 try stdout.print("\n", .{});
             }
 
@@ -1136,7 +1136,7 @@ const FetchPool = struct {
             defer file.deinit();
 
             try stdout.print("- {s}", .{file.local_path});
-            try file.printTagsTo(self.ctx.allocator, stdout);
+            try file.printTagsTo(self.ctx.allocator, stdout, .{});
             try stdout.print("\n", .{});
         }
     }

@@ -1115,7 +1115,7 @@ pub const Context = struct {
             logger.debug("remove file {s} (hash {s}) with tag core hash {d}", .{ self.local_path, self.hash, core_hash.id });
         }
 
-        // Copies ownership of given new_local_path
+        /// Copies ownership of given new_local_path
         pub fn setLocalPath(self: *FileSelf, new_local_path: []const u8) !void {
             try self.ctx.db.exec(
                 "update files set local_path = ? where file_hash = ? and local_path = ?",
@@ -1219,21 +1219,30 @@ pub const Context = struct {
             return try list.toOwnedSlice();
         }
 
+        pub const PrintTagOptions = struct {
+            show_sources: bool = false,
+        };
+
         pub fn printTagsTo(
             self: FileSelf,
             allocator: std.mem.Allocator,
             writer: anytype,
+            options: PrintTagOptions,
         ) !void {
             var file_tags = try self.fetchTags(allocator);
             defer allocator.free(file_tags);
 
             for (file_tags) |file_tag| {
                 // TODO some kind of stack buffer that lives outside of this
-                // loop so its faster?
+                // loop so its faster? (i need to profile to see if this is true)
                 var tags = try self.ctx.fetchTagsFromCore(allocator, file_tag.core);
                 defer tags.deinit();
                 for (tags.items) |tag| {
-                    try writer.print(" '{s}'", .{tag});
+                    if (options.show_sources) {
+                        try writer.print(" '{s}' ({d})", .{ tag, file_tag.source.id });
+                    } else {
+                        try writer.print(" '{s}'", .{tag});
+                    }
                 }
             }
         }

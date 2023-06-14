@@ -18,6 +18,7 @@ const HELPTEXT =
     \\ 	-h				prints this help and exits
     \\ 	-V				prints version and exits
     \\ 	--id				print file id
+    \\  --show-sources    show tag sources
     \\
     \\ examples:
     \\ 	als path/to/file
@@ -60,6 +61,8 @@ pub fn main() anyerror!void {
         paths: StringList,
     };
 
+    var print_tag_options = Context.File.PrintTagOptions{};
+
     var given_args = Args{ .paths = StringList.init(allocator) };
     defer given_args.paths.deinit();
 
@@ -74,6 +77,8 @@ pub fn main() anyerror!void {
             given_args.force = true;
         } else if (std.mem.eql(u8, arg, "--id")) {
             given_args.show_id = true;
+        } else if (std.mem.eql(u8, arg, "--show-sources")) {
+            print_tag_options.show_sources = true;
         } else {
             try given_args.paths.append(arg);
         }
@@ -109,7 +114,7 @@ pub fn main() anyerror!void {
                 const id_text = if (given_args.show_id) file.hash.id.str() else "";
 
                 try stdout.print("- {s}{s}", .{ id_text, file.local_path });
-                try file.printTagsTo(allocator, stdout);
+                try file.printTagsTo(allocator, stdout, print_tag_options);
                 try stdout.print("\n", .{});
             }
             continue;
@@ -121,7 +126,7 @@ pub fn main() anyerror!void {
                 const id_text = if (given_args.show_id) file.hash.id.str() else "";
                 try stdout.print("- {s}{s}", .{ id_text, query });
                 defer file.deinit();
-                try file.printTagsTo(allocator, stdout);
+                try file.printTagsTo(allocator, stdout, print_tag_options);
             } else {
                 try stdout.print("- {s}", .{query});
             }
@@ -161,7 +166,7 @@ pub fn main() anyerror!void {
                         try stdout.print("{s}", .{id_text});
 
                         defer file.deinit();
-                        try file.printTagsTo(allocator, stdout);
+                        try file.printTagsTo(allocator, stdout, print_tag_options);
                     }
                 }
                 try stdout.print("\n", .{});
@@ -177,7 +182,7 @@ pub fn main() anyerror!void {
                 try stdout.print(" {s}", .{id_text});
 
                 defer file.deinit();
-                try file.printTagsTo(allocator, stdout);
+                try file.printTagsTo(allocator, stdout, print_tag_options);
             }
             try stdout.print("\n", .{});
         }

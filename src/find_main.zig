@@ -205,7 +205,7 @@ pub fn main() anyerror!void {
         if (!given_args.link) {
             try stdout.print("{s}", .{file.local_path});
             try buffered_stdout.flush();
-            try file.printTagsTo(allocator, stderr);
+            try file.printTagsTo(allocator, stderr, .{});
             try buffered_stderr.flush();
             try stdout.print("\n", .{});
             try buffered_stdout.flush();
