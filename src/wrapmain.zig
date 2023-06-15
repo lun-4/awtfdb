@@ -10,6 +10,7 @@ const EXECUTABLES = .{
     .{ "atags", @import("tags_main.zig") },
     .{ "awtfdb-metrics", @import("metrics_main.zig") },
     .{ "awtfdb-janitor", @import("janitor_main.zig") },
+    .{ "amv", @import("mv_main.zig") },
 } ++ switch (builtin.os.tag) {
     .linux => .{
         .{ "awtfdb-watcher", @import("rename_watcher_main.zig") },

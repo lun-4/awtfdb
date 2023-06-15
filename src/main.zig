@@ -1117,6 +1117,7 @@ pub const Context = struct {
 
         /// Copies ownership of given new_local_path
         pub fn setLocalPath(self: *FileSelf, new_local_path: []const u8) !void {
+            std.debug.assert(std.fs.path.isAbsolute(new_local_path));
             try self.ctx.db.exec(
                 "update files set local_path = ? where file_hash = ? and local_path = ?",
                 .{},
@@ -2575,6 +2576,7 @@ test "everyone else" {
     std.testing.refAllDecls(@import("metrics_main.zig"));
     std.testing.refAllDecls(@import("test_migrations.zig"));
     std.testing.refAllDecls(@import("snowflake.zig"));
+    std.testing.refAllDecls(@import("mv_main.zig"));
 
     if (builtin.os.tag == .linux) {
         std.testing.refAllDecls(@import("rename_watcher_main.zig"));

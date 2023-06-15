@@ -11,6 +11,7 @@ const EXECUTABLES = .{
     .{ "arm", "src/rm_main.zig" },
     .{ "atags", "src/tags_main.zig" },
     .{ "awtfdb-metrics", "src/metrics_main.zig" },
+    .{ "amv", "src/mv_main.zig" },
 };
 
 fn addGraphicsMagick(thing: anytype) void {
