@@ -1,12 +1,12 @@
 2
-git https://github.com/lun-4/expiring-hash-map.zig commit-7d5e56935723b9c4c7aab1591978844f0ee44f30
+git https://github.com/lun-4/expiring-hash-map.zig commit-cf69e991156cf5fe46b4a19d461a9a7ce4d38cf7
 git https://github.com/lun-4/libmagic.zig commit-c3c08f051bba9f1dad1f396ad6906daec3c1c589
-git https://github.com/nektro/zig-extras commit-b47e61c4f05e895fec868252b3a23c5111b0cd10
+git https://github.com/nektro/zig-extras commit-54abdc5bce0b243601ef4808bce1c29e1a46cdec
 git https://github.com/nektro/zig-range commit-4b2f12808aa09be4b27a163efc424dd4e0415992
-git https://github.com/truemedian/hzzp commit-501386e13b2f7849128f3b271d23de6127b1d9d7
+git https://github.com/truemedian/hzzp commit-305aca97fce78eb3e787d57691a5eed5512bece7
 git https://github.com/file/file tag-FILE5_42
-git https://github.com/lun-4/libpcre.zig commit-e63a8087c768f313b0568ffa3b0341c0450dbde9
+git https://github.com/lun-4/libpcre.zig commit-a470be911c806cd60de7a2073264ba5e5a44688f
 git https://github.com/lun-4/pcre-8.45 commit-d9246b592f055655ab903e5996bbff7405eba6ff
 git https://github.com/lun-4/tunez commit-548fc9cc9e5fa4cb109a482ba471f0f8f2e58928
-git https://github.com/lun-4/zig-ulid commit-53fcdfae6c9af4f6cb142c106bb0e052d72982c4
-git https://github.com/vrischmann/zig-sqlite commit-9dd6745d17f951c540a571705e25033111b4f68d
+git https://github.com/lun-4/zig-ulid commit-ccb26b23e7c01607036414c589d4d2940d930238
+git https://github.com/vrischmann/zig-sqlite commit-5ae6e66876d7a7a0a206084e5672a4231945b7cc

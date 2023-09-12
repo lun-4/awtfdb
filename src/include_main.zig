@@ -251,7 +251,7 @@ fn getGraphicsMagickApi() ?GraphicsMagickApi {
 
     var api: GraphicsMagickApi = undefined;
     inline for (@typeInfo(GraphicsMagickApi).Struct.fields) |field_decl| {
-        const name_cstr = std.cstr.addNullByte(alloc, field_decl.name) catch unreachable;
+        const name_cstr = alloc.dupeZ(u8, field_decl.name) catch unreachable;
         defer fba.reset();
 
         @field(api, field_decl.name) = gm_clib.lookup(field_decl.type, name_cstr).?;
@@ -338,7 +338,7 @@ const RegexTagInferrer = struct {
 
     pub fn init(config: TagInferrerConfig, allocator: std.mem.Allocator) !RunContext {
         const regex_config = config.config.regex;
-        const regex_cstr = try std.cstr.addNullByte(allocator, regex_config.text.?);
+        const regex_cstr = try allocator.dupeZ(u8, regex_config.text.?);
         var gm_api = if (regex_config.use_exif) getGraphicsMagickApi().? else null;
         return RunContext{
             .allocator = allocator,
@@ -373,7 +373,7 @@ const RegexTagInferrer = struct {
             var buf: [std.os.PATH_MAX]u8 = undefined;
             var fba = std.heap.FixedBufferAllocator{ .end_index = 0, .buffer = &buf };
             var alloc = fba.allocator();
-            const path_cstr = std.cstr.addNullByte(alloc, file.local_path) catch unreachable;
+            const path_cstr = alloc.dupeZ(u8, file.local_path) catch unreachable;
 
             gm_api.InitializeMagick(null);
             std.mem.copy(u8, &info.*.filename, path_cstr);
@@ -764,8 +764,8 @@ const MimeTagInferrer = struct {
         //
         // Only adding log statements made me even realize the error location
         if (config.config.mime.tag_for_all_video) |tag_for_all_video| {
-            std.debug.assert(@ptrToInt(tag_for_all_video.ptr) ==
-                @ptrToInt(self.config.tag_for_all_video.?.ptr));
+            std.debug.assert(@intFromPtr(tag_for_all_video.ptr) ==
+                @intFromPtr(self.config.tag_for_all_video.?.ptr));
         }
 
         return self;
@@ -780,7 +780,7 @@ const MimeTagInferrer = struct {
         file: *const Context.File,
         tags_to_add: *std.ArrayList([]const u8),
     ) !void {
-        const path_cstr = try std.cstr.addNullByte(self.allocator, file.local_path);
+        const path_cstr = try self.allocator.dupeZ(u8, file.local_path);
         defer self.allocator.free(path_cstr);
 
         var mimetype = try self.cookie.inferFile(path_cstr);
@@ -1138,7 +1138,7 @@ pub fn main() anyerror!void {
 
             while (try walker.next()) |entry| {
                 switch (entry.kind) {
-                    .File, .SymLink => {
+                    .file, .sym_link => {
                         logger.debug(
                             "adding child path '{s}{s}{s}'",
                             .{ path_to_include, std.fs.path.sep_str, entry.path },

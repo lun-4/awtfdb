@@ -221,10 +221,10 @@ pub fn main() anyerror!void {
         std.mem.copy(u8, &tmp_path, PREFIX);
         var fill_here = tmp_path[PREFIX.len..];
 
-        const seed = @truncate(u64, @bitCast(u128, std.time.nanoTimestamp()));
+        const seed = @as(u64, @truncate(@as(u128, @bitCast(std.time.nanoTimestamp()))));
         var r = std.rand.DefaultPrng.init(seed);
         for (fill_here) |*el| {
-            const ascii_idx = @intCast(u8, r.random().uintLessThan(u5, 24));
+            const ascii_idx = @as(u8, @intCast(r.random().uintLessThan(u5, 24)));
             const letter: u8 = @as(u8, 65) + ascii_idx;
             el.* = letter;
         }
@@ -445,7 +445,7 @@ pub const SqlGiver = struct {
             for (self.operators, 0..) |regex, current_regex_index| {
                 logger.debug("try regex {d} on query '{s}'", .{ current_regex_index, query_slice });
                 maybe_captures = try regex.captures(allocator, query_slice, .{});
-                maybe_captured_regex_index = @intToEnum(CaptureType, current_regex_index);
+                maybe_captured_regex_index = @as(CaptureType, @enumFromInt(current_regex_index));
                 logger.debug("raw capture? {any}", .{maybe_captures});
                 if (maybe_captures) |captures| {
                     const capture = captures[0].?;

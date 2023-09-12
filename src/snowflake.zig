@@ -22,7 +22,7 @@ pub const AnimeSnowflake = packed union {
 
     pub fn fromTimestamp(timestamp: u50) Self {
         var rng = std.rand.DefaultPrng.init(
-            @truncate(u64, @intCast(u128, std.time.nanoTimestamp())),
+            @as(u64, @truncate(@as(u128, @intCast(std.time.nanoTimestamp())))),
         );
         const random = rng.random();
         const random_bits = random.int(u13);
@@ -38,7 +38,7 @@ comptime {
     const timestamp: i64 = 1669493613473;
     const random_bits: u13 = 315;
     const snowflake = AnimeSnowflake{ .fields = .{
-        .timestamp = @intCast(u50, timestamp),
+        .timestamp = @as(u50, @intCast(timestamp)),
         .random_bits = random_bits,
     } };
 
@@ -56,7 +56,7 @@ test "snowflake max" {
     const random_bits: u13 = std.math.maxInt(u13);
 
     const snowflake = AnimeSnowflake{ .fields = .{
-        .timestamp = @intCast(u50, timestamp),
+        .timestamp = @as(u50, @intCast(timestamp)),
         .random_bits = random_bits,
     } };
 
@@ -73,7 +73,7 @@ test "snowflake time" {
     const random_bits: u13 = 69;
 
     const snowflake = AnimeSnowflake{ .fields = .{
-        .timestamp = @intCast(u50, timestamp),
+        .timestamp = @as(u50, @intCast(timestamp)),
         .random_bits = random_bits,
     } };
 
