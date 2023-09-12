@@ -39,11 +39,13 @@ pub fn build(b: *std.build.Builder) !void {
         },
     );
 
+    const run_unit_tests = b.addRunArtifact(exe_tests);
+
     addGraphicsMagick(exe_tests);
     deps.addAllTo(exe_tests);
 
     const test_step = b.step("test", "Run unit tests");
-    test_step.dependOn(&exe_tests.step);
+    test_step.dependOn(&run_unit_tests.step);
 
     if (optimize == .Debug) {
         const single_exe = b.addExecutable(
