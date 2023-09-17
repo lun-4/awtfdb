@@ -18,7 +18,7 @@ from hypercorn.asyncio import serve, Config
 import magic
 import eyed3
 import aiosqlite
-from quart import Quart, request, send_file as quart_send_file, redirect
+from quart import Quart, request, send_file as quart_send_file, redirect, make_response
 from quart.ctx import copy_current_app_context
 from PIL import Image, ImageDraw, ImageFont, UnidentifiedImageError
 
@@ -453,18 +453,54 @@ async def fetch_file_local_path(file_id: int) -> Optional[str]:
     return path
 
 
+async def transcode_path(file_id, local_path, mimetype):
+    extension = get_extension(mimetype.transcode_to)
+    transcodes_folder = Path("/tmp") / "awtfdb-transcodes"
+    transcodes_folder.mkdir(exist_ok=True)
+    target_path = transcodes_folder / f"{file_id}{extension}"
+
+    if not target_path.exists():
+        cmdline = f"ffmpeg -y -i {shlex.quote(local_path)} -movflags +empty_moov -movflags +frag_keyframe -c:v copy {shlex.quote(str(target_path))}"
+        log.info("transcoding with cmdline %r", cmdline)
+        process = await asyncio.create_subprocess_shell(
+            cmdline,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+
+        out, err = await process.communicate()
+        out, err = out.decode(), err.decode()
+        log.info("out: %s, err: %s", out, err)
+        if process.returncode != 0:
+            log.warn(
+                "ffmpeg (thumbnailer) returned non-zero exit code %d",
+                process.returncode,
+            )
+            raise RuntimeError("ffmpeg failed")
+
+    return target_path
+
+
 @app.get("/_awtfdb_content/<file_id>")
-async def content(file_id: int):
+async def content(file_id: str):
     file_local_path = await fetch_file_local_path(file_id)
     if not file_local_path:
         return "", 404
 
     mimetype = fetch_mimetype(file_local_path)
-    nginx_host = os.environ.get("NGINX")
-    if nginx_host:
-        return redirect(f"http://{nginx_host}/{file_local_path}")
+
+    if mimetype.transcode_to:
+        log.info("requested transcode %r", mimetype)
+        request.timeout = None
+        target_path = await transcode_path(file_id, file_local_path, mimetype)
+        log.info("sending %s", target_path)
+        return await send_file(target_path, mimetype=mimetype.target)
     else:
-        return await send_file(file_local_path, mimetype=mimetype)
+        nginx_host = os.environ.get("NGINX")
+        if nginx_host:
+            return redirect(f"http://{nginx_host}/{file_local_path}")
+        else:
+            return await send_file(file_local_path, mimetype=mimetype.target)
 
 
 def blocking_thumbnail_image(path, thumbnail_path, size):
@@ -592,7 +628,7 @@ def get_extension(mimetype):
     return MIME_EXTENSION_MAPPING[mimetype]
 
 
-MIME_REMAPPING = {"video/x-matroska": "video/mkv"}
+TRANSCODE = {"video/x-matroska": "video/mp4"}
 MIME_OPTIMIZATION = {
     ".jpg": "image/jpeg",
     ".jpeg": "image/jpeg",
@@ -602,15 +638,26 @@ MIME_OPTIMIZATION = {
 }
 
 
+@dataclass
+class Mimetype:
+    raw: str
+    transcode_to: Optional[str] = None
+
+    @property
+    def target(self):
+        return self.transcode_to or self.raw
+
+
 def fetch_mimetype(file_path: str):
     mimetype = app.file_cache.mime_type.get(file_path)
     if not mimetype:
         path = Path(file_path)
         if path.suffix in MIME_OPTIMIZATION:
-            mimetype = MIME_OPTIMIZATION[path.suffix]
+            mimetype = Mimetype(MIME_OPTIMIZATION[path.suffix])
         else:
-            mimetype = magic.from_file(file_path, mime=True)
-            mimetype = MIME_REMAPPING.get(mimetype, mimetype)
+            mimetype = Mimetype(magic.from_file(file_path, mime=True))
+
+        mimetype.transcode_to = TRANSCODE.get(mimetype.raw)
         app.file_cache.mime_type[file_path] = mimetype
     return mimetype
 
@@ -673,7 +720,8 @@ async def _thumbnail_wrapper(semaphore, function, local_path, thumb_path):
         return await function(local_path, thumb_path)
 
 
-async def submit_thumbnail(file_id, mimetype, file_local_path, thumbnail_path):
+async def submit_thumbnail(file_id, mimetype_packed, file_local_path, thumbnail_path):
+    mimetype = mimetype_packed.target
     if mimetype.startswith("image/"):
         thumbnailing_function = thumbnail_given_path
         semaphore = app.image_thumbnail_semaphore
@@ -725,8 +773,8 @@ async def thumbnail(file_id: int):
         return "", 404
 
     mimetype = fetch_mimetype(file_local_path)
-    extension = get_extension(mimetype)
-    log.info("thumbnailing mime %s ext %r", mimetype, extension)
+    extension = get_extension(mimetype.target)
+    log.info("thumbnailing mime %s ext %r", mimetype.target, extension)
     assert extension is not None
 
     thumbnail_path = THUMBNAIL_FOLDER / f"{file_id}{extension}"
@@ -1017,19 +1065,19 @@ async def fetch_file_entity(
         return None
 
     file_mime = fetch_mimetype(file_local_path)
-    returned_file["mimeType"] = file_mime
+    returned_file["mimeType"] = file_mime.target
 
     if "type" in fields:
         file_type = app.file_cache.file_type.get(file_id)
         if not file_type:
-            if file_mime.startswith("image/"):
+            if file_mime.raw.startswith("image/"):
                 file_type = "image"
-                if file_mime == "image/gif":
+                if file_mime.raw == "image/gif":
                     file_type = "animation"
 
-            elif file_mime.startswith("video/"):
+            elif file_mime.raw.startswith("video/"):
                 file_type = "video"
-            elif file_mime.startswith("audio/"):
+            elif file_mime.raw.startswith("audio/"):
                 file_type = "audio"
             else:
                 file_type = "image"
