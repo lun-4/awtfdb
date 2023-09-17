@@ -220,6 +220,10 @@ test "renaming with index support" {
     var indexed_file1 = try ctx.createFileFromDir(tmp.dir, "test_file1", .{});
     defer indexed_file1.deinit();
 
+    var buf: [8192]u8 = undefined;
+    const real = try tmp.dir.realpath("test_file1", &buf);
+    std.debug.print("\n{s}\n", .{real});
+
     var paths = [_][]const u8{"test_file1"};
     var to_path = "test_file2";
 
