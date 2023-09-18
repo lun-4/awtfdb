@@ -22,4 +22,5 @@ jobs:
       - run: zig fmt deps.zig
       - run: sudo apt install -y libmagic1 libgraphicsmagick-q16-3 libgraphicsmagick1-dev
       - run: zig build test -freference-trace --verbose --verbose-link --verbose-cc
+      - run: zig build
       - run: ci/smoketest.sh
