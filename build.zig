@@ -47,7 +47,7 @@ pub fn build(b: *std.build.Builder) !void {
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&run_unit_tests.step);
 
-    if (optimize == .Debug) {
+    if (optimize == .Debug or optimize == .ReleaseSafe) {
         const single_exe = b.addExecutable(
             .{
                 .name = "wrapper-awtfdb",
