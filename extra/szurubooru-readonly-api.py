@@ -939,8 +939,8 @@ async def fetch_tag(core_hash) -> list:
         app.tag_cache[core_hash] = tag_entry
 
         if tag_entry and not usages_from_metrics:
-            log.info("tag %s has no metrics, calculating in background...", core_hash)
-            asyncio.create_task(calculate_usages_manually(core_hash))
+            log.info("tag %s has no metrics", core_hash)
+            # asyncio.create_task(calculate_usages_manually(core_hash))
 
     tags_result = []
 
