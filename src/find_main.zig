@@ -376,9 +376,13 @@ pub const SqlGiver = struct {
 
         pub fn deinit(self: @This()) void {
             switch (self) {
-                .Ok => |ok_body| {
-                    ok_body.allocator.free(ok_body.query);
-                    ok_body.allocator.free(ok_body.arguments);
+                .Ok => {
+                    // TODO this is a hack. it should unpack the body
+                    // unpacking causes a segfault where the body just
+                    // doesnt have shit (on 0.11.0 and 0.12.0-dev.415+5af5d87ad)
+                    // idfk if i wanna make a bug report about this, it's not easy to repro
+                    self.Ok.allocator.free(self.Ok.query);
+                    self.Ok.allocator.free(self.Ok.arguments);
                 },
                 .Error => {},
             }
