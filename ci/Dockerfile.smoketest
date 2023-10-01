@@ -8,4 +8,4 @@ RUN /zig-linux-x86_64-0.11.0/zig version
 RUN apk add graphicsmagick graphicsmagick-dev
 ADD . /awtfdb
 WORKDIR /awtfdb
-RUN /zig-linux-x86_64-0.11.0/zig build
+RUN /zig-linux-x86_64-0.11.0/zig build -Doptimize=ReleaseSafe
