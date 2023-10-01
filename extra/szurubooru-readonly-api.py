@@ -343,7 +343,7 @@ def compile_query(search_query: str) -> CompiledSearch:
     or_operator = re.compile("( +)?\\|( +)?")
     not_operator = re.compile("( +)?-( +)?")
     and_operator = re.compile(" +")
-    tag_regex = re.compile("[a-zA-Z-_0-9:;&\\*\(\)]+")
+    tag_regex = re.compile("[a-zA-Z-_0-9:;&\\*\(\)!]+")
     raw_tag_regex = re.compile('".*?"')
 
     regexes = (
@@ -796,7 +796,7 @@ def request_wanted_fields() -> Optional[List[str]]:
 
 
 def request_query_field():
-    return request.args.get("query", "").strip().replace("\\:", ":")
+    return request.args.get("query", "").strip().replace("\\:", ":").replace("\\!", "!")
 
 
 @app.get("/posts/")
