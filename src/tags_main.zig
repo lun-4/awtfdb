@@ -962,7 +962,7 @@ test "remove parent (no entry deletion)" {
     for (file_tags) |file_tag| {
         if (std.meta.eql(file_tag.core.id, ids.parent_tag_core_id)) {
             try std.testing.expectEqual(manage_main.TagSourceType.system, file_tag.source.kind);
-            try std.testing.expectEqual(@as(i64, @enumToInt(manage_main.SystemTagSources.manual_insertion)), file_tag.source.id);
+            try std.testing.expectEqual(@as(i64, @intFromEnum(manage_main.SystemTagSources.manual_insertion)), file_tag.source.id);
             try std.testing.expectEqual(@as(?i64, null), file_tag.parent_source_id);
             saw_parent_tag_without_source = true;
         }

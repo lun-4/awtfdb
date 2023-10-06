@@ -345,7 +345,7 @@ pub const ID = struct {
 
     pub fn generate() Self {
         var rng = std.rand.DefaultPrng.init(
-            @truncate(u64, @intCast(u128, std.time.nanoTimestamp())),
+            @as(u64, @truncate(@as(u128, @intCast(std.time.nanoTimestamp())))),
         );
         const rand = rng.random();
         const generated_ulid = ulidFromTimestamp(rand, std.time.milliTimestamp());
@@ -354,7 +354,7 @@ pub const ID = struct {
 
     pub fn generateWithTimestamp(milliTimestamp: anytype) Self {
         var rng = std.rand.DefaultPrng.init(
-            @truncate(u64, @intCast(u128, std.time.nanoTimestamp())),
+            @as(u64, @truncate(@as(u128, @intCast(std.time.nanoTimestamp())))),
         );
         const rand = rng.random();
 
@@ -442,7 +442,7 @@ pub fn loadDatabase(allocator: std.mem.Allocator, given_options: LoadDatabaseOpt
         options.home_path = home_path;
     }
 
-    const db_path_cstr = try std.cstr.addNullByte(allocator, options.db_path.?);
+    const db_path_cstr = try allocator.dupeZ(u8, options.db_path.?);
     defer allocator.free(db_path_cstr);
 
     var diags: sqlite.Diagnostics = undefined;
@@ -846,7 +846,7 @@ pub const Context = struct {
     /// Caller owns the returned memory.
     fn randomCoreData(self: *Self, core_output: []u8) void {
         _ = self;
-        const seed = @truncate(u64, @bitCast(u128, std.time.nanoTimestamp()));
+        const seed = @as(u64, @truncate(@as(u128, @bitCast(std.time.nanoTimestamp()))));
         var r = std.rand.DefaultPrng.init(seed);
         for (core_output, 0..) |_, index| {
             var random_byte = r.random().uintAtMost(u8, 255);
@@ -925,10 +925,7 @@ pub const Context = struct {
 
             if (tag_name_regex) |tag_name_regex_string| {
                 defer self.allocator.free(tag_name_regex_string);
-                self.library_config.tag_name_regex_string = try std.cstr.addNullByte(
-                    self.allocator,
-                    tag_name_regex_string,
-                );
+                self.library_config.tag_name_regex_string = try self.allocator.dupeZ(u8, tag_name_regex_string);
 
                 self.library_config.tag_name_regex = try libpcre.Regex.compile(
                     self.library_config.tag_name_regex_string.?,
@@ -941,7 +938,7 @@ pub const Context = struct {
     pub fn updateLibraryConfig(self: *Self, field: LibraryConfiguration.FieldUpdateRequest) !void {
         switch (field) {
             .tag_name_regex => |new_regex| {
-                const new_regex_cstr = try std.cstr.addNullByte(self.allocator, new_regex);
+                const new_regex_cstr = try self.allocator.dupeZ(u8, new_regex);
                 defer self.allocator.free(new_regex_cstr);
                 const regex = libpcre.Regex.compile(new_regex_cstr, DefaultRegexOptions) catch |err| {
                     logger.err("failed to compile regex: {s}", .{@errorName(err)});
@@ -1072,7 +1069,7 @@ pub const Context = struct {
             if (options.source) |source| {
                 if (options.parent_source_id) |parent_source_id| {
                     if (source.kind != TagSourceType.system) return error.InvalidSourceType;
-                    if (source.id != @enumToInt(SystemTagSources.tag_parenting)) {
+                    if (source.id != @intFromEnum(SystemTagSources.tag_parenting)) {
                         logger.err("expected tag parent source, got {}", .{source});
                         return error.InvalidSourceID;
                     }
@@ -1082,7 +1079,7 @@ pub const Context = struct {
                         \\values (?, ?, ?, ?, ?) on conflict do nothing
                     ,
                         .{},
-                        .{ core_hash.id.sql(), self.hash.id.sql(), @enumToInt(source.kind), source.id, parent_source_id },
+                        .{ core_hash.id.sql(), self.hash.id.sql(), @intFromEnum(source.kind), source.id, parent_source_id },
                     );
                 } else {
                     try self.ctx.db.exec(
@@ -1090,7 +1087,7 @@ pub const Context = struct {
                         \\values (?, ?, ?, ?) on conflict do nothing
                     ,
                         .{},
-                        .{ core_hash.id.sql(), self.hash.id.sql(), @enumToInt(source.kind), source.id },
+                        .{ core_hash.id.sql(), self.hash.id.sql(), @intFromEnum(source.kind), source.id },
                     );
                 }
             } else {
@@ -1159,7 +1156,7 @@ pub const Context = struct {
                 try self.ctx.db.exec(
                     "delete from tag_sources where type = ? and id = ?",
                     .{},
-                    .{ @enumToInt(TagSourceType.external), self.id },
+                    .{ @intFromEnum(TagSourceType.external), self.id },
                 );
             }
         };
@@ -1208,7 +1205,7 @@ pub const Context = struct {
                     .core = hash_with_blob.toRealHash(),
                     .source = Source{
                         .ctx = self.ctx,
-                        .kind = @intToEnum(TagSourceType, row.tag_source_type),
+                        .kind = @as(TagSourceType, @enumFromInt(row.tag_source_type)),
                         .id = row.tag_source_id,
                     },
                     .parent_source_id = row.parent_source_id,
@@ -1273,7 +1270,7 @@ pub const Context = struct {
         try self.db.exec(
             "insert into tag_sources (type, id, name) values (?, ?, ?)",
             .{},
-            .{ @enumToInt(TagSourceType.external), source_id, name },
+            .{ @intFromEnum(TagSourceType.external), source_id, name },
         );
 
         return File.Source{ .ctx = self, .kind = .external, .id = source_id };
@@ -1292,7 +1289,7 @@ pub const Context = struct {
                     struct { type: i64, id: i64 },
                     "select type, id from tag_sources where type = ? and id = ?",
                     .{},
-                    .{ @enumToInt(TagSourceType.external), id },
+                    .{ @intFromEnum(TagSourceType.external), id },
                 );
 
                 if (maybe_row) |row| {
@@ -1657,7 +1654,7 @@ pub const Context = struct {
             });
 
             try file.addTag(.{ .id = tag_entry.tag_id, .hash_data = undefined }, .{
-                .source = try self.fetchTagSource(.system, @enumToInt(SystemTagSources.tag_parenting)),
+                .source = try self.fetchTagSource(.system, @intFromEnum(SystemTagSources.tag_parenting)),
                 .parent_source_id = tag_entry.parent_entry_id,
             });
         }
@@ -1977,7 +1974,7 @@ pub fn log(
     comptime format: []const u8,
     args: anytype,
 ) void {
-    if (@enumToInt(message_level) <= @enumToInt(@import("root").current_log_level)) {
+    if (@intFromEnum(message_level) <= @intFromEnum(@import("root").current_log_level)) {
         std.log.defaultLog(message_level, scope, format, args);
     }
 }
@@ -2371,7 +2368,7 @@ test "tag parenting" {
     for (file_tags) |file_tag| {
         if (std.meta.eql(file_tag.core.id, parent_tag.core.id)) {
             try std.testing.expectEqual(TagSourceType.system, file_tag.source.kind);
-            try std.testing.expectEqual(@as(i64, @enumToInt(SystemTagSources.tag_parenting)), file_tag.source.id);
+            try std.testing.expectEqual(@as(i64, @intFromEnum(SystemTagSources.tag_parenting)), file_tag.source.id);
             try std.testing.expectEqual(tag_tree_entry_id, file_tag.parent_source_id.?);
             saw_parent = true;
         }

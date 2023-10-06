@@ -605,7 +605,7 @@ pub fn main() anyerror!void {
 
     const pidfd_rc = std.os.linux.pidfd_open(proc.id, 0);
     switch (std.os.errno(pidfd_rc)) {
-        .SUCCESS => pidfd = @intCast(std.os.fd_t, pidfd_rc),
+        .SUCCESS => pidfd = @as(std.os.fd_t, @intCast(pidfd_rc)),
         .INVAL => unreachable,
         .NFILE, .MFILE => return error.TooManyFileDescriptors,
         .NODEV => return error.NoDevice,

@@ -184,7 +184,7 @@ test "validate snowflake migration works" {
         \\insert into metrics_tag_usage_values (timestamp, core_hash, relationship_count) values (0, 4, 2);
     , .{ file_realpath, file2_realpath, file3_realpath, AMOGUS, AMOGUS2 });
     defer ctx.allocator.free(query);
-    const query_cstr = try std.cstr.addNullByte(ctx.allocator, query);
+    const query_cstr = try ctx.allocator.dupeZ(u8, query);
     defer ctx.allocator.free(query_cstr);
     std.log.warn("query={s}", .{query});
 

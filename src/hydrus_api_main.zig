@@ -164,7 +164,7 @@ fn mainHandler(
     logger.info("{s} {s} {d}", .{
         methodString(request),
         request.path(),
-        @enumToInt(response.status_code),
+        @intFromEnum(response.status_code),
     });
 }
 

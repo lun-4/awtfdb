@@ -196,7 +196,7 @@ pub fn main() anyerror!void {
             defer walker.deinit();
 
             while (try walker.next()) |entry| {
-                if (entry.kind != .File) continue;
+                if (entry.kind != .file) continue;
                 logger.debug("checking path {s}", .{entry.path});
                 var inner_realpath_buffer: [std.os.PATH_MAX]u8 = undefined;
                 const inner_full_path = try entry.dir.realpath(entry.basename, &inner_realpath_buffer);

@@ -48,7 +48,7 @@ fn migrateFiles(self: *Context) !void {
     defer stmt.deinit();
 
     var rng = std.rand.DefaultPrng.init(
-        @truncate(u64, @intCast(u128, std.time.nanoTimestamp())),
+        @as(u64, @truncate(@as(u128, @intCast(std.time.nanoTimestamp())))),
     );
     const random = rng.random();
 
@@ -113,7 +113,7 @@ fn migrateFiles(self: *Context) !void {
 
 fn migrateCores(self: *Context) !void {
     var rng = std.rand.DefaultPrng.init(
-        @truncate(u64, @intCast(u128, std.time.nanoTimestamp())),
+        @as(u64, @truncate(@as(u128, @intCast(std.time.nanoTimestamp())))),
     );
     const random = rng.random();
 
@@ -262,7 +262,7 @@ fn migrateTagFiles(self: *Context) !void {
 }
 
 fn migratePools(self: *Context) !void {
-    var rng = std.rand.DefaultPrng.init(@truncate(u64, @intCast(u128, std.time.nanoTimestamp())));
+    var rng = std.rand.DefaultPrng.init(@as(u64, @truncate(@as(u128, @intCast(std.time.nanoTimestamp())))));
     const random = rng.random();
 
     var stmt = try self.db.prepare(

@@ -16,8 +16,8 @@ const EXECUTABLES = .{
 
 fn addGraphicsMagick(thing: anytype) void {
     thing.linkLibC();
-    thing.addIncludePath("/usr/include");
-    thing.addIncludePath("/usr/include/GraphicsMagick");
+    thing.addIncludePath(.{ .path = "/usr/include" });
+    thing.addIncludePath(.{ .path = "/usr/include/GraphicsMagick" });
 }
 
 pub fn build(b: *std.build.Builder) !void {
@@ -39,13 +39,15 @@ pub fn build(b: *std.build.Builder) !void {
         },
     );
 
+    const run_unit_tests = b.addRunArtifact(exe_tests);
+
     addGraphicsMagick(exe_tests);
     deps.addAllTo(exe_tests);
 
     const test_step = b.step("test", "Run unit tests");
-    test_step.dependOn(&exe_tests.step);
+    test_step.dependOn(&run_unit_tests.step);
 
-    if (optimize == .Debug) {
+    if (optimize == .Debug or optimize == .ReleaseSafe) {
         const single_exe = b.addExecutable(
             .{
                 .name = "wrapper-awtfdb",
@@ -57,20 +59,22 @@ pub fn build(b: *std.build.Builder) !void {
 
         deps.addAllTo(single_exe);
         addGraphicsMagick(single_exe);
+        b.installArtifact(single_exe);
 
         const hardlink_install = try b.allocator.create(CustomHardLinkStep);
+
+        var hardlink_step = std.build.Step.init(.{
+            .id = .custom,
+            .name = "link the utils",
+            .owner = b,
+            .makeFn = CustomHardLinkStep.make,
+        });
         hardlink_install.* = .{
             .builder = b,
-            .step = std.build.Step.init(.{
-                .id = .custom,
-                .name = "link the utils",
-                .owner = b,
-                .makeFn = CustomHardLinkStep.make,
-            }),
+            .step = hardlink_step,
             .exe = single_exe,
         };
         hardlink_install.step.dependOn(&single_exe.step);
-
         b.getInstallStep().dependOn(&hardlink_install.step);
     } else {
         // release modes build all exes separately
@@ -87,7 +91,7 @@ pub fn build(b: *std.build.Builder) !void {
                 },
             );
 
-            tool_exe.install();
+            b.installArtifact(tool_exe);
             addGraphicsMagick(tool_exe);
             deps.addAllTo(tool_exe);
         }
@@ -106,18 +110,18 @@ const CustomHardLinkStep = struct {
         const self: *Self = @fieldParentPtr(Self, "step", step);
         const builder = self.builder;
 
+        const wrapmain_path = self.exe.getEmittedBin().getPath(builder);
         inline for (EXECUTABLES) |exec_decl| {
             const exec_name = exec_decl.@"0";
             const full_dest_path = builder.getInstallPath(.{ .bin = {} }, exec_name);
+            std.debug.print("{s} -> {s}\n", .{ wrapmain_path, full_dest_path });
             _ = try std.fs.Dir.updateFile(
                 std.fs.cwd(),
-                self.exe.output_path_source.path.?,
+                wrapmain_path,
                 std.fs.cwd(),
                 full_dest_path,
                 .{},
             );
-
-            //try builder.updateFile(self.exe.output_path_source.path.?, full_dest_path);
         }
     }
 };
