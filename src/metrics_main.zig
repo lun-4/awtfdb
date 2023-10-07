@@ -243,12 +243,12 @@ test "metrics (tags)" {
     var ctx = try manage_main.makeTestContext();
     defer ctx.deinit();
 
-    var tag1 = try ctx.createNamedTag("test_tag1", "en", null);
-    var tag2 = try ctx.createNamedTag("test_tag2", "en", null);
+    var tag1 = try ctx.createNamedTag("test_tag1", "en", null, .{});
+    var tag2 = try ctx.createNamedTag("test_tag2", "en", null, .{});
     _ = tag2;
-    var tag3 = try ctx.createNamedTag("test_tag3", "en", null);
+    var tag3 = try ctx.createNamedTag("test_tag3", "en", null, .{});
     _ = tag3;
-    var tag_named1 = try ctx.createNamedTag("test_tag1_samecore", "en", tag1.core);
+    var tag_named1 = try ctx.createNamedTag("test_tag1_samecore", "en", tag1.core, .{});
     _ = tag_named1;
 
     // run metrics code
@@ -268,10 +268,10 @@ test "metrics (tags and files)" {
 
     // setup tags
 
-    var tag1 = try ctx.createNamedTag("test_tag1", "en", null);
-    var tag2 = try ctx.createNamedTag("test_tag2", "en", null);
-    var tag3 = try ctx.createNamedTag("test_tag3", "en", null);
-    var tag_named1 = try ctx.createNamedTag("test_tag1_samecore", "en", tag1.core);
+    var tag1 = try ctx.createNamedTag("test_tag1", "en", null, .{});
+    var tag2 = try ctx.createNamedTag("test_tag2", "en", null, .{});
+    var tag3 = try ctx.createNamedTag("test_tag3", "en", null, .{});
+    var tag_named1 = try ctx.createNamedTag("test_tag1_samecore", "en", tag1.core, .{});
 
     // setup files
 

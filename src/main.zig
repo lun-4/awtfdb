@@ -959,7 +959,7 @@ pub const Context = struct {
         self.resetConfig();
     }
 
-    pub fn verifyTagName(self: *Self, text: []const u8) !void {
+    pub fn verifyTagName(self: *Self, text: []const u8, options: CreateNamedTagOptions) !void {
         try self.wantConfigFields(.{ .tag_name_regex = true });
         if (self.library_config.tag_name_regex) |regex| {
             const maybe_capture = try regex.matches(text, .{});
@@ -969,14 +969,14 @@ pub const Context = struct {
                 const is_at_end = capture.end == text.len;
 
                 if (!(is_at_start and is_at_end)) {
-                    self.setLastError(.{ .tag_name_regex = .{
+                    options.setError(.{ .invalid_tag_name = .{
                         .full_regex = self.library_config.tag_name_regex_string.?,
                         .matched_result = text[capture.start..capture.end],
                     } });
                     return error.InvalidTagName;
                 }
             } else {
-                self.setLastError(.{ .tag_name_regex = .{
+                options.setError(.{ .invalid_tag_name = .{
                     .full_regex = self.library_config.tag_name_regex_string.?,
                     .matched_result = null,
                 } });
@@ -985,13 +985,68 @@ pub const Context = struct {
         }
     }
 
+    pub const CreateNamedTagError = union(enum) {
+        none: void,
+        invalid_tag_name: struct {
+            full_regex: []const u8,
+            matched_result: ?[]const u8 = null,
+        },
+
+        pub fn format(
+            self: @This(),
+            comptime f: []const u8,
+            options: std.fmt.FormatOptions,
+            writer: anytype,
+        ) !void {
+            _ = f;
+            _ = options;
+            return switch (self) {
+                .invalid_tag_name => |data| if (data.matched_result) |matched|
+                    std.fmt.format(
+                        writer,
+                        "regex {s} does not match to given tag name, only '{?s}'",
+                        .{ data.full_regex, matched },
+                    )
+                else
+                    std.fmt.format(
+                        writer,
+                        "regex {s} does not match to given tag name",
+                        .{data.full_regex},
+                    ),
+                .none => {},
+            };
+        }
+    };
+
+    pub const CreateNamedTagOptions = struct {
+        error_output: ?*CreateNamedTagError = null,
+
+        pub fn logError(self: @This()) void {
+            if (self.error_output) |error_output_ptr| {
+                switch (error_output_ptr.*) {
+                    .none => {},
+                    else => logger.err("an error happened: {}", .{error_output_ptr.*}),
+                }
+            }
+        }
+
+        pub fn setError(self: @This(), error_data: CreateNamedTagError) void {
+            if (self.error_output) |error_output_ptr| {
+                error_output_ptr.* = error_data;
+            } else {
+                logger.err("an error happened: {}", .{error_data});
+            }
+        }
+    };
+
     pub fn createNamedTag(
         self: *Self,
         text: []const u8,
         language: []const u8,
         maybe_core: ?Hash,
+        options: CreateNamedTagOptions,
     ) !Tag {
-        try self.verifyTagName(text);
+        try self.verifyTagName(text, options);
 
         var core_hash: Hash = undefined;
         if (maybe_core) |existing_core_hash| {
@@ -2187,7 +2242,7 @@ test "tag creation" {
     var ctx = try makeTestContext();
     defer ctx.deinit();
 
-    var tag = try ctx.createNamedTag("test_tag", "en", null);
+    var tag = try ctx.createNamedTag("test_tag", "en", null, .{});
     var fetched_tag = (try ctx.fetchNamedTag("test_tag", "en")).?;
 
     try std.testing.expectEqualStrings("test_tag", tag.kind.Named.text);
@@ -2198,7 +2253,7 @@ test "tag creation" {
     try std.testing.expectEqual(tag.core.id, fetched_tag.core.id);
     try std.testing.expectEqualStrings(tag.core.hash_data[0..], fetched_tag.core.hash_data[0..]);
 
-    var same_core_tag = try ctx.createNamedTag("another_test_tag", "en", tag.core);
+    var same_core_tag = try ctx.createNamedTag("another_test_tag", "en", tag.core, .{});
     var fetched_same_core_tag = (try ctx.fetchNamedTag("another_test_tag", "en")).?;
     try std.testing.expectEqualStrings(tag.core.hash_data[0..], same_core_tag.core.hash_data[0..]);
     try std.testing.expectEqualStrings(fetched_tag.core.hash_data[0..], fetched_same_core_tag.core.hash_data[0..]);
@@ -2279,7 +2334,7 @@ test "file and tags" {
     var indexed_file = try ctx.createFileFromDir(tmp.dir, "test_file", .{});
     defer indexed_file.deinit();
 
-    var tag = try ctx.createNamedTag("test_tag", "en", null);
+    var tag = try ctx.createNamedTag("test_tag", "en", null, .{});
 
     // add tag
     try indexed_file.addTag(tag.core, .{});
@@ -2310,7 +2365,7 @@ test "in memory database" {
     var ctx = try makeTestContextRealFile();
     defer ctx.deinit();
 
-    var tag1 = try ctx.createNamedTag("test_tag", "en", null);
+    var tag1 = try ctx.createNamedTag("test_tag", "en", null, .{});
     _ = tag1;
 
     try ctx.turnIntoMemoryDb();
@@ -2318,7 +2373,7 @@ test "in memory database" {
     var tag1_inmem = try ctx.fetchNamedTag("test_tag", "en");
     try std.testing.expect(tag1_inmem != null);
 
-    var tag2 = try ctx.createNamedTag("test_tag2", "en", null);
+    var tag2 = try ctx.createNamedTag("test_tag2", "en", null, .{});
     _ = tag2;
 
     var tag2_inmem = try ctx.fetchNamedTag("test_tag2", "en");
@@ -2343,13 +2398,13 @@ test "tag parenting" {
     var indexed_file = try ctx.createFileFromDir(tmp.dir, "test_file", .{});
     defer indexed_file.deinit();
 
-    var child_tag = try ctx.createNamedTag("child_test_tag", "en", null);
+    var child_tag = try ctx.createNamedTag("child_test_tag", "en", null, .{});
     try indexed_file.addTag(child_tag.core, .{});
 
     // only add this through inferrence
-    var parent_tag = try ctx.createNamedTag("parent_test_tag", "en", null);
-    var parent_tag2 = try ctx.createNamedTag("parent_test_tag2", "en", null);
-    var parent_tag3 = try ctx.createNamedTag("parent_test_tag3", "en", null);
+    var parent_tag = try ctx.createNamedTag("parent_test_tag", "en", null, .{});
+    var parent_tag2 = try ctx.createNamedTag("parent_test_tag2", "en", null, .{});
+    var parent_tag3 = try ctx.createNamedTag("parent_test_tag3", "en", null, .{});
     const tag_tree_entry_id = try ctx.createTagParent(child_tag, parent_tag);
     const tag_tree_entry2_id = try ctx.createTagParent(child_tag, parent_tag2);
     const tag_tree_entry3_id = try ctx.createTagParent(parent_tag2, parent_tag3);
@@ -2415,7 +2470,7 @@ test "file pools" {
     var indexed_file3 = try ctx.createFileFromDir(tmp.dir, "test_file3", .{});
     defer indexed_file3.deinit();
 
-    var child_tag = try ctx.createNamedTag("child_test_tag", "en", null);
+    var child_tag = try ctx.createNamedTag("child_test_tag", "en", null, .{});
     try indexed_file1.addTag(child_tag.core, .{});
     try indexed_file2.addTag(child_tag.core, .{});
     try indexed_file3.addTag(child_tag.core, .{});
@@ -2530,8 +2585,8 @@ test "tag sources" {
     var source2 = try ctx.createTagSource("my test tag source 2", .{});
     _ = source2;
 
-    var tag1 = try ctx.createNamedTag("child_test_tag", "en", null);
-    var tag2 = try ctx.createNamedTag("child_test_tag2", "en", null);
+    var tag1 = try ctx.createNamedTag("child_test_tag", "en", null, .{});
+    var tag2 = try ctx.createNamedTag("child_test_tag2", "en", null, .{});
 
     try indexed_file1.addTag(tag1.core, .{ .source = source });
     try indexed_file1.addTag(tag2.core, .{ .source = null });
@@ -2557,9 +2612,9 @@ test "tag name regex" {
     defer std.testing.allocator.free(TEST_TAG_REGEX);
     try ctx.updateLibraryConfig(.{ .tag_name_regex = TEST_TAG_REGEX });
 
-    try std.testing.expectError(error.InvalidTagName, ctx.createNamedTag("my test tag", "en", null));
+    try std.testing.expectError(error.InvalidTagName, ctx.createNamedTag("my test tag", "en", null, .{}));
     try std.testing.expect(ctx.getLastError() != null);
-    _ = try ctx.createNamedTag("correct_tag_source", "en", null);
+    _ = try ctx.createNamedTag("correct_tag_source", "en", null, .{});
 }
 
 test "everyone else" {

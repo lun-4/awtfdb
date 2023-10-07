@@ -892,7 +892,7 @@ fn addTagList(
         if (maybe_tag) |tag| {
             try file.addTag(tag.core, .{});
         } else {
-            var tag = try ctx.createNamedTag(named_tag_text, "en", null);
+            var tag = try ctx.createNamedTag(named_tag_text, "en", null, .{});
             try file.addTag(tag.core, .{});
         }
     }
@@ -1045,7 +1045,7 @@ pub fn main() anyerror!void {
                 logger.err("strict mode is on. '{s}' is an unknown tag", .{named_tag_text});
             } else {
                 // TODO support ISO 639-1 for language codes
-                var new_tag = try ctx.createNamedTag(named_tag_text, "en", null);
+                var new_tag = try ctx.createNamedTag(named_tag_text, "en", null, .{});
                 logger.debug(
                     "(created!) tag '{s}' with core {s}",
                     .{ named_tag_text, new_tag.core },

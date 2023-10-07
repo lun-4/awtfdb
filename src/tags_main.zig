@@ -212,13 +212,13 @@ const CreateAction = struct {
             logger.info("deleted {d} tag names", .{deleted_tag_names});
 
             // and create the proper alias (can only be done after deletion)
-            const aliased_tag = try self.ctx.createNamedTag(self.config.tag.?, "en", tag_to_be_aliased_to);
+            const aliased_tag = try self.ctx.createNamedTag(self.config.tag.?, "en", tag_to_be_aliased_to, .{});
             logger.info("full tag info: {}", .{aliased_tag});
 
             return;
         }
 
-        const tag = try self.ctx.createNamedTag(self.config.tag.?, "en", maybe_core);
+        const tag = try self.ctx.createNamedTag(self.config.tag.?, "en", maybe_core, .{});
 
         try stdout.print(
             "created tag with core '{s}' name '{s}'\n",
@@ -248,8 +248,8 @@ test "create action (aliasing)" {
     var ctx = try manage_main.makeTestContext();
     defer ctx.deinit();
 
-    var tag1 = try ctx.createNamedTag("test tag1", "en", null);
-    var tag2_before_alias = try ctx.createNamedTag("test tag2", "en", null);
+    var tag1 = try ctx.createNamedTag("test tag1", "en", null, .{});
+    var tag2_before_alias = try ctx.createNamedTag("test tag2", "en", null, .{});
 
     try std.testing.expect(!std.meta.eql(tag2_before_alias.core.id, tag1.core.id));
 
@@ -496,10 +496,10 @@ test "remove action" {
     var ctx = try manage_main.makeTestContext();
     defer ctx.deinit();
 
-    var tag = try ctx.createNamedTag("test tag", "en", null);
-    var tag2 = try ctx.createNamedTag("test tag2", "en", tag.core);
+    var tag = try ctx.createNamedTag("test tag", "en", null, .{});
+    var tag2 = try ctx.createNamedTag("test tag2", "en", tag.core, .{});
     _ = tag2;
-    var tag3 = try ctx.createNamedTag("test tag3", "en", null);
+    var tag3 = try ctx.createNamedTag("test tag3", "en", null, .{});
 
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
@@ -983,15 +983,15 @@ fn parentTestSetup(
     ctx: *Context,
     indexed_file: *Context.File,
 ) !ParentTestSetupResult {
-    var child_tag = try ctx.createNamedTag("child_test_tag", "en", null);
+    var child_tag = try ctx.createNamedTag("child_test_tag", "en", null, .{});
     try indexed_file.addTag(child_tag.core, .{});
 
     // only add this through inferrence
     // child_tag -> parent_tag, parent_tag2
     // parent_tag2 -> parent_tag3
-    var parent_tag = try ctx.createNamedTag("parent_test_tag", "en", null);
-    var parent_tag2 = try ctx.createNamedTag("parent_test_tag2", "en", null);
-    var parent_tag3 = try ctx.createNamedTag("parent_test_tag3", "en", null);
+    var parent_tag = try ctx.createNamedTag("parent_test_tag", "en", null, .{});
+    var parent_tag2 = try ctx.createNamedTag("parent_test_tag2", "en", null, .{});
+    var parent_tag3 = try ctx.createNamedTag("parent_test_tag3", "en", null, .{});
     const tag_tree_entry_id = try ctx.createTagParent(child_tag, parent_tag);
     const tag_tree_entry2_id = try ctx.createTagParent(child_tag, parent_tag2);
     const tag_tree_entry3_id = try ctx.createTagParent(parent_tag2, parent_tag3);

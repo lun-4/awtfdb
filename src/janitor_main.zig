@@ -214,7 +214,7 @@ pub fn janitorCheckTagNameRegex(
         defer ctx.allocator.free(row.tag_text);
         logger.debug("verify tag: {s}", .{row.tag_text});
 
-        ctx.verifyTagName(row.tag_text) catch |err| {
+        ctx.verifyTagName(row.tag_text, .{}) catch |err| {
             logger.warn("tag name '{s}' does not match regex ({s})", .{ row.tag_text, @errorName(err) });
             counters.invalid_tag_name.total += 1;
             counters.invalid_tag_name.unrepairable += 1;
@@ -541,7 +541,7 @@ test "janitor functionality" {
     var indexed_file = try ctx.createFileFromDir(tmp.dir, "test_file", .{});
     defer indexed_file.deinit();
 
-    var tag = try ctx.createNamedTag("test_tag", "en", null);
+    var tag = try ctx.createNamedTag("test_tag", "en", null, .{});
     try indexed_file.addTag(tag.core, .{});
 
     var counters: ErrorCounters = .{};
@@ -558,10 +558,10 @@ test "tag name regex retroactive checker" {
     var ctx = try manage_main.makeTestContext();
     defer ctx.deinit();
 
-    _ = try ctx.createNamedTag("correct_tag", "en", null);
-    _ = try ctx.createNamedTag("incorrect tag", "en", null);
-    _ = try ctx.createNamedTag("abceddef", "en", null);
-    _ = try ctx.createNamedTag("tag2", "en", null);
+    _ = try ctx.createNamedTag("correct_tag", "en", null, .{});
+    _ = try ctx.createNamedTag("incorrect tag", "en", null, .{});
+    _ = try ctx.createNamedTag("abceddef", "en", null, .{});
+    _ = try ctx.createNamedTag("tag2", "en", null, .{});
 
     // TODO why doesnt a constant string on the stack work on this query
     // TODO API for changing library config
