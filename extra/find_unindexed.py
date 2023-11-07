@@ -5,6 +5,7 @@
 # use: find_unindexed.py path/to/folder
 
 import sys
+import os
 import sqlite3
 import logging
 from pathlib import Path
@@ -39,13 +40,16 @@ def main():
 
     unindexed_files = files_in_folder - indexed_files
     for path in unindexed_files:
-        print(path)
+        if os.environ.get("PRINT_0") == "1":
+            print(str(path) + "\x00", end="", file=sys.stdout)
+        else:
+            print(path, file=sys.stdout)
 
     log.info("%d files in folder", len(files_in_folder))
     log.info("%d files indexed for folder", len(indexed_files))
     log.info("path: %s", folder_to_check)
 
-    print(len(unindexed_files), "unindexed files")
+    log.info("%d unindexed files", len(unindexed_files))
 
 
 if __name__ == "__main__":
