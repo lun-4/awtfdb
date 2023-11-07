@@ -20,7 +20,7 @@ def main():
     db.row_factory = sqlite3.Row
 
     folder_to_check = Path(sys.argv[1]).resolve()
-    files_in_folder = set(folder_to_check.glob("**/*"))
+    files_in_folder = set(f for f in folder_to_check.glob("**/*") if f.is_file())
 
     log.info("%d files in folder", len(files_in_folder))
 
