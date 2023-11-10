@@ -158,10 +158,9 @@ fn renameWithIndex(
     allocator: std.mem.Allocator,
     ctx: *manage_main.Context,
     from_paths: [][]const u8,
-    to_path: []const u8,
+    to_fspath: []const u8,
 ) !void {
-
-    //const maybe_to_dir = try PathHandle.openPath(to_path, .{ .want_file = false });
+    const maybe_to_path = try PathHandle.openPath(to_fspath, .{ .want_file = false });
 
     for (from_paths) |from_path_str| {
         var from_path: PathHandle = try PathHandle.openPath(from_path_str, .{});
@@ -183,23 +182,54 @@ fn renameWithIndex(
                 const old_path_full = try std.fs.cwd().realpathAlloc(allocator, old_path);
                 defer allocator.free(old_path_full);
 
+                var old_file = (try ctx.fetchFileByPath(old_path_full)).?;
+                defer old_file.deinit();
+
+                var target_dir_fspath: ?[]const u8 = null;
+
+                const target_name = if (maybe_to_path) |to_path| switch (to_path) {
+                    .file => return error.FileAlreadyExists, // TODO let people overwrite files lmao
+                    // file-to-dir (with unknown name target)
+                    // we fallback to basename of from_path for this case
+                    .dir => blk: {
+                        target_dir_fspath = to_fspath;
+                        break :blk std.fs.path.basename(from_path_str);
+                    },
+                } else blk: {
+                    // this is file-to-file (with known name target)
+                    target_dir_fspath = std.fs.path.dirname(to_fspath) orelse ".";
+                    break :blk std.fs.path.basename(to_fspath);
+                };
+                logger.info(
+                    "{s} -> {s} (target_dir_fspath={?s}, target_name={s})",
+                    .{ from_path_str, to_fspath, target_dir_fspath, target_name },
+                );
+
+                const target_dir = try std.fs.cwd().openDir(target_dir_fspath.?, .{});
+
                 try std.fs.rename(
                     descriptors.dir,
                     descriptors.basename,
-                    try std.fs.cwd().openDir(std.fs.path.dirname(to_path) orelse ".", .{}),
-                    std.fs.path.basename(to_path),
+                    target_dir,
+                    target_name,
                 );
 
                 // now rename in the index
 
-                const new_path = try std.fs.path.resolve(allocator, &[_][]const u8{to_path});
+                const new_path = try std.fs.path.resolve(
+                    allocator,
+                    &[_][]const u8{ target_dir_fspath.?, target_name },
+                );
                 defer allocator.free(new_path);
 
                 const new_path_full = try std.fs.cwd().realpathAlloc(allocator, new_path);
                 defer allocator.free(new_path_full);
 
-                var old_file = (try ctx.fetchFileByPath(old_path_full)).?;
-                defer old_file.deinit();
+                logger.info("new_path: {s}", .{new_path_full});
+                // ensure that the new path is an actually valid fspath
+                var new_path_handle = try PathHandle.openPath(new_path_full, .{ .want_file = true });
+                defer new_path_handle.close();
+
                 try old_file.setLocalPath(new_path_full);
             },
         }
