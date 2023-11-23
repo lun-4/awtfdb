@@ -357,7 +357,7 @@ def compile_query(search_query: str) -> CompiledSearch:
     if not search_query:
         return CompiledSearch("select distinct file_hash from tag_files", [])
 
-    final_query = ["select file_hash from tag_files where"]
+    final_query = ["select distinct file_hash from tag_files where"]
 
     index = 0
     captured_regex_index = None
@@ -390,10 +390,17 @@ def compile_query(search_query: str) -> CompiledSearch:
                 final_query.append(" intersect")
                 final_query.append(" select file_hash from tag_files where")
             if captured_regex_index in (3, 4):
-                final_query.append(" core_hash = ?")
                 if captured_regex_index == 4:
                     full_match = full_match[1:-1]
-                tags.append(full_match)
+                if full_match.startswith("system:low_tags:"):
+                    _, _, tag_limit = full_match.split(":")
+                    tag_limit = int(tag_limit)
+                    final_query.append(
+                        f" (select count(*) from tag_files tf2 where tf2.file_hash = tag_files.file_hash) < {tag_limit}"
+                    )
+                else:
+                    final_query.append(" core_hash = ?")
+                    tags.append(full_match)
 
         else:
             raise Exception(f"Invalid search query. Unexpected character at {index}")
@@ -820,6 +827,7 @@ async def posts_fetch():
         }
 
     result = compile_query(query)
+    print("compiled query", result)
     mapped_tag_args = []
     for tag_name in result.tags:
         tag_name_cursor = await app.db.execute(

@@ -418,7 +418,7 @@ pub const SqlGiver = struct {
         self: Self,
         allocator: std.mem.Allocator,
         query: []const u8,
-    ) (libpcre.Regex.CompileError || libpcre.Regex.ExecError)!Result {
+    ) (libpcre.Regex.CompileError || libpcre.Regex.ExecError || error{ Overflow, InvalidCharacter })!Result {
         var index: usize = 0;
 
         var list = std.ArrayList(u8).init(allocator);
@@ -511,6 +511,14 @@ pub const SqlGiver = struct {
 
                             try list.writer().print(" file_hash = ?", .{});
                             try arguments.append(Argument{ .file = hash_as_blob });
+                        } else if (std.mem.startsWith(u8, match_text, "system:low_tags:")) {
+                            var it = std.mem.split(u8, match_text, ":");
+
+                            _ = it.next();
+                            _ = it.next();
+                            const tag_limit_str = it.next().?;
+                            const tag_limit = try std.fmt.parseInt(usize, tag_limit_str, 10);
+                            try list.writer().print(" (select count(*) from tag_files tf2 where tf2.file_hash = tag_files.file_hash) < {d}", .{tag_limit});
                         } else {
                             try list.writer().print(" core_hash = ?", .{});
                             try arguments.append(Argument{ .tag = match_text });
