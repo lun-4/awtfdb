@@ -123,6 +123,51 @@ pub fn janitorCheckCores(
     }
 }
 
+pub fn isUnusedHash(ctx: *Context, hash_id_sql: ID.SQL, hash_id: ID) !bool {
+    const doublecheck_id_sql = (try ctx.db.one(
+        ID.SQL,
+        "select id from hashes where id = ?",
+        .{},
+        .{hash_id.sql()},
+    )).?;
+    try std.testing.expectEqualStrings(&hash_id_sql, &doublecheck_id_sql);
+
+    const core_count = (try ctx.db.one(
+        usize,
+        \\ select count(*) from tag_cores
+        \\ where core_hash = ?
+    ,
+        .{},
+        .{hash_id.sql()},
+    )).?;
+
+    if (core_count > 0) return false;
+
+    const file_count = (try ctx.db.one(
+        usize,
+        \\ select count(*) from files
+        \\ where file_hash = ?
+    ,
+        .{},
+        .{hash_id.sql()},
+    )).?;
+
+    if (file_count > 0) return false;
+
+    const pool_count = (try ctx.db.one(
+        usize,
+        \\ select count(*) from pools
+        \\ where pool_hash = ?
+    ,
+        .{},
+        .{hash_id.sql()},
+    )).?;
+
+    if (pool_count > 0) return false;
+
+    return true;
+}
+
 pub fn janitorCheckUnusedHashes(
     ctx: *Context,
     counters: *ErrorCounters,
@@ -137,47 +182,9 @@ pub fn janitorCheckUnusedHashes(
     var hashes_iter = try hashes_stmt.iterator(ID.SQL, .{});
     while (try hashes_iter.next(.{})) |hash_id_sql| {
         const hash_id = ID.new(hash_id_sql);
-        const doublecheck_id_sql = (try ctx.db.one(
-            ID.SQL,
-            "select id from hashes where id = ?",
-            .{},
-            .{hash_id.sql()},
-        )).?;
-        try std.testing.expectEqualStrings(&hash_id_sql, &doublecheck_id_sql);
 
-        const core_count = (try ctx.db.one(
-            usize,
-            \\ select count(*) from tag_cores
-            \\ where core_hash = ?
-        ,
-            .{},
-            .{hash_id.sql()},
-        )).?;
-
-        if (core_count > 0) continue;
-
-        const file_count = (try ctx.db.one(
-            usize,
-            \\ select count(*) from files
-            \\ where file_hash = ?
-        ,
-            .{},
-            .{hash_id.sql()},
-        )).?;
-
-        if (file_count > 0) continue;
-
-        const pool_count = (try ctx.db.one(
-            usize,
-            \\ select count(*) from pools
-            \\ where pool_hash = ?
-        ,
-            .{},
-            .{hash_id.sql()},
-        )).?;
-
-        if (pool_count > 0) continue;
-
+        const is_unused_hash = try isUnusedHash(ctx, hash_id_sql, hash_id);
+        if (!is_unused_hash) continue;
         logger.warn("unused hash in table: {d}", .{hash_id});
 
         counters.unused_hash.total += 1;
