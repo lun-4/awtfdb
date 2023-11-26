@@ -20,36 +20,37 @@ def main():
     db = sqlite3.connect(f"file:{str(path)}?mode=ro", uri=True)
     db.row_factory = sqlite3.Row
 
-    folder_to_check = Path(sys.argv[1]).resolve()
-    files_in_folder = set(f for f in folder_to_check.glob("**/*") if f.is_file())
+    for folder_to_check in sys.argv[1:]:
+        folder_to_check = Path(folder_to_check).resolve()
+        files_in_folder = set(f for f in folder_to_check.glob("**/*") if f.is_file())
 
-    log.info("%d files in folder", len(files_in_folder))
+        log.info("%d files in folder", len(files_in_folder))
 
-    cur = db.cursor()
-    res = cur.execute(
-        """
-        select local_path
-        from files
-        where local_path LIKE ? || '%'
-        """,
-        (str(folder_to_check),),
-    )
-    indexed_files = set()
-    for row in res:
-        indexed_files.add(Path(row["local_path"]))
+        cur = db.cursor()
+        res = cur.execute(
+            """
+            select local_path
+            from files
+            where local_path LIKE ? || '%'
+            """,
+            (str(folder_to_check),),
+        )
+        indexed_files = set()
+        for row in res:
+            indexed_files.add(Path(row["local_path"]))
 
-    unindexed_files = files_in_folder - indexed_files
-    for path in unindexed_files:
-        if os.environ.get("PRINT_0") == "1":
-            print(str(path) + "\x00", end="", file=sys.stdout)
-        else:
-            print(path, file=sys.stdout)
+        unindexed_files = files_in_folder - indexed_files
+        for path in unindexed_files:
+            if os.environ.get("PRINT_0") == "1":
+                print(str(path) + "\x00", end="", file=sys.stdout)
+            else:
+                print(path, file=sys.stdout)
 
-    log.info("%d files in folder", len(files_in_folder))
-    log.info("%d files indexed for folder", len(indexed_files))
-    log.info("path: %s", folder_to_check)
+        log.info("%d files in folder", len(files_in_folder))
+        log.info("%d files indexed for folder", len(indexed_files))
+        log.info("path: %s", folder_to_check)
 
-    log.info("%d unindexed files", len(unindexed_files))
+        log.info("%d unindexed files", len(unindexed_files))
 
 
 if __name__ == "__main__":
