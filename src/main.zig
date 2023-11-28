@@ -2612,8 +2612,9 @@ test "tag name regex" {
     defer std.testing.allocator.free(TEST_TAG_REGEX);
     try ctx.updateLibraryConfig(.{ .tag_name_regex = TEST_TAG_REGEX });
 
-    try std.testing.expectError(error.InvalidTagName, ctx.createNamedTag("my test tag", "en", null, .{}));
-    try std.testing.expect(ctx.getLastError() != null);
+    var output: Context.CreateNamedTagError = undefined;
+    try std.testing.expectError(error.InvalidTagName, ctx.createNamedTag("my test tag", "en", null, .{ .error_output = &output }));
+    try std.testing.expectEqualSlices(u8, output.invalid_tag_name.matched_result, "my");
     _ = try ctx.createNamedTag("correct_tag_source", "en", null, .{});
 }
 
