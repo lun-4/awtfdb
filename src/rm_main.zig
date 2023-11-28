@@ -154,6 +154,10 @@ pub fn main() anyerror!void {
         return;
     }
 
+    try runRemove(&ctx, given_args);
+}
+
+fn runRemove(ctx: *Context, given_args: Args) !void {
     if (given_args.paths.items.len == 0) {
         logger.err("path is a required argument", .{});
         return error.MissingPath;
@@ -198,7 +202,7 @@ pub fn main() anyerror!void {
                 return error.MissingRecursiveFlag;
             }
 
-            var walker = try dir.walk(allocator);
+            var walker = try dir.walk(ctx.allocator);
             defer walker.deinit();
 
             while (try walker.next()) |entry| {
@@ -222,7 +226,7 @@ pub fn main() anyerror!void {
     }
 
     if (!given_args.no_auto_gc) for (hashes_to_check.items) |hash_to_check| {
-        const is_unused_hash = try janitor.isUnusedHash(&ctx, hash_to_check.data, hash_to_check);
+        const is_unused_hash = try janitor.isUnusedHash(ctx, hash_to_check.data, hash_to_check);
         if (!is_unused_hash) continue;
 
         try ctx.db.exec(
@@ -234,4 +238,88 @@ pub fn main() anyerror!void {
         );
         logger.info("deleted hash {d}", .{hash_to_check});
     };
+}
+
+test "remove file without autogc" {
+    var ctx = try manage_main.makeTestContext();
+    defer ctx.deinit();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    var file1 = try tmp.dir.createFile("test_file1", .{});
+    defer file1.close();
+    _ = try file1.write("awooga1");
+
+    var indexed_file1 = try ctx.createFileFromDir(tmp.dir, "test_file1", .{});
+    defer indexed_file1.deinit();
+
+    var buf: [8192]u8 = undefined;
+    const real = try tmp.dir.realpath("test_file1", &buf);
+    std.debug.print("\n{s}\n", .{real});
+
+    var given_args = Args{
+        .paths = StringList.init(ctx.allocator),
+        .tags = CoreList.init(ctx.allocator),
+        .no_auto_gc = true,
+    };
+    defer given_args.paths.deinit();
+    defer given_args.tags.deinit();
+
+    try given_args.paths.append(real);
+
+    try runRemove(&ctx, given_args);
+
+    // assert hash exists in files table
+
+    const hash_count = try ctx.db.one(
+        usize,
+        \\ select count(*) from hashes where id = ?
+    ,
+        .{},
+        .{indexed_file1.hash.id.sql()},
+    );
+    try std.testing.expectEqual(@as(usize, 1), hash_count.?);
+}
+
+test "remove file with autogc" {
+    var ctx = try manage_main.makeTestContext();
+    defer ctx.deinit();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    var file1 = try tmp.dir.createFile("test_file1", .{});
+    defer file1.close();
+    _ = try file1.write("awooga1");
+
+    var indexed_file1 = try ctx.createFileFromDir(tmp.dir, "test_file1", .{});
+    defer indexed_file1.deinit();
+
+    var buf: [8192]u8 = undefined;
+    const real = try tmp.dir.realpath("test_file1", &buf);
+    std.debug.print("\n{s}\n", .{real});
+
+    var given_args = Args{
+        .paths = StringList.init(ctx.allocator),
+        .tags = CoreList.init(ctx.allocator),
+        .no_auto_gc = false,
+    };
+    defer given_args.paths.deinit();
+    defer given_args.tags.deinit();
+
+    try given_args.paths.append(real);
+
+    try runRemove(&ctx, given_args);
+
+    // assert hash DOESNT in files table
+
+    const hash_count = try ctx.db.one(
+        usize,
+        \\ select count(*) from hashes where id = ?
+    ,
+        .{},
+        .{indexed_file1.hash.id.sql()},
+    );
+    try std.testing.expectEqual(@as(usize, 0), hash_count.?);
 }
