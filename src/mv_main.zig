@@ -254,12 +254,14 @@ test "renaming with index support" {
     const real = try tmp.dir.realpath("test_file1", &buf);
     std.debug.print("\n{s}\n", .{real});
 
-    var paths = [_][]const u8{"test_file1"};
-    var to_path = "test_file2";
+    var paths = [_][]const u8{real};
+
+    var buf2: [8192]u8 = undefined;
+    var to_path = try std.fmt.bufPrint(&buf2, "{s}_coolversion", .{real});
 
     try renameWithIndex(ctx.allocator, &ctx, &paths, to_path);
     var indexed_file2 = (try ctx.fetchFile(indexed_file1.hash.id)).?;
     defer indexed_file2.deinit();
     try std.testing.expect(!std.mem.endsWith(u8, indexed_file2.local_path, "test_file1"));
-    try std.testing.expect(std.mem.endsWith(u8, indexed_file2.local_path, "test_file2"));
+    try std.testing.expect(std.mem.endsWith(u8, indexed_file2.local_path, "test_file1_coolversion"));
 }
