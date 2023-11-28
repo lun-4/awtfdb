@@ -143,7 +143,7 @@ const PathHandle = union(enum) {
             switch (err) {
                 error.FileNotFound => {
                     logger.err("path not found: {s}", .{path});
-                    return err;
+                    return if (options.want_file) err else null;
                 },
                 error.NotDir => {
                     return if (options.want_file) Self.openFile(path) else null;
