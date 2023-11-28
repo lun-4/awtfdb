@@ -2614,7 +2614,7 @@ test "tag name regex" {
 
     var output: Context.CreateNamedTagError = undefined;
     try std.testing.expectError(error.InvalidTagName, ctx.createNamedTag("my test tag", "en", null, .{ .error_output = &output }));
-    try std.testing.expectEqualSlices(u8, output.invalid_tag_name.matched_result, "my");
+    try std.testing.expectEqualSlices(u8, "my", output.invalid_tag_name.matched_result.?);
     _ = try ctx.createNamedTag("correct_tag_source", "en", null, .{});
 }
 
