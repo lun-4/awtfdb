@@ -50,18 +50,21 @@ const Args = struct {
     no_auto_gc: bool = false,
 };
 
-fn processFile(given_args: Args, file: *Context.File) !usize {
+fn processFile(given_args: Args, file: *Context.File, hashes_to_check: *IDList) !usize {
     if (given_args.tags.items.len > 0) {
         for (given_args.tags.items) |tag_core| {
             try file.removeTag(tag_core);
+            try hashes_to_check.append(tag_core.id);
         }
 
         return 0;
     } else if (given_args.pool) |pool| {
         try pool.removeFile(file.hash.id);
+        try hashes_to_check.append(pool.hash.id);
         return 0;
     } else {
         try file.delete();
+        try hashes_to_check.append(file.hash.id);
         return 1;
     }
 }
@@ -157,6 +160,8 @@ pub fn main() anyerror!void {
     try runRemove(&ctx, given_args);
 }
 
+const IDList = std.ArrayList(ID);
+
 fn runRemove(ctx: *Context, given_args: Args) !void {
     if (given_args.paths.items.len == 0) {
         logger.err("path is a required argument", .{});
@@ -171,7 +176,7 @@ fn runRemove(ctx: *Context, given_args: Args) !void {
     defer savepoint.commit();
 
     var count: usize = 0;
-    var hashes_to_check = std.ArrayList(ID).init(ctx.allocator);
+    var hashes_to_check = IDList.init(ctx.allocator);
     defer hashes_to_check.deinit();
 
     for (given_args.paths.items) |path| {
@@ -190,7 +195,7 @@ fn runRemove(ctx: *Context, given_args: Args) !void {
 
         if (maybe_file) |*file| {
             defer file.deinit();
-            count += try processFile(given_args, file);
+            count += try processFile(given_args, file, &hashes_to_check);
         } else {
             var dir = std.fs.cwd().openIterableDir(full_path, .{}) catch |err| {
                 logger.warn("ignoring file {s} ({s})", .{ full_path, @errorName(err) });
@@ -215,7 +220,7 @@ fn runRemove(ctx: *Context, given_args: Args) !void {
                 if (maybe_inner_file) |*file| {
                     defer file.deinit();
                     logger.info("removing path {s}", .{entry.path});
-                    count += try processFile(given_args, file);
+                    count += try processFile(given_args, file, &hashes_to_check);
                 }
             }
         }
