@@ -6,6 +6,7 @@ const Context = manage_main.Context;
 const ID = manage_main.ID;
 
 const logger = std.log.scoped(.arm);
+const janitor = @import("janitor_main.zig");
 
 const VERSION = "0.0.1";
 const HELPTEXT =
@@ -46,6 +47,7 @@ const Args = struct {
     tags: CoreList,
     pool: ?Context.Pool = null,
     cli_v1: bool = true,
+    no_auto_gc: bool = false,
 };
 
 fn processFile(given_args: Args, file: *Context.File) !usize {
@@ -135,6 +137,8 @@ pub fn main() anyerror!void {
             state = .FetchTag;
         } else if (std.mem.eql(u8, arg, "-p")) {
             state = .FetchPool;
+        } else if (std.mem.eql(u8, arg, "--no-auto-gc")) {
+            given_args.no_auto_gc = true;
         } else if (std.mem.eql(u8, arg, "--v1")) {
             given_args.cli_v1 = true; // doesn't do anything yet
         } else {
@@ -163,6 +167,8 @@ pub fn main() anyerror!void {
     defer savepoint.commit();
 
     var count: usize = 0;
+    var hashes_to_check = std.ArrayList(ID).init(ctx.allocator);
+    defer hashes_to_check.deinit();
 
     for (given_args.paths.items) |path| {
         var full_path_buffer: [std.os.PATH_MAX]u8 = undefined;
@@ -214,4 +220,18 @@ pub fn main() anyerror!void {
     if (count > 0) {
         logger.info("deleted {d} files", .{count});
     }
+
+    if (!given_args.no_auto_gc) for (hashes_to_check.items) |hash_to_check| {
+        const is_unused_hash = try janitor.isUnusedHash(&ctx, hash_to_check.data, hash_to_check);
+        if (!is_unused_hash) continue;
+
+        try ctx.db.exec(
+            \\ delete from hashes
+            \\ where id = ?
+        ,
+            .{},
+            .{hash_to_check.sql()},
+        );
+        logger.info("deleted hash {d}", .{hash_to_check});
+    };
 }
