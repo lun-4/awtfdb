@@ -66,7 +66,7 @@ const Args = struct {
 
 pub fn janitorCheckCores(
     ctx: *Context,
-    counters: *ErrorCounters,
+    report: *Report,
     given_args: Args,
 ) !void {
     var cores_stmt = try ctx.db.prepare(
@@ -76,51 +76,56 @@ pub fn janitorCheckCores(
     );
     defer cores_stmt.deinit();
 
-    var cores_iter = try cores_stmt.iterator(struct {
-        core_hash: ID.SQL,
-        core_data: sqlite.Blob,
-    }, .{});
+    var cores_iter = try cores_stmt.iterator(CoreWithBlob, .{});
     while (try cores_iter.nextAlloc(ctx.allocator, .{})) |core_with_blob| {
-        defer ctx.allocator.free(core_with_blob.core_data.data);
-        const core_hash = ID.new(core_with_blob.core_hash);
+        try verifyTagCore(ctx, report, given_args, core_with_blob);
+    }
+}
 
-        const calculated_hash = try ctx.calculateHashFromMemory(
-            core_with_blob.core_data.data,
-            .{ .insert_new_hash = false },
+const CoreWithBlob = struct {
+    core_hash: ID.SQL,
+    core_data: sqlite.Blob,
+};
+
+fn verifyTagCore(ctx: *Context, report: *Report, given_args: Args, core_with_blob: CoreWithBlob) !void {
+    defer ctx.allocator.free(core_with_blob.core_data.data);
+    const core_hash = ID.new(core_with_blob.core_hash);
+
+    const calculated_hash = try ctx.calculateHashFromMemory(
+        core_with_blob.core_data.data,
+        .{ .insert_new_hash = false },
+    );
+
+    var hash_with_blob = (try ctx.db.oneAlloc(
+        Context.HashSQL,
+        ctx.allocator,
+        \\ select id, hash_data
+        \\ from hashes
+        \\ where id = ?
+    ,
+        .{},
+        .{core_hash.sql()},
+    )).?;
+    defer ctx.allocator.free(hash_with_blob.hash_data.data);
+
+    const upstream_hash = hash_with_blob.toRealHash();
+
+    if (!std.mem.eql(u8, &calculated_hash.hash_data, &upstream_hash.hash_data)) {
+        report.counters.incorrect_hash_cores.total += 1;
+        report.counters.incorrect_hash_cores.unrepairable += 1;
+
+        logger.err(
+            "hashes are incorrect for tag core {d} ({s} != {s})",
+            .{ core_hash, calculated_hash, upstream_hash },
         );
 
-        var hash_with_blob = (try ctx.db.oneAlloc(
-            Context.HashSQL,
-            ctx.allocator,
-            \\ select id, hash_data
-            \\ from hashes
-            \\ where id = ?
-        ,
-            .{},
-            .{core_hash.sql()},
-        )).?;
-        defer ctx.allocator.free(hash_with_blob.hash_data.data);
-
-        const upstream_hash = hash_with_blob.toRealHash();
-
-        if (!std.mem.eql(u8, &calculated_hash.hash_data, &upstream_hash.hash_data)) {
-            counters.incorrect_hash_cores.total += 1;
-            counters.incorrect_hash_cores.unrepairable += 1;
-
-            logger.err(
-                "hashes are incorrect for tag core {d} ({s} != {s})",
-                .{ core_hash, calculated_hash, upstream_hash },
-            );
-
-            if (given_args.repair) {
-                return error.ManualInterventionRequired;
-            }
-
-            continue;
+        if (given_args.repair) {
+            return error.ManualInterventionRequired;
         }
-
-        // TODO validate if there's any tag names to the core
     }
+
+    // TODO validate if there's any tag names to the core
+
 }
 
 pub fn isUnusedHash(ctx: *Context, hash_id_sql: ID.SQL, hash_id: ID) !bool {
@@ -399,6 +404,19 @@ pub const std_options = struct {
     pub const logFn = manage_main.log;
 };
 
+const Report = struct {
+    allocator: std.mem.Allocator,
+    counters: ErrorCounters,
+    const Self = @This();
+    pub fn init(allocator: std.mem.Allocator) Self {
+        return Self{ .allocator = allocator, .counters = ErrorCounters{} };
+    }
+
+    pub fn deinit(self: Self) void {
+        _ = self;
+    }
+};
+
 pub fn main() anyerror!u8 {
     const rc = sqlite.c.sqlite3_config(sqlite.c.SQLITE_CONFIG_LOG, manage_main.sqliteLog, @as(?*anyopaque, null));
     if (rc != sqlite.c.SQLITE_OK) {
@@ -470,7 +488,8 @@ pub fn main() anyerror!u8 {
     var ctx = try manage_main.loadDatabase(allocator, .{});
     defer ctx.deinit();
 
-    var counters: ErrorCounters = .{};
+    var report = Report.init(allocator);
+    defer report.deinit();
 
     logger.info("running PRAGMA integrity_check", .{});
     var stmt = try ctx.db.prepare("PRAGMA integrity_check;");
@@ -507,10 +526,10 @@ pub fn main() anyerror!u8 {
     defer savepoint.commit();
 
     // calculate hashes for tag_cores
-    try janitorCheckFiles(&ctx, &counters, given_args);
-    try janitorCheckCores(&ctx, &counters, given_args);
-    try janitorCheckUnusedHashes(&ctx, &counters, given_args);
-    try janitorCheckTagNameRegex(&ctx, &counters, given_args);
+    try janitorCheckFiles(&ctx, &report.counters, given_args);
+    try janitorCheckCores(&ctx, &report, given_args);
+    try janitorCheckUnusedHashes(&ctx, &report.counters, given_args);
+    try janitorCheckTagNameRegex(&ctx, &report.counters, given_args);
 
     // garbage collect unused entires in hashes table
 
@@ -518,12 +537,12 @@ pub fn main() anyerror!u8 {
 
     var total_problems: usize = 0;
     inline for (CountersTypeInfo.Struct.fields) |field| {
-        const total = @field(counters, field.name).total;
+        const total = @field(report.counters, field.name).total;
 
         logger.info("problem {s}, {d} found, {d} unrepairable", .{
             field.name,
             total,
-            @field(counters, field.name).unrepairable,
+            @field(report.counters, field.name).unrepairable,
         });
 
         total_problems += total;
@@ -552,14 +571,15 @@ test "janitor functionality" {
     var tag = try ctx.createNamedTag("test_tag", "en", null, .{});
     try indexed_file.addTag(tag.core, .{});
 
-    var counters: ErrorCounters = .{};
-
     var given_args = Args{ .only = undefined };
 
-    try janitorCheckFiles(&ctx, &counters, given_args);
-    try janitorCheckCores(&ctx, &counters, given_args);
-    try janitorCheckUnusedHashes(&ctx, &counters, given_args);
-    try janitorCheckTagNameRegex(&ctx, &counters, given_args);
+    var report = Report.init(std.testing.allocator);
+    defer report.deinit();
+
+    try janitorCheckFiles(&ctx, &report.counters, given_args);
+    try janitorCheckCores(&ctx, &report, given_args);
+    try janitorCheckUnusedHashes(&ctx, &report.counters, given_args);
+    try janitorCheckTagNameRegex(&ctx, &report.counters, given_args);
 }
 
 test "tag name regex retroactive checker" {
