@@ -398,6 +398,10 @@ def compile_query(search_query: str) -> CompiledSearch:
                     final_query.append(
                         f" (select count(*) from tag_files tf2 where tf2.file_hash = tag_files.file_hash) < {tag_limit}"
                     )
+                elif full_match.startswith("system:random"):
+                    final_query.append(
+                        " core_hash = (select core_hash from tag_names order by random() limit 1)"
+                    )
                 else:
                     final_query.append(" core_hash = ?")
                     tags.append(full_match)

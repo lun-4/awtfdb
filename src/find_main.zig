@@ -519,6 +519,8 @@ pub const SqlGiver = struct {
                             const tag_limit_str = it.next().?;
                             const tag_limit = try std.fmt.parseInt(usize, tag_limit_str, 10);
                             try list.writer().print(" (select count(*) from tag_files tf2 where tf2.file_hash = tag_files.file_hash) < {d}", .{tag_limit});
+                        } else if (std.mem.startsWith(u8, match_text, "system:random")) {
+                            try list.writer().print(" core_hash = (select core_hash from tag_names order by random() limit 1)", .{});
                         } else {
                             try list.writer().print(" core_hash = ?", .{});
                             try arguments.append(Argument{ .tag = match_text });
