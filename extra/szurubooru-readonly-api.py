@@ -100,8 +100,8 @@ async def app_before_serving():
     indexpath = Path(os.getenv("HOME")) / "awtf.db"
     app.db = await aiosqlite.connect(str(indexpath))
     app.thumbnailing_tasks = {}
-    app.expensive_thumbnail_semaphore = asyncio.Semaphore(3)
-    app.image_thumbnail_semaphore = asyncio.Semaphore(10)
+    app.expensive_thumbnail_semaphore = asyncio.Semaphore(1)
+    app.image_thumbnail_semaphore = asyncio.Semaphore(7)
     app.file_cache = FileCache(
         canvas_size=ExpiringDict(max_len=10000, max_age_seconds=1200),
         file_type=ExpiringDict(max_len=10000, max_age_seconds=1200),
