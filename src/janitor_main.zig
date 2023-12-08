@@ -62,6 +62,7 @@ const Args = struct {
     only: StringList,
     maybe_hash_files_smaller_than: ?usize = null,
     verbose: bool = false,
+    from_report: ?[]const u8 = null,
 };
 
 pub fn janitorCheckCores(
@@ -415,6 +416,7 @@ const Report = struct {
     counters: ErrorCounters,
     files_not_found: FileRowList,
     incorrect_file_hashes: FileRowList,
+    using_loaded_file: bool = false,
     const Self = @This();
     pub fn init(allocator: std.mem.Allocator) Self {
         return Self{
@@ -448,6 +450,37 @@ const Report = struct {
         }
         self.incorrect_file_hashes.deinit();
     }
+
+    pub fn readFrom(self: *Self, io_reader: anytype) !void {
+        var reader = std.json.reader(self.allocator, io_reader);
+        defer reader.deinit();
+        var read_data = try std.json.parseFromTokenSource(struct {
+            version: usize,
+            counters: ErrorCounters,
+            timestamp: i64,
+            files_not_found: []FileRow,
+            incorrect_hashes: []FileRow,
+        }, self.allocator, &reader, .{});
+        defer read_data.deinit();
+
+        if (read_data.value.version != 1) {
+            return error.InvalidVersion;
+        }
+
+        const delta = std.time.timestamp() - read_data.value.timestamp;
+        if (delta > 60 * 60) {
+            return error.ReportFileTooOld;
+        }
+
+        for (read_data.value.files_not_found) |file| {
+            try self.addFileNotFound(file);
+        }
+
+        for (read_data.value.incorrect_hashes) |file| {
+            try self.addIncorrectHash(file);
+        }
+        self.using_loaded_file = true;
+    }
 };
 
 pub fn main() anyerror!u8 {
@@ -472,7 +505,7 @@ pub fn main() anyerror!u8 {
         given_args.only.deinit();
     }
 
-    var state: enum { None, Only, HashFilesSmallerThan } = .None;
+    var state: enum { None, Only, HashFilesSmallerThan, FromReport } = .None;
 
     while (args_it.next()) |arg| {
         switch (state) {
@@ -486,6 +519,11 @@ pub fn main() anyerror!u8 {
             },
             .HashFilesSmallerThan => {
                 given_args.maybe_hash_files_smaller_than = try parseByteAmount(arg);
+                state = .None;
+                continue;
+            },
+            .FromReport => {
+                given_args.from_report = arg;
                 state = .None;
                 continue;
             },
@@ -505,6 +543,8 @@ pub fn main() anyerror!u8 {
             state = .Only;
         } else if (std.mem.eql(u8, arg, "--hash-files-smaller-than")) {
             state = .HashFilesSmallerThan;
+        } else if (std.mem.eql(u8, arg, "--from-report")) {
+            state = .FromReport;
         } else {
             return error.InvalidArgument;
         }
@@ -523,6 +563,12 @@ pub fn main() anyerror!u8 {
 
     var report = Report.init(allocator);
     defer report.deinit();
+
+    if (given_args.from_report) |report_path| {
+        var report_file = try std.fs.cwd().openFile(report_path, .{ .mode = .read_only });
+        defer report_file.close();
+        try report.readFrom(report_file.reader());
+    }
 
     logger.info("running PRAGMA integrity_check", .{});
     var stmt = try ctx.db.prepare("PRAGMA integrity_check;");
@@ -692,6 +738,8 @@ fn writeReport(report: Report) !void {
     try write_stream.write(1);
     try write_stream.objectField("counters");
     try write_stream.write(report.counters);
+    try write_stream.objectField("timestamp");
+    try write_stream.write(std.time.timestamp());
     try write_stream.objectField("files_not_found");
     try write_stream.write(report.files_not_found.items);
     try write_stream.objectField("incorrect_hashes");
