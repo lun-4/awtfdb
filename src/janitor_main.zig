@@ -487,6 +487,7 @@ pub fn main() anyerror!u8 {
         }
         return error.FailedIntegrityCheck;
     }
+    logger.info("running PRAGMA foreign_key_check...", .{});
     var maybe_row = try ctx.db.oneAlloc(struct {
         source_table: []const u8,
         invalid_rowid: ?i64,
