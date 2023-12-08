@@ -78,6 +78,7 @@ pub fn janitorCheckCores(
     defer cores_stmt.deinit();
 
     var cores_iter = try cores_stmt.iterator(CoreWithBlob, .{});
+    logger.info("checking tag cores...", .{});
     while (try cores_iter.nextAlloc(ctx.allocator, .{})) |core_with_blob| {
         try verifyTagCore(ctx, report, given_args, core_with_blob);
     }
@@ -248,155 +249,176 @@ pub fn janitorCheckFiles(
     report: *Report,
     given_args: Args,
 ) !void {
-    var stmt = try ctx.db.prepare(
-        \\ select file_hash, local_path
-        \\ from files
-        \\ order by file_hash asc
-    );
-    defer stmt.deinit();
+    var possible_files_to_check = std.AutoHashMap(ID.SQL, FileRow).init(ctx.allocator);
+    defer possible_files_to_check.deinit();
+    if (report.using_loaded_file) {
+        for (report.files_not_found.items) |row| {
+            try possible_files_to_check.put(row.file_hash, row);
+        }
+        for (report.incorrect_file_hashes.items) |row| {
+            try possible_files_to_check.put(row.file_hash, row);
+        }
 
-    var iter = try stmt.iterator(
-        FileRow,
-        .{},
-    );
+        var iter = possible_files_to_check.valueIterator();
 
-    while (try iter.nextAlloc(ctx.allocator, .{})) |row| {
-        defer ctx.allocator.free(row.local_path);
+        while (iter.next()) |row| {
+            try checkFile(ctx, report, given_args, row.*);
+        }
+    } else {
+        var stmt = try ctx.db.prepare(
+            \\ select file_hash, local_path
+            \\ from files
+            \\ order by file_hash asc
+        );
+        defer stmt.deinit();
 
-        const file_hash = ID.new(row.file_hash);
+        var iter = try stmt.iterator(FileRow, .{});
+        while (try iter.nextAlloc(ctx.allocator, .{})) |row| {
+            defer ctx.allocator.free(row.local_path);
+            try checkFile(ctx, report, given_args, row);
+        }
+    }
+}
 
-        const indexed_file = (try ctx.fetchFileExact(file_hash, row.local_path)) orelse return error.InconsistentIndex;
-        defer indexed_file.deinit();
+fn checkFile(
+    ctx: *Context,
+    report: *Report,
+    given_args: Args,
+    row: FileRow,
+) !void {
+    const file_hash = ID.new(row.file_hash);
 
-        var file = std.fs.openFileAbsolute(row.local_path, .{ .mode = .read_only }) catch |err| switch (err) {
-            error.FileNotFound => {
-                logger.err("file {s} not found", .{row.local_path});
-                try report.addFileNotFound(row);
+    const indexed_file = (try ctx.fetchFileExact(file_hash, row.local_path)) orelse return error.InconsistentIndex;
+    defer indexed_file.deinit();
 
-                const repeated_count = (try ctx.db.one(
-                    usize,
-                    \\ select count(*)
-                    \\ from files
-                    \\ where file_hash = ?
-                ,
-                    .{},
-                    .{file_hash.sql()},
-                )).?;
+    var file = std.fs.openFileAbsolute(row.local_path, .{ .mode = .read_only }) catch |err| switch (err) {
+        error.FileNotFound => {
+            logger.err("file {s} not found", .{row.local_path});
+            try report.addFileNotFound(row);
 
-                std.debug.assert(repeated_count != 0);
+            const repeated_count = (try ctx.db.one(
+                usize,
+                \\ select count(*)
+                \\ from files
+                \\ where file_hash = ?
+            ,
+                .{},
+                .{file_hash.sql()},
+            )).?;
 
-                if (repeated_count > 1) {
-                    // repair action: delete old entry to keep index consistent
-                    logger.warn(
-                        "found {d} files with same hash, assuming a file move happened for {d}",
-                        .{ repeated_count, file_hash },
-                    );
+            std.debug.assert(repeated_count != 0);
 
-                    if (given_args.repair) {
-                        try indexed_file.delete();
-                    }
-                } else if (repeated_count == 1) {
-                    logger.err(
-                        "can not repair {s} as it is not indexed, please index a file with same contents or remove it manually from the index",
-                        .{row.local_path},
-                    );
-
-                    report.counters.file_not_found.unrepairable += 1;
-
-                    if (given_args.repair) {
-                        return error.ManualInterventionRequired;
-                    }
-                }
-
-                continue;
-            },
-            else => return err,
-        };
-        defer file.close();
-
-        if (given_args.full) {
-            var can_do_full_hash: bool = false;
-            if (given_args.only.items.len > 0) {
-                for (given_args.only.items) |prefix| {
-                    if ((!can_do_full_hash) and std.mem.startsWith(u8, row.local_path, prefix)) {
-                        can_do_full_hash = true;
-                    }
-                }
-            } else {
-                can_do_full_hash = true;
-            }
-
-            if (can_do_full_hash) {
-                // if we're still allowed to check full hash, do a stat
-                // and find out if this is up on the filter
-                if (given_args.maybe_hash_files_smaller_than) |hash_files_smaller_than| {
-                    const file_stat = try file.stat();
-                    if (file_stat.size > hash_files_smaller_than) {
-                        can_do_full_hash = false;
-                    }
-                }
-            }
-
-            if (!can_do_full_hash) continue;
-
-            var calculated_hash = try ctx.calculateHash(file, .{ .insert_new_hash = false });
-
-            if (!std.mem.eql(u8, &calculated_hash.hash_data, &indexed_file.hash.hash_data)) {
-                // repair option: fuck
-                try report.addIncorrectHash(row);
-
-                logger.err(
-                    "hashes are incorrect for file {d} (wanted '{s}', got '{s}')",
-                    .{ file_hash, calculated_hash, indexed_file.hash },
+            if (repeated_count > 1) {
+                // repair action: delete old entry to keep index consistent
+                logger.warn(
+                    "found {d} files with same hash, assuming a file move happened for {d}",
+                    .{ repeated_count, file_hash },
                 );
 
                 if (given_args.repair) {
-                    logger.warn("repair: forcefully setting hash for file {d} '{s}'", .{ row.file_hash, calculated_hash.toHex() });
-                    const hash_blob = sqlite.Blob{ .data = &calculated_hash.hash_data };
-
-                    const maybe_preexisting_hash_id = try ctx.db.one(
-                        ID.SQL,
-                        "select id from hashes where hash_data = ?",
-                        .{},
-                        .{hash_blob},
-                    );
-                    if (maybe_preexisting_hash_id) |preexisting_hash_id| {
-                        // we already have calculated_hash in the table, and so,
-                        // running an update would cause issues with UNIQUE
-                        // constraint.
-                        //
-                        // the fix here is to repoint file hash to the existing
-                        // one, then garbage collect the old one in a separate
-                        // janitor run
-                        logger.info("target hash already exists {s}, setting file to it", .{preexisting_hash_id});
-
-                        try ctx.db.exec(
-                            \\ update files
-                            \\ set file_hash = ?
-                            \\ where file_hash = ?
-                        ,
-                            .{},
-                            .{
-                                sqlite.Text{ .data = &preexisting_hash_id },
-                                file_hash.sql(),
-                            },
-                        );
-                    } else {
-                        try ctx.db.exec(
-                            \\ update hashes
-                            \\ set hash_data = ?
-                            \\ where id = ?
-                        ,
-                            .{},
-                            .{ hash_blob, file_hash.sql() },
-                        );
-                    }
+                    try indexed_file.delete();
                 }
-                continue;
+            } else if (repeated_count == 1) {
+                logger.err(
+                    "can not repair {s} as it is not indexed, please index a file with same contents or remove it manually from the index",
+                    .{row.local_path},
+                );
+
+                report.counters.file_not_found.unrepairable += 1;
+
+                if (given_args.repair) {
+                    return error.ManualInterventionRequired;
+                }
+            }
+
+            return;
+        },
+        else => return err,
+    };
+    defer file.close();
+
+    if (given_args.full) {
+        var can_do_full_hash: bool = false;
+        if (given_args.only.items.len > 0) {
+            for (given_args.only.items) |prefix| {
+                if ((!can_do_full_hash) and std.mem.startsWith(u8, row.local_path, prefix)) {
+                    can_do_full_hash = true;
+                }
+            }
+        } else {
+            can_do_full_hash = true;
+        }
+
+        if (can_do_full_hash) {
+            // if we're still allowed to check full hash, do a stat
+            // and find out if this is up on the filter
+            if (given_args.maybe_hash_files_smaller_than) |hash_files_smaller_than| {
+                const file_stat = try file.stat();
+                if (file_stat.size > hash_files_smaller_than) {
+                    can_do_full_hash = false;
+                }
             }
         }
-        logger.debug("path {s} ok", .{row.local_path});
+
+        if (!can_do_full_hash) return;
+
+        var calculated_hash = try ctx.calculateHash(file, .{ .insert_new_hash = false });
+
+        if (!std.mem.eql(u8, &calculated_hash.hash_data, &indexed_file.hash.hash_data)) {
+            // repair option: fuck
+            try report.addIncorrectHash(row);
+
+            logger.err(
+                "hashes are incorrect for file {d} (wanted '{s}', got '{s}')",
+                .{ file_hash, calculated_hash, indexed_file.hash },
+            );
+
+            if (given_args.repair) {
+                logger.warn("repair: forcefully setting hash for file {d} '{s}'", .{ row.file_hash, calculated_hash.toHex() });
+                const hash_blob = sqlite.Blob{ .data = &calculated_hash.hash_data };
+
+                const maybe_preexisting_hash_id = try ctx.db.one(
+                    ID.SQL,
+                    "select id from hashes where hash_data = ?",
+                    .{},
+                    .{hash_blob},
+                );
+                if (maybe_preexisting_hash_id) |preexisting_hash_id| {
+                    // we already have calculated_hash in the table, and so,
+                    // running an update would cause issues with UNIQUE
+                    // constraint.
+                    //
+                    // the fix here is to repoint file hash to the existing
+                    // one, then garbage collect the old one in a separate
+                    // janitor run
+                    logger.info("target hash already exists {s}, setting file to it", .{preexisting_hash_id});
+
+                    try ctx.db.exec(
+                        \\ update files
+                        \\ set file_hash = ?
+                        \\ where file_hash = ?
+                    ,
+                        .{},
+                        .{
+                            sqlite.Text{ .data = &preexisting_hash_id },
+                            file_hash.sql(),
+                        },
+                    );
+                } else {
+                    try ctx.db.exec(
+                        \\ update hashes
+                        \\ set hash_data = ?
+                        \\ where id = ?
+                    ,
+                        .{},
+                        .{ hash_blob, file_hash.sql() },
+                    );
+                }
+            }
+            return;
+        }
     }
+    logger.debug("path {s} ok", .{row.local_path});
 }
 
 pub var current_log_level: std.log.Level = .info;
