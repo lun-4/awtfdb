@@ -239,7 +239,7 @@ pub fn janitorCheckTagNameRegex(
 
 pub fn janitorCheckFiles(
     ctx: *Context,
-    counters: *ErrorCounters,
+    report: *Report,
     given_args: Args,
 ) !void {
     var stmt = try ctx.db.prepare(
@@ -269,7 +269,7 @@ pub fn janitorCheckFiles(
         var file = std.fs.openFileAbsolute(row.local_path, .{ .mode = .read_only }) catch |err| switch (err) {
             error.FileNotFound => {
                 logger.err("file {s} not found", .{row.local_path});
-                counters.file_not_found.total += 1;
+                report.counters.file_not_found.total += 1;
 
                 const repeated_count = (try ctx.db.one(
                     usize,
@@ -299,7 +299,7 @@ pub fn janitorCheckFiles(
                         .{row.local_path},
                     );
 
-                    counters.file_not_found.unrepairable += 1;
+                    report.counters.file_not_found.unrepairable += 1;
 
                     if (given_args.repair) {
                         return error.ManualInterventionRequired;
@@ -342,7 +342,7 @@ pub fn janitorCheckFiles(
             if (!std.mem.eql(u8, &calculated_hash.hash_data, &indexed_file.hash.hash_data)) {
                 // repair option: fuck
 
-                counters.incorrect_hash_files.total += 1;
+                report.counters.incorrect_hash_files.total += 1;
 
                 logger.err(
                     "hashes are incorrect for file {d} (wanted '{s}', got '{s}')",
@@ -526,12 +526,12 @@ pub fn main() anyerror!u8 {
     defer savepoint.commit();
 
     // calculate hashes for tag_cores
-    try janitorCheckFiles(&ctx, &report.counters, given_args);
+    try janitorCheckFiles(&ctx, &report, given_args);
     try janitorCheckCores(&ctx, &report, given_args);
     try janitorCheckUnusedHashes(&ctx, &report.counters, given_args);
     try janitorCheckTagNameRegex(&ctx, &report.counters, given_args);
 
-    // garbage collect unused entires in hashes table
+    try writeReport(report);
 
     const CountersTypeInfo = @typeInfo(ErrorCounters);
 
@@ -576,8 +576,8 @@ test "janitor functionality" {
     var report = Report.init(std.testing.allocator);
     defer report.deinit();
 
-    try janitorCheckFiles(&ctx, &report.counters, given_args);
-    try janitorCheckCores(&ctx, &report, given_args);
+    try janitorCheckFiles(&ctx, &report, given_args);
+    try janitorCheckCores(&ctx, &report.counters, given_args);
     try janitorCheckUnusedHashes(&ctx, &report.counters, given_args);
     try janitorCheckTagNameRegex(&ctx, &report.counters, given_args);
 }
@@ -605,4 +605,61 @@ test "tag name regex retroactive checker" {
 
     try std.testing.expectEqual(@as(usize, 1), counters.invalid_tag_name.total);
     try std.testing.expectEqual(@as(usize, 1), counters.invalid_tag_name.unrepairable);
+}
+
+/// Caller owns the returned memory.
+pub fn temporaryName(allocator: std.mem.Allocator) ![]u8 {
+    const template_start = "/temp/awtfdb-janitor_";
+    const template = "/tmp/awtfdb-janitor_XXXXXXXXXXXXXXXXXXXXX";
+    var nam = try allocator.alloc(u8, template.len);
+    std.mem.copy(u8, nam, template);
+
+    const seed = @as(u64, @truncate(@as(u128, @bitCast(std.time.nanoTimestamp()))));
+    var r = std.rand.DefaultPrng.init(seed);
+
+    var fill = nam[template_start.len..nam.len];
+
+    var i: usize = 0;
+    while (i < 100) : (i += 1) {
+        // generate a random uppercase letter, that is, 65 + random number.
+        for (fill, 0..) |_, f_idx| {
+            var idx = @as(u8, @intCast(r.random().uintLessThan(u5, 24)));
+            var letter = @as(u8, 65) + idx;
+            fill[f_idx] = letter;
+        }
+
+        // if we fail to access it, we assume it doesn't exist and return it.
+        var tmp_file: std.fs.File = std.fs.cwd().openFile(
+            nam,
+            .{ .mode = .read_only },
+        ) catch |err| {
+            if (err == error.FileNotFound) return nam else continue;
+        };
+
+        // if we actually found someone, close the handle so that we don't
+        // get EMFILE later on.
+        tmp_file.close();
+    }
+
+    return error.TempGenFail;
+}
+
+fn writeReport(report: Report) !void {
+    var allocator = report.allocator;
+
+    var temp_path = try temporaryName(allocator);
+    defer allocator.free(temp_path);
+
+    var temp_file = try std.fs.createFileAbsolute(temp_path, .{});
+    defer temp_file.close();
+
+    var write_stream = std.json.writeStream(temp_file.writer(), .{});
+    try write_stream.beginObject();
+    try write_stream.objectField("version");
+    try write_stream.write(1);
+    try write_stream.objectField("counters");
+    try write_stream.write(report.counters);
+    try write_stream.endObject();
+
+    logger.info("report written to {s}", .{temp_path});
 }
