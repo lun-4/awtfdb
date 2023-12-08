@@ -237,6 +237,11 @@ pub fn janitorCheckTagNameRegex(
     }
 }
 
+const FileRow = struct {
+    file_hash: ID.SQL,
+    local_path: []const u8,
+};
+
 pub fn janitorCheckFiles(
     ctx: *Context,
     report: *Report,
@@ -249,10 +254,6 @@ pub fn janitorCheckFiles(
     );
     defer stmt.deinit();
 
-    const FileRow = struct {
-        file_hash: ID.SQL,
-        local_path: []const u8,
-    };
     var iter = try stmt.iterator(
         FileRow,
         .{},
@@ -269,7 +270,7 @@ pub fn janitorCheckFiles(
         var file = std.fs.openFileAbsolute(row.local_path, .{ .mode = .read_only }) catch |err| switch (err) {
             error.FileNotFound => {
                 logger.err("file {s} not found", .{row.local_path});
-                report.counters.file_not_found.total += 1;
+                try report.addFileNotFound(row);
 
                 const repeated_count = (try ctx.db.one(
                     usize,
@@ -341,8 +342,7 @@ pub fn janitorCheckFiles(
 
             if (!std.mem.eql(u8, &calculated_hash.hash_data, &indexed_file.hash.hash_data)) {
                 // repair option: fuck
-
-                report.counters.incorrect_hash_files.total += 1;
+                try report.addIncorrectHash(row);
 
                 logger.err(
                     "hashes are incorrect for file {d} (wanted '{s}', got '{s}')",
@@ -404,16 +404,49 @@ pub const std_options = struct {
     pub const logFn = manage_main.log;
 };
 
+const FileNotFoundReport = struct {
+    row: FileRow,
+};
+
+const FileRowList = std.ArrayList(FileRow);
+
 const Report = struct {
     allocator: std.mem.Allocator,
     counters: ErrorCounters,
+    files_not_found: FileRowList,
+    incorrect_file_hashes: FileRowList,
     const Self = @This();
     pub fn init(allocator: std.mem.Allocator) Self {
-        return Self{ .allocator = allocator, .counters = ErrorCounters{} };
+        return Self{
+            .allocator = allocator,
+            .counters = ErrorCounters{},
+            .files_not_found = FileRowList.init(allocator),
+            .incorrect_file_hashes = FileRowList.init(allocator),
+        };
+    }
+
+    pub fn addFileNotFound(self: *Self, row: FileRow) !void {
+        try self.files_not_found.append(FileRow{
+            .file_hash = row.file_hash,
+            .local_path = try self.allocator.dupe(u8, row.local_path),
+        });
+    }
+    pub fn addIncorrectHash(self: *Self, row: FileRow) !void {
+        try self.incorrect_file_hashes.append(FileRow{
+            .file_hash = row.file_hash,
+            .local_path = try self.allocator.dupe(u8, row.local_path),
+        });
     }
 
     pub fn deinit(self: Self) void {
-        _ = self;
+        for (self.files_not_found.items) |row| {
+            self.allocator.free(row.local_path);
+        }
+        self.files_not_found.deinit();
+        for (self.incorrect_file_hashes.items) |row| {
+            self.allocator.free(row.local_path);
+        }
+        self.incorrect_file_hashes.deinit();
     }
 };
 
@@ -659,6 +692,10 @@ fn writeReport(report: Report) !void {
     try write_stream.write(1);
     try write_stream.objectField("counters");
     try write_stream.write(report.counters);
+    try write_stream.objectField("files_not_found");
+    try write_stream.write(report.files_not_found.items);
+    try write_stream.objectField("incorrect_hahes");
+    try write_stream.write(report.incorrect_file_hashes.items);
     try write_stream.endObject();
 
     logger.info("report written to {s}", .{temp_path});
