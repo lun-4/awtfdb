@@ -694,7 +694,7 @@ fn writeReport(report: Report) !void {
     try write_stream.write(report.counters);
     try write_stream.objectField("files_not_found");
     try write_stream.write(report.files_not_found.items);
-    try write_stream.objectField("incorrect_hahes");
+    try write_stream.objectField("incorrect_hashes");
     try write_stream.write(report.incorrect_file_hashes.items);
     try write_stream.endObject();
 
