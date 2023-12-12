@@ -1408,6 +1408,8 @@ if __name__ == "__main__":
     logging.basicConfig(
         level=logging.DEBUG if os.environ.get("DEBUG") else logging.INFO
     )
+    if os.environ.get("EZDEBUG"):
+        log.setLevel(logging.DEBUG)
     uvloop.install()
     config = Config()
     config.accesslog = "-"
