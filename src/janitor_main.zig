@@ -62,11 +62,12 @@ const Args = struct {
     only: StringList,
     maybe_hash_files_smaller_than: ?usize = null,
     verbose: bool = false,
+    from_report: ?[]const u8 = null,
 };
 
 pub fn janitorCheckCores(
     ctx: *Context,
-    counters: *ErrorCounters,
+    report: *Report,
     given_args: Args,
 ) !void {
     var cores_stmt = try ctx.db.prepare(
@@ -76,51 +77,57 @@ pub fn janitorCheckCores(
     );
     defer cores_stmt.deinit();
 
-    var cores_iter = try cores_stmt.iterator(struct {
-        core_hash: ID.SQL,
-        core_data: sqlite.Blob,
-    }, .{});
+    var cores_iter = try cores_stmt.iterator(CoreWithBlob, .{});
+    logger.info("checking tag cores...", .{});
     while (try cores_iter.nextAlloc(ctx.allocator, .{})) |core_with_blob| {
-        defer ctx.allocator.free(core_with_blob.core_data.data);
-        const core_hash = ID.new(core_with_blob.core_hash);
+        try verifyTagCore(ctx, report, given_args, core_with_blob);
+    }
+}
 
-        const calculated_hash = try ctx.calculateHashFromMemory(
-            core_with_blob.core_data.data,
-            .{ .insert_new_hash = false },
+const CoreWithBlob = struct {
+    core_hash: ID.SQL,
+    core_data: sqlite.Blob,
+};
+
+fn verifyTagCore(ctx: *Context, report: *Report, given_args: Args, core_with_blob: CoreWithBlob) !void {
+    defer ctx.allocator.free(core_with_blob.core_data.data);
+    const core_hash = ID.new(core_with_blob.core_hash);
+
+    const calculated_hash = try ctx.calculateHashFromMemory(
+        core_with_blob.core_data.data,
+        .{ .insert_new_hash = false },
+    );
+
+    var hash_with_blob = (try ctx.db.oneAlloc(
+        Context.HashSQL,
+        ctx.allocator,
+        \\ select id, hash_data
+        \\ from hashes
+        \\ where id = ?
+    ,
+        .{},
+        .{core_hash.sql()},
+    )).?;
+    defer ctx.allocator.free(hash_with_blob.hash_data.data);
+
+    const upstream_hash = hash_with_blob.toRealHash();
+
+    if (!std.mem.eql(u8, &calculated_hash.hash_data, &upstream_hash.hash_data)) {
+        report.counters.incorrect_hash_cores.total += 1;
+        report.counters.incorrect_hash_cores.unrepairable += 1;
+
+        logger.err(
+            "hashes are incorrect for tag core {d} ({s} != {s})",
+            .{ core_hash, calculated_hash, upstream_hash },
         );
 
-        var hash_with_blob = (try ctx.db.oneAlloc(
-            Context.HashSQL,
-            ctx.allocator,
-            \\ select id, hash_data
-            \\ from hashes
-            \\ where id = ?
-        ,
-            .{},
-            .{core_hash.sql()},
-        )).?;
-        defer ctx.allocator.free(hash_with_blob.hash_data.data);
-
-        const upstream_hash = hash_with_blob.toRealHash();
-
-        if (!std.mem.eql(u8, &calculated_hash.hash_data, &upstream_hash.hash_data)) {
-            counters.incorrect_hash_cores.total += 1;
-            counters.incorrect_hash_cores.unrepairable += 1;
-
-            logger.err(
-                "hashes are incorrect for tag core {d} ({s} != {s})",
-                .{ core_hash, calculated_hash, upstream_hash },
-            );
-
-            if (given_args.repair) {
-                return error.ManualInterventionRequired;
-            }
-
-            continue;
+        if (given_args.repair) {
+            return error.ManualInterventionRequired;
         }
-
-        // TODO validate if there's any tag names to the core
     }
+
+    // TODO validate if there's any tag names to the core
+
 }
 
 pub fn isUnusedHash(ctx: *Context, hash_id_sql: ID.SQL, hash_id: ID) !bool {
@@ -232,171 +239,270 @@ pub fn janitorCheckTagNameRegex(
     }
 }
 
+const FileRow = struct {
+    file_hash: ID.SQL,
+    local_path: []const u8,
+};
+
 pub fn janitorCheckFiles(
     ctx: *Context,
-    counters: *ErrorCounters,
+    report: *Report,
     given_args: Args,
 ) !void {
-    var stmt = try ctx.db.prepare(
-        \\ select file_hash, local_path
-        \\ from files
-        \\ order by file_hash asc
-    );
-    defer stmt.deinit();
+    var possible_files_to_check = std.AutoHashMap(ID.SQL, FileRow).init(ctx.allocator);
+    defer possible_files_to_check.deinit();
+    if (report.using_loaded_file) {
+        for (report.files_not_found.items) |row| {
+            try possible_files_to_check.put(row.file_hash, row);
+        }
+        for (report.incorrect_file_hashes.items) |row| {
+            try possible_files_to_check.put(row.file_hash, row);
+        }
 
-    const FileRow = struct {
-        file_hash: ID.SQL,
-        local_path: []const u8,
-    };
-    var iter = try stmt.iterator(
-        FileRow,
-        .{},
-    );
+        var iter = possible_files_to_check.valueIterator();
 
-    while (try iter.nextAlloc(ctx.allocator, .{})) |row| {
-        defer ctx.allocator.free(row.local_path);
+        while (iter.next()) |row| {
+            try checkFile(ctx, report, given_args, row.*);
+        }
+    } else {
+        var stmt = try ctx.db.prepare(
+            \\ select file_hash, local_path
+            \\ from files
+            \\ order by file_hash asc
+        );
+        defer stmt.deinit();
 
-        const file_hash = ID.new(row.file_hash);
+        var iter = try stmt.iterator(FileRow, .{});
+        while (try iter.nextAlloc(ctx.allocator, .{})) |row| {
+            defer ctx.allocator.free(row.local_path);
+            try checkFile(ctx, report, given_args, row);
+        }
+    }
+}
 
-        const indexed_file = (try ctx.fetchFileExact(file_hash, row.local_path)) orelse return error.InconsistentIndex;
-        defer indexed_file.deinit();
+fn checkFile(
+    ctx: *Context,
+    report: *Report,
+    given_args: Args,
+    row: FileRow,
+) !void {
+    const file_hash = ID.new(row.file_hash);
 
-        var file = std.fs.openFileAbsolute(row.local_path, .{ .mode = .read_only }) catch |err| switch (err) {
-            error.FileNotFound => {
-                logger.err("file {s} not found", .{row.local_path});
-                counters.file_not_found.total += 1;
+    const indexed_file = (try ctx.fetchFileExact(file_hash, row.local_path)) orelse return error.InconsistentIndex;
+    defer indexed_file.deinit();
 
-                const repeated_count = (try ctx.db.one(
-                    usize,
-                    \\ select count(*)
-                    \\ from files
-                    \\ where file_hash = ?
-                ,
-                    .{},
-                    .{file_hash.sql()},
-                )).?;
+    var file = std.fs.openFileAbsolute(row.local_path, .{ .mode = .read_only }) catch |err| switch (err) {
+        error.FileNotFound => {
+            logger.err("file {s} not found", .{row.local_path});
+            try report.addFileNotFound(row);
 
-                std.debug.assert(repeated_count != 0);
+            const repeated_count = (try ctx.db.one(
+                usize,
+                \\ select count(*)
+                \\ from files
+                \\ where file_hash = ?
+            ,
+                .{},
+                .{file_hash.sql()},
+            )).?;
 
-                if (repeated_count > 1) {
-                    // repair action: delete old entry to keep index consistent
-                    logger.warn(
-                        "found {d} files with same hash, assuming a file move happened for {d}",
-                        .{ repeated_count, file_hash },
-                    );
+            std.debug.assert(repeated_count != 0);
 
-                    if (given_args.repair) {
-                        try indexed_file.delete();
-                    }
-                } else if (repeated_count == 1) {
-                    logger.err(
-                        "can not repair {s} as it is not indexed, please index a file with same contents or remove it manually from the index",
-                        .{row.local_path},
-                    );
-
-                    counters.file_not_found.unrepairable += 1;
-
-                    if (given_args.repair) {
-                        return error.ManualInterventionRequired;
-                    }
-                }
-
-                continue;
-            },
-            else => return err,
-        };
-        defer file.close();
-
-        if (given_args.full) {
-            var can_do_full_hash: bool = false;
-            if (given_args.only.items.len > 0) {
-                for (given_args.only.items) |prefix| {
-                    if ((!can_do_full_hash) and std.mem.startsWith(u8, row.local_path, prefix)) {
-                        can_do_full_hash = true;
-                    }
-                }
-            } else {
-                can_do_full_hash = true;
-            }
-
-            if (can_do_full_hash) {
-                // if we're still allowed to check full hash, do a stat
-                // and find out if this is up on the filter
-                if (given_args.maybe_hash_files_smaller_than) |hash_files_smaller_than| {
-                    const file_stat = try file.stat();
-                    if (file_stat.size > hash_files_smaller_than) {
-                        can_do_full_hash = false;
-                    }
-                }
-            }
-
-            if (!can_do_full_hash) continue;
-
-            var calculated_hash = try ctx.calculateHash(file, .{ .insert_new_hash = false });
-
-            if (!std.mem.eql(u8, &calculated_hash.hash_data, &indexed_file.hash.hash_data)) {
-                // repair option: fuck
-
-                counters.incorrect_hash_files.total += 1;
-
-                logger.err(
-                    "hashes are incorrect for file {d} (wanted '{s}', got '{s}')",
-                    .{ file_hash, calculated_hash, indexed_file.hash },
+            if (repeated_count > 1) {
+                // repair action: delete old entry to keep index consistent
+                logger.warn(
+                    "found {d} files with same hash, assuming a file move happened for {d}",
+                    .{ repeated_count, file_hash },
                 );
 
                 if (given_args.repair) {
-                    logger.warn("repair: forcefully setting hash for file {d} '{s}'", .{ row.file_hash, calculated_hash.toHex() });
-                    const hash_blob = sqlite.Blob{ .data = &calculated_hash.hash_data };
-
-                    const maybe_preexisting_hash_id = try ctx.db.one(
-                        ID.SQL,
-                        "select id from hashes where hash_data = ?",
-                        .{},
-                        .{hash_blob},
-                    );
-                    if (maybe_preexisting_hash_id) |preexisting_hash_id| {
-                        // we already have calculated_hash in the table, and so,
-                        // running an update would cause issues with UNIQUE
-                        // constraint.
-                        //
-                        // the fix here is to repoint file hash to the existing
-                        // one, then garbage collect the old one in a separate
-                        // janitor run
-                        logger.info("target hash already exists {s}, setting file to it", .{preexisting_hash_id});
-
-                        try ctx.db.exec(
-                            \\ update files
-                            \\ set file_hash = ?
-                            \\ where file_hash = ?
-                        ,
-                            .{},
-                            .{
-                                sqlite.Text{ .data = &preexisting_hash_id },
-                                file_hash.sql(),
-                            },
-                        );
-                    } else {
-                        try ctx.db.exec(
-                            \\ update hashes
-                            \\ set hash_data = ?
-                            \\ where id = ?
-                        ,
-                            .{},
-                            .{ hash_blob, file_hash.sql() },
-                        );
-                    }
+                    try indexed_file.delete();
                 }
-                continue;
+            } else if (repeated_count == 1) {
+                logger.err(
+                    "can not repair {s} as it is not indexed, please index a file with same contents or remove it manually from the index",
+                    .{row.local_path},
+                );
+
+                report.counters.file_not_found.unrepairable += 1;
+
+                if (given_args.repair) {
+                    return error.ManualInterventionRequired;
+                }
+            }
+
+            return;
+        },
+        else => return err,
+    };
+    defer file.close();
+
+    if (given_args.full) {
+        var can_do_full_hash: bool = false;
+        if (given_args.only.items.len > 0) {
+            for (given_args.only.items) |prefix| {
+                if ((!can_do_full_hash) and std.mem.startsWith(u8, row.local_path, prefix)) {
+                    can_do_full_hash = true;
+                }
+            }
+        } else {
+            can_do_full_hash = true;
+        }
+
+        if (can_do_full_hash) {
+            // if we're still allowed to check full hash, do a stat
+            // and find out if this is up on the filter
+            if (given_args.maybe_hash_files_smaller_than) |hash_files_smaller_than| {
+                const file_stat = try file.stat();
+                if (file_stat.size > hash_files_smaller_than) {
+                    can_do_full_hash = false;
+                }
             }
         }
-        logger.debug("path {s} ok", .{row.local_path});
+
+        if (!can_do_full_hash) return;
+
+        var calculated_hash = try ctx.calculateHash(file, .{ .insert_new_hash = false });
+
+        if (!std.mem.eql(u8, &calculated_hash.hash_data, &indexed_file.hash.hash_data)) {
+            // repair option: fuck
+            try report.addIncorrectHash(row);
+
+            logger.err(
+                "hashes are incorrect for file {d} (wanted '{s}', got '{s}')",
+                .{ file_hash, calculated_hash, indexed_file.hash },
+            );
+
+            if (given_args.repair) {
+                logger.warn("repair: forcefully setting hash for file {d} '{s}'", .{ row.file_hash, calculated_hash.toHex() });
+                const hash_blob = sqlite.Blob{ .data = &calculated_hash.hash_data };
+
+                const maybe_preexisting_hash_id = try ctx.db.one(
+                    ID.SQL,
+                    "select id from hashes where hash_data = ?",
+                    .{},
+                    .{hash_blob},
+                );
+                if (maybe_preexisting_hash_id) |preexisting_hash_id| {
+                    // we already have calculated_hash in the table, and so,
+                    // running an update would cause issues with UNIQUE
+                    // constraint.
+                    //
+                    // the fix here is to repoint file hash to the existing
+                    // one, then garbage collect the old one in a separate
+                    // janitor run
+                    logger.info("target hash already exists {s}, setting file to it", .{preexisting_hash_id});
+
+                    try ctx.db.exec(
+                        \\ update files
+                        \\ set file_hash = ?
+                        \\ where file_hash = ?
+                    ,
+                        .{},
+                        .{
+                            sqlite.Text{ .data = &preexisting_hash_id },
+                            file_hash.sql(),
+                        },
+                    );
+                } else {
+                    try ctx.db.exec(
+                        \\ update hashes
+                        \\ set hash_data = ?
+                        \\ where id = ?
+                    ,
+                        .{},
+                        .{ hash_blob, file_hash.sql() },
+                    );
+                }
+            }
+            return;
+        }
     }
+    logger.debug("path {s} ok", .{row.local_path});
 }
 
 pub var current_log_level: std.log.Level = .info;
 pub const std_options = struct {
     pub const log_level = .debug;
     pub const logFn = manage_main.log;
+};
+
+const FileNotFoundReport = struct {
+    row: FileRow,
+};
+
+const FileRowList = std.ArrayList(FileRow);
+
+const Report = struct {
+    allocator: std.mem.Allocator,
+    counters: ErrorCounters,
+    files_not_found: FileRowList,
+    incorrect_file_hashes: FileRowList,
+    using_loaded_file: bool = false,
+    const Self = @This();
+    pub fn init(allocator: std.mem.Allocator) Self {
+        return Self{
+            .allocator = allocator,
+            .counters = ErrorCounters{},
+            .files_not_found = FileRowList.init(allocator),
+            .incorrect_file_hashes = FileRowList.init(allocator),
+        };
+    }
+
+    pub fn addFileNotFound(self: *Self, row: FileRow) !void {
+        try self.files_not_found.append(FileRow{
+            .file_hash = row.file_hash,
+            .local_path = try self.allocator.dupe(u8, row.local_path),
+        });
+    }
+    pub fn addIncorrectHash(self: *Self, row: FileRow) !void {
+        try self.incorrect_file_hashes.append(FileRow{
+            .file_hash = row.file_hash,
+            .local_path = try self.allocator.dupe(u8, row.local_path),
+        });
+    }
+
+    pub fn deinit(self: Self) void {
+        for (self.files_not_found.items) |row| {
+            self.allocator.free(row.local_path);
+        }
+        self.files_not_found.deinit();
+        for (self.incorrect_file_hashes.items) |row| {
+            self.allocator.free(row.local_path);
+        }
+        self.incorrect_file_hashes.deinit();
+    }
+
+    pub fn readFrom(self: *Self, io_reader: anytype) !void {
+        var reader = std.json.reader(self.allocator, io_reader);
+        defer reader.deinit();
+        var read_data = try std.json.parseFromTokenSource(struct {
+            version: usize,
+            counters: ErrorCounters,
+            timestamp: i64,
+            files_not_found: []FileRow,
+            incorrect_hashes: []FileRow,
+        }, self.allocator, &reader, .{});
+        defer read_data.deinit();
+
+        if (read_data.value.version != 1) {
+            return error.InvalidVersion;
+        }
+
+        const delta = std.time.timestamp() - read_data.value.timestamp;
+        if (delta > 60 * 60) {
+            return error.ReportFileTooOld;
+        }
+
+        for (read_data.value.files_not_found) |file| {
+            try self.addFileNotFound(file);
+        }
+
+        for (read_data.value.incorrect_hashes) |file| {
+            try self.addIncorrectHash(file);
+        }
+        self.using_loaded_file = true;
+    }
 };
 
 pub fn main() anyerror!u8 {
@@ -421,7 +527,7 @@ pub fn main() anyerror!u8 {
         given_args.only.deinit();
     }
 
-    var state: enum { None, Only, HashFilesSmallerThan } = .None;
+    var state: enum { None, Only, HashFilesSmallerThan, FromReport } = .None;
 
     while (args_it.next()) |arg| {
         switch (state) {
@@ -435,6 +541,11 @@ pub fn main() anyerror!u8 {
             },
             .HashFilesSmallerThan => {
                 given_args.maybe_hash_files_smaller_than = try parseByteAmount(arg);
+                state = .None;
+                continue;
+            },
+            .FromReport => {
+                given_args.from_report = arg;
                 state = .None;
                 continue;
             },
@@ -454,6 +565,8 @@ pub fn main() anyerror!u8 {
             state = .Only;
         } else if (std.mem.eql(u8, arg, "--hash-files-smaller-than")) {
             state = .HashFilesSmallerThan;
+        } else if (std.mem.eql(u8, arg, "--from-report")) {
+            state = .FromReport;
         } else {
             return error.InvalidArgument;
         }
@@ -470,7 +583,14 @@ pub fn main() anyerror!u8 {
     var ctx = try manage_main.loadDatabase(allocator, .{});
     defer ctx.deinit();
 
-    var counters: ErrorCounters = .{};
+    var report = Report.init(allocator);
+    defer report.deinit();
+
+    if (given_args.from_report) |report_path| {
+        var report_file = try std.fs.cwd().openFile(report_path, .{ .mode = .read_only });
+        defer report_file.close();
+        try report.readFrom(report_file.reader());
+    }
 
     logger.info("running PRAGMA integrity_check", .{});
     var stmt = try ctx.db.prepare("PRAGMA integrity_check;");
@@ -487,6 +607,7 @@ pub fn main() anyerror!u8 {
         }
         return error.FailedIntegrityCheck;
     }
+    logger.info("running PRAGMA foreign_key_check...", .{});
     var maybe_row = try ctx.db.oneAlloc(struct {
         source_table: []const u8,
         invalid_rowid: ?i64,
@@ -506,23 +627,23 @@ pub fn main() anyerror!u8 {
     defer savepoint.commit();
 
     // calculate hashes for tag_cores
-    try janitorCheckFiles(&ctx, &counters, given_args);
-    try janitorCheckCores(&ctx, &counters, given_args);
-    try janitorCheckUnusedHashes(&ctx, &counters, given_args);
-    try janitorCheckTagNameRegex(&ctx, &counters, given_args);
+    try janitorCheckFiles(&ctx, &report, given_args);
+    try janitorCheckCores(&ctx, &report, given_args);
+    try janitorCheckUnusedHashes(&ctx, &report.counters, given_args);
+    try janitorCheckTagNameRegex(&ctx, &report.counters, given_args);
 
-    // garbage collect unused entires in hashes table
+    try writeReport(report);
 
     const CountersTypeInfo = @typeInfo(ErrorCounters);
 
     var total_problems: usize = 0;
     inline for (CountersTypeInfo.Struct.fields) |field| {
-        const total = @field(counters, field.name).total;
+        const total = @field(report.counters, field.name).total;
 
         logger.info("problem {s}, {d} found, {d} unrepairable", .{
             field.name,
             total,
-            @field(counters, field.name).unrepairable,
+            @field(report.counters, field.name).unrepairable,
         });
 
         total_problems += total;
@@ -551,14 +672,15 @@ test "janitor functionality" {
     var tag = try ctx.createNamedTag("test_tag", "en", null, .{});
     try indexed_file.addTag(tag.core, .{});
 
-    var counters: ErrorCounters = .{};
-
     var given_args = Args{ .only = undefined };
 
-    try janitorCheckFiles(&ctx, &counters, given_args);
-    try janitorCheckCores(&ctx, &counters, given_args);
-    try janitorCheckUnusedHashes(&ctx, &counters, given_args);
-    try janitorCheckTagNameRegex(&ctx, &counters, given_args);
+    var report = Report.init(std.testing.allocator);
+    defer report.deinit();
+
+    try janitorCheckFiles(&ctx, &report, given_args);
+    try janitorCheckCores(&ctx, &report.counters, given_args);
+    try janitorCheckUnusedHashes(&ctx, &report.counters, given_args);
+    try janitorCheckTagNameRegex(&ctx, &report.counters, given_args);
 }
 
 test "tag name regex retroactive checker" {
@@ -584,4 +706,67 @@ test "tag name regex retroactive checker" {
 
     try std.testing.expectEqual(@as(usize, 1), counters.invalid_tag_name.total);
     try std.testing.expectEqual(@as(usize, 1), counters.invalid_tag_name.unrepairable);
+}
+
+/// Caller owns the returned memory.
+pub fn temporaryName(allocator: std.mem.Allocator) ![]u8 {
+    const template_start = "/temp/awtfdb-janitor_";
+    const template = "/tmp/awtfdb-janitor_XXXXXXXXXXXXXXXXXXXXX";
+    var nam = try allocator.alloc(u8, template.len);
+    std.mem.copy(u8, nam, template);
+
+    const seed = @as(u64, @truncate(@as(u128, @bitCast(std.time.nanoTimestamp()))));
+    var r = std.rand.DefaultPrng.init(seed);
+
+    var fill = nam[template_start.len..nam.len];
+
+    var i: usize = 0;
+    while (i < 100) : (i += 1) {
+        // generate a random uppercase letter, that is, 65 + random number.
+        for (fill, 0..) |_, f_idx| {
+            var idx = @as(u8, @intCast(r.random().uintLessThan(u5, 24)));
+            var letter = @as(u8, 65) + idx;
+            fill[f_idx] = letter;
+        }
+
+        // if we fail to access it, we assume it doesn't exist and return it.
+        var tmp_file: std.fs.File = std.fs.cwd().openFile(
+            nam,
+            .{ .mode = .read_only },
+        ) catch |err| {
+            if (err == error.FileNotFound) return nam else continue;
+        };
+
+        // if we actually found someone, close the handle so that we don't
+        // get EMFILE later on.
+        tmp_file.close();
+    }
+
+    return error.TempGenFail;
+}
+
+fn writeReport(report: Report) !void {
+    var allocator = report.allocator;
+
+    var temp_path = try temporaryName(allocator);
+    defer allocator.free(temp_path);
+
+    var temp_file = try std.fs.createFileAbsolute(temp_path, .{});
+    defer temp_file.close();
+
+    var write_stream = std.json.writeStream(temp_file.writer(), .{});
+    try write_stream.beginObject();
+    try write_stream.objectField("version");
+    try write_stream.write(1);
+    try write_stream.objectField("counters");
+    try write_stream.write(report.counters);
+    try write_stream.objectField("timestamp");
+    try write_stream.write(std.time.timestamp());
+    try write_stream.objectField("files_not_found");
+    try write_stream.write(report.files_not_found.items);
+    try write_stream.objectField("incorrect_hashes");
+    try write_stream.write(report.incorrect_file_hashes.items);
+    try write_stream.endObject();
+
+    logger.info("report written to {s}", .{temp_path});
 }
