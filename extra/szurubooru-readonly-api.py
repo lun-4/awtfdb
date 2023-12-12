@@ -1,4 +1,6 @@
 import time
+import random
+import multiprocessing
 import os
 import shlex
 import asyncio
@@ -99,6 +101,10 @@ async def app_before_serving():
     app.loop = asyncio.get_running_loop()
     indexpath = Path(os.getenv("HOME")) / "awtf.db"
     app.db = await aiosqlite.connect(str(indexpath))
+    app.db_query_pool = [
+        await aiosqlite.connect(str(indexpath))
+        for _ in range(multiprocessing.cpu_count())
+    ]
     app.thumbnailing_tasks = {}
     app.expensive_thumbnail_semaphore = asyncio.Semaphore(1)
     app.image_thumbnail_semaphore = asyncio.Semaphore(7)
@@ -146,7 +152,10 @@ async def app_after_serving():
     log.info("possibly optimizing database")
     await app.db.execute("PRAGMA analysis_limit=1000")
     await app.db.execute("PRAGMA optimize")
-    log.info("close db")
+    log.info("close db pool")
+    for conn in app.db_query_pool:
+        await conn.close()
+    log.info("close db main")
     await app.db.close()
 
 
@@ -915,7 +924,7 @@ async def calculate_usages_manually(core_hash):
 async def fetch_tag(core_hash) -> list:
     tag_entry = app.tag_cache.get(core_hash)
     if tag_entry is None:
-        named_tag_cursor = await app.db.execute(
+        named_tag_cursor = await query_db().execute(
             """
             select tag_text
             from tag_names
@@ -924,7 +933,7 @@ async def fetch_tag(core_hash) -> list:
             (core_hash,),
         )
 
-        usages_from_metrics = await app.db.execute_fetchall(
+        usages_from_metrics = await query_db().execute_fetchall(
             """
             select relationship_count
             from metrics_tag_usage_values
@@ -937,10 +946,6 @@ async def fetch_tag(core_hash) -> list:
         if usages_from_metrics:
             usages = usages_from_metrics[0][0]
         else:
-            # we'll schedule in the background
-            # after inserting it into the tag_cache
-            # to prevent race conditions
-            #
             # we do know its at least 1 lol
             usages = 1
 
@@ -949,10 +954,6 @@ async def fetch_tag(core_hash) -> list:
             tag_entry.append(TagEntry(named_tag[0], usages))
 
         app.tag_cache[core_hash] = tag_entry
-
-        if tag_entry and not usages_from_metrics:
-            log.info("tag %s has no metrics", core_hash)
-            # asyncio.create_task(calculate_usages_manually(core_hash))
 
     tags_result = []
 
@@ -982,8 +983,15 @@ ALL_FILE_FIELDS = (
 )
 
 
+def query_db():
+    return random.choice(app.db_query_pool)
+
+
 async def fetch_file_entity(
-    file_id: str, *, micro=False, fields: Optional[List[str]] = None
+    file_id: str,
+    *,
+    micro=False,
+    fields: Optional[List[str]] = None,
 ) -> Optional[dict]:
     fields = fields or ALL_FILE_FIELDS
     if micro:
@@ -1040,7 +1048,7 @@ async def fetch_file_entity(
         # sort tags by name instead of by hash
         returned_file["tags"] = sorted(file_tags, key=lambda t: t["names"][0])
 
-        pool_rows = await app.db.execute_fetchall(
+        pool_rows = await query_db().execute_fetchall(
             "select pool_hash from pool_entries where file_hash = ?",
             [file_id],
         )
@@ -1063,7 +1071,7 @@ async def fetch_file_entity(
 
     file_local_path = app.file_cache.local_path.get(file_id)
     if file_local_path is None:
-        rows = await app.db.execute_fetchall(
+        rows = await query_db().execute_fetchall(
             "select local_path from files where file_hash = ?",
             (file_id,),
         )
@@ -1248,19 +1256,19 @@ async def single_post_fetch_around(file_id: str):
 
 async def fetch_pool_entity(pool_hash: str, micro=False):
     pool_timestamp = get_ulid_datetime(pool_hash)
-    pool_rows = await app.db.execute_fetchall(
+    pool_rows = await query_db().execute_fetchall(
         "select title from pools where pool_hash = ?", [pool_hash]
     )
     if not pool_rows:
         return None
     pool_title = pool_rows[0][0]
-    count_rows = await app.db.execute_fetchall(
+    count_rows = await query_db().execute_fetchall(
         "select count(*) from pool_entries where pool_hash = ?", [pool_hash]
     )
     post_count = int(count_rows[0][0])
 
     if not micro:
-        post_rows = await app.db.execute_fetchall(
+        post_rows = await query_db().execute_fetchall(
             "select file_hash from pool_entries where pool_hash = ? order by entry_index asc",
             [pool_hash],
         )
