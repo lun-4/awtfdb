@@ -819,6 +819,35 @@ def request_query_field():
     return request.args.get("query", "").strip().replace("\\:", ":").replace("\\!", "!")
 
 
+class Timer:
+    """Context manager to measure how long the indented block takes to run."""
+
+    def __init__(self):
+        self.start = None
+        self.end = None
+
+    def __enter__(self):
+        self.start = time.perf_counter()
+        return self
+
+    async def __aenter__(self):
+        return self.__enter__()
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.end = time.perf_counter()
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        return self.__exit__(exc_type, exc_val, exc_tb)
+
+    def __str__(self):
+        return f"{self.duration:.3f}ms"
+
+    @property
+    def duration(self):
+        """Duration in ms."""
+        return (self.end - self.start) * 1000
+
+
 @app.get("/posts/")
 async def posts_fetch():
     query = request_query_field()
@@ -839,8 +868,9 @@ async def posts_fetch():
             "results": posts,
         }
 
-    result = compile_query(query)
-    print("compiled query", result)
+    with Timer() as querytimer:
+        result = compile_query(query)
+    log.info("compiled query %r in %s", result, querytimer)
     mapped_tag_args = []
     for tag_name in result.tags:
         tag_name_cursor = await app.db.execute(
@@ -863,25 +893,31 @@ async def posts_fetch():
     log.debug("query: %r", result.query)
     log.debug("tags: %r", result.tags)
     log.debug("mapped: %r", mapped_tag_args)
-    tag_rows = await app.db.execute(
-        result.query + f" order by file_hash desc limit {limit} offset {offset}",
-        mapped_tag_args,
-    )
-    total_rows_count = await app.db.execute(
-        result.query,
-        mapped_tag_args,
-    )
-    total_files = len(await total_rows_count.fetchall())
+    with Timer() as main_exectimer:
+        tag_rows = await app.db.execute(
+            result.query + f" order by file_hash desc limit {limit} offset {offset}",
+            mapped_tag_args,
+        )
+    log.info("exec main query in %s", main_exectimer)
+    with Timer() as main_counttimer:
+        total_rows_count = await app.db.execute(
+            result.query,
+            mapped_tag_args,
+        )
+        total_files = len(await total_rows_count.fetchall())
+    log.info("count query in %s", main_counttimer)
 
     rows_coroutines = []
     async for file_hash_row in tag_rows:
         file_hash = file_hash_row[0]
-        rows_coroutines.append(fetch_file_entity(file_hash, fields=fields))
-    start_ts = time.monotonic()
-    rows = await asyncio.gather(*rows_coroutines)
-    end_ts = time.monotonic()
-    time_taken = round(end_ts - start_ts, 3)
-    log.info("took %.3f seconds to fetch file metadata", time_taken)
+        log.debug("spawn task for %r", file_hash)
+        rows_coroutines.append(
+            fetch_file_entity(file_hash, fields=fields, from_file_listing=True)
+        )
+    log.debug("wait for %d tasks", len(rows_coroutines))
+    with Timer() as gather_timer:
+        rows = await asyncio.gather(*rows_coroutines)
+    log.info("took %s to fetch file metadata", gather_timer)
 
     return {
         "query": query,
