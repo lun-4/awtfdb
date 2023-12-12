@@ -1028,6 +1028,7 @@ async def fetch_file_entity(
     *,
     micro=False,
     fields: Optional[List[str]] = None,
+    from_file_listing: bool = False,
 ) -> Optional[dict]:
     fields = fields or ALL_FILE_FIELDS
     if micro:
@@ -1069,17 +1070,41 @@ async def fetch_file_entity(
 
     if "tags" in fields or "pools" in fields or "tagCount" in fields:
         file_tags = []
-        file_tags_cursor = await app.db.execute(
-            "select core_hash from tag_files where file_hash = ?",
-            (file_id,),
-        )
+        if from_file_listing:
+            # usage 1 for everything
 
-        tags_coroutines = []
-        async for row in file_tags_cursor:
-            tags_coroutines.append(fetch_tag(row[0]))
-        tags_results = await asyncio.gather(*tags_coroutines)
-        for tag_result in tags_results:
-            file_tags.extend(tag_result)
+            file_tags_cursor = await query_db().execute(
+                """
+                select tn.tag_text 
+                from tag_files
+                join tag_names tn 
+                on tn.core_hash = tag_files.core_hash 
+                where file_hash = ?;
+                """,
+                (file_id,),
+            )
+
+            tags_coroutines = []
+            async for row in file_tags_cursor:
+                file_tags.append(
+                    {
+                        "names": [row[0]],
+                        "category": "default",
+                        "usages": 1,
+                    }
+                )
+        else:
+            file_tags_cursor = await query_db().execute(
+                "select core_hash from tag_files where file_hash = ?",
+                (file_id,),
+            )
+
+            tags_coroutines = []
+            async for row in file_tags_cursor:
+                tags_coroutines.append(fetch_tag(row[0]))
+            tags_results = await asyncio.gather(*tags_coroutines)
+            for tag_result in tags_results:
+                file_tags.extend(tag_result)
 
         # sort tags by name instead of by hash
         returned_file["tags"] = sorted(file_tags, key=lambda t: t["names"][0])
