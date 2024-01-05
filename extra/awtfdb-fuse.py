@@ -237,7 +237,6 @@ class FuseServer(fuse.Fuse):
 
             return new_stat
         else:
-
             mode = original_stat.st_mode
             mode |= stat.S_IFLNK
 

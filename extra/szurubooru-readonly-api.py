@@ -637,6 +637,7 @@ MIME_EXTENSION_MAPPING = {
     "video/3gpp": ".3gpp",
     "application/vnd.oasis.opendocument.text": ".odt",
     "application/epub+zip": ".epub",
+    "image/webp": ".webp",
 }
 
 
@@ -655,6 +656,7 @@ MIME_OPTIMIZATION = {
     ".png": "image/png",
     ".mp4": "video/mp4",
     ".gif": "image/gif",
+    ".webp": "image/webp",
 }
 
 
