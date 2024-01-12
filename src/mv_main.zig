@@ -92,10 +92,6 @@ pub fn main() anyerror!void {
     // TODO index check before crash
     const to_path = given_args.paths.items[given_args.paths.items.len - 1];
 
-    if (from_paths.len > 1) {
-        logger.err("can not rename multiple files yet. sorry", .{});
-        return error.TODO;
-    }
     if (from_paths.len == 0) {
         logger.err("no paths?", .{});
         return error.NoPathsGiven;
