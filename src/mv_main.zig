@@ -126,9 +126,11 @@ const PathHandle = union(enum) {
         }
     }
 
-    fn openFile(path: []const u8) !Self {
-        const dirname = std.fs.path.dirname(path).?;
-        const basename = std.fs.path.basename(path);
+    fn openFile(path: []const u8, options: RuntimeOptions) !Self {
+        const realpath = try std.fs.cwd().realpath(path, options.path_buffer.?);
+
+        const dirname = std.fs.path.dirname(realpath).?;
+        const basename = std.fs.path.basename(realpath);
         const dir = try std.fs.cwd().openDir(dirname, .{});
         return Self{ .file = .{
             .dir = dir,
@@ -137,8 +139,13 @@ const PathHandle = union(enum) {
     }
 
     const Options = struct { want_file: bool = true };
+    const RuntimeOptions = struct { path_buffer: ?[]u8 = null };
 
-    pub fn openPath(path: []const u8, comptime options: Options) !if (options.want_file) Self else ?Self {
+    pub fn openPath(
+        path: []const u8,
+        comptime options: Options,
+        runtime_options: RuntimeOptions,
+    ) !if (options.want_file) Self else ?Self {
         return Self{ .dir = std.fs.cwd().openDir(path, .{}) catch |err| {
             switch (err) {
                 error.FileNotFound => {
@@ -146,7 +153,7 @@ const PathHandle = union(enum) {
                     return if (options.want_file) err else null;
                 },
                 error.NotDir => {
-                    return if (options.want_file) Self.openFile(path) else null;
+                    return if (options.want_file) Self.openFile(path, runtime_options) else null;
                 },
                 else => return err,
             }
@@ -160,10 +167,11 @@ fn renameWithIndex(
     from_paths: [][]const u8,
     to_fspath: []const u8,
 ) !void {
-    const maybe_to_path = try PathHandle.openPath(to_fspath, .{ .want_file = false });
+    const maybe_to_path = try PathHandle.openPath(to_fspath, .{ .want_file = false }, .{});
 
     for (from_paths) |from_path_str| {
-        var from_path: PathHandle = try PathHandle.openPath(from_path_str, .{});
+        var buffer: [std.os.PATH_MAX]u8 = undefined;
+        var from_path: PathHandle = try PathHandle.openPath(from_path_str, .{}, .{ .path_buffer = &buffer });
         defer from_path.close();
 
         // NOTE: these are not the same techniques as awtfdb-watcher
@@ -227,7 +235,8 @@ fn renameWithIndex(
 
                 logger.info("new_path: {s}", .{new_path_full});
                 // ensure that the new path is an actually valid fspath
-                var new_path_handle = try PathHandle.openPath(new_path_full, .{ .want_file = true });
+                var realpath_buffer: [std.os.PATH_MAX]u8 = undefined;
+                var new_path_handle = try PathHandle.openPath(new_path_full, .{ .want_file = true }, .{ .path_buffer = &realpath_buffer });
                 defer new_path_handle.close();
 
                 try old_file.setLocalPath(new_path_full);
