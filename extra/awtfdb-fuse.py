@@ -209,6 +209,8 @@ class FuseServer(fuse.Fuse):
 
         log.info("getattr ok %r -> %r", vfs_path, local_paths)
         assert local_paths
+        if not local_paths[0]:
+            return -errno.ENOENT
         original_stat = os.lstat(local_paths[0])
         if wants_listing:
             mode = 0
