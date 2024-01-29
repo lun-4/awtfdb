@@ -1025,7 +1025,7 @@ pub const Context = struct {
             if (self.error_output) |error_output_ptr| {
                 switch (error_output_ptr.*) {
                     .none => {},
-                    else => logger.err("an error happened: {}", .{error_output_ptr.*}),
+                    else => logger.warn("an error happened: {}", .{error_output_ptr.*}),
                 }
             }
         }
@@ -1034,7 +1034,7 @@ pub const Context = struct {
             if (self.error_output) |error_output_ptr| {
                 error_output_ptr.* = error_data;
             } else {
-                logger.err("an error happened: {}", .{error_data});
+                logger.warn("an error happened: {}", .{error_data});
             }
         }
     };

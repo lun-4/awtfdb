@@ -137,7 +137,7 @@ pub fn main() anyerror!void {
         var maybe_dir: ?std.fs.IterableDir = std.fs.cwd().openIterableDir(query, .{}) catch |err| blk: {
             switch (err) {
                 error.FileNotFound => {
-                    logger.err("path not found: {s}", .{query});
+                    logger.warn("path not found: {s}", .{query});
                     return err;
                 },
                 error.NotDir => {

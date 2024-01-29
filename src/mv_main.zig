@@ -145,7 +145,7 @@ const PathHandle = union(enum) {
         return Self{ .dir = std.fs.cwd().openDir(path, .{}) catch |err| {
             switch (err) {
                 error.FileNotFound => {
-                    logger.err("path not found: {s}", .{path});
+                    logger.warn("path not found: {s}", .{path});
                     return if (options.want_file) err else null;
                 },
                 error.NotDir => {
