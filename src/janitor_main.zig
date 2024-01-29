@@ -89,14 +89,29 @@ const CoreWithBlob = struct {
     core_data: sqlite.Blob,
 };
 
+fn calculateHashFromMemory(ctx: *Context, block: []const u8) !Context.Hash {
+    var hasher = std.crypto.hash.Blake3.initKdf(manage_main.AWTFDB_BLAKE3_CONTEXT, .{});
+    hasher.update(block);
+
+    var hash_entry: Context.Hash = undefined;
+    hasher.final(&hash_entry.hash_data);
+
+    const hash_blob = sqlite.Blob{ .data = &hash_entry.hash_data };
+    const maybe_hash_id = try ctx.fetchHashId(hash_blob);
+    if (maybe_hash_id) |hash_id| {
+        hash_entry.id = hash_id;
+    } else {
+        hash_entry.id = .{ .data = undefined };
+    }
+
+    return hash_entry;
+}
+
 fn verifyTagCore(ctx: *Context, report: *Report, given_args: Args, core_with_blob: CoreWithBlob) !void {
     defer ctx.allocator.free(core_with_blob.core_data.data);
     const core_hash = ID.new(core_with_blob.core_hash);
 
-    const calculated_hash = try ctx.calculateHashFromMemory(
-        core_with_blob.core_data.data,
-        .{ .insert_new_hash = false },
-    );
+    const calculated_hash = try calculateHashFromMemory(ctx, core_with_blob.core_data.data);
 
     var hash_with_blob = (try ctx.db.oneAlloc(
         Context.HashSQL,
