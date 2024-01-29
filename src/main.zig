@@ -1146,9 +1146,11 @@ pub const Context = struct {
                     );
                 }
             } else {
-                // TODO compileError if parent_source_id here but no source
-                // provided
-                if (options.parent_source_id != null) unreachable;
+                // we can't check at compile time if parent_source_id is receiving a value or not,
+                // as the optionality is already erased by the time we cast to AddTagOptions.
+                // I'd need an AddTagOptions.create_from() that does that compile time check
+                if (options.parent_source_id != null)
+                    @panic("invalid api usage, if options.parent_source_id is provided, options.source must be provided");
 
                 try self.ctx.db.exec(
                     "insert into tag_files (core_hash, file_hash) values (?, ?) on conflict do nothing",
