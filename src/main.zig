@@ -1317,9 +1317,6 @@ pub const Context = struct {
         logger.debug("create tag source '{s}'", .{name});
 
         // fetch max id, do max(id) + 1
-        // TODO (before merge) is this a good idea for ids?
-        //   maybe a tag core-ish kind of deal would be better...
-
         const manual_source_max_id = (try self.db.one(i64, "select max(id) from tag_sources where type = 1", .{}, .{})) orelse 0;
 
         const source_id = manual_source_max_id + 1;
