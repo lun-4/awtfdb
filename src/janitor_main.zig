@@ -693,7 +693,7 @@ test "janitor functionality" {
     defer report.deinit();
 
     try janitorCheckFiles(&ctx, &report, given_args);
-    try janitorCheckCores(&ctx, &report.counters, given_args);
+    try janitorCheckCores(&ctx, &report, given_args);
     try janitorCheckUnusedHashes(&ctx, &report.counters, given_args);
     try janitorCheckTagNameRegex(&ctx, &report.counters, given_args);
 }
