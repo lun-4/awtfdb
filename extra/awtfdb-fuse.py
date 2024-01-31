@@ -39,7 +39,7 @@ class File:
         )
         rows = cursor.fetchall()
         if rows:
-            return [Path(rows[0][0])]
+            return [p for p in [Path(row[0]) for row in rows] if p.exists()]
         else:
             raise FileNotFoundError(f"file id not found ({self.id})")
 
@@ -74,7 +74,7 @@ class Pool:
         )
         rows = cursor.fetchall()
         if rows:
-            return [Path(row[0]) for row in rows]
+            return [p for p in [Path(row[0]) for row in rows] if p.exists()]
         else:
             raise FileNotFoundError(f"pool id not found ({self.id})")
 
