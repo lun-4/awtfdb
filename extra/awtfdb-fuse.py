@@ -79,6 +79,41 @@ class Pool:
             raise FileNotFoundError(f"pool id not found ({self.id})")
 
 
+@dataclass
+class Tag:
+    id: str
+
+    def __hash__(self):
+        return hash(self.id)
+
+    def __eq__(self, other):
+        return self.id == other.id
+
+    @classmethod
+    def from_part(cls, part):
+        assert part.startswith("#")
+        _, id = part.split("#")
+        return cls(id)
+
+    def fetch_paths(self, db, filename=None) -> List[Path]:
+        cursor = db.execute(
+            """
+            select local_path
+            from files
+            join tag_files
+            on tag_files.file_hash = files.file_hash
+            where tag_files.core_hash = ?
+            order by files.file_hash asc;
+            """,
+            (self.id,),
+        )
+        rows = cursor.fetchall()
+        if rows:
+            return [p for p in [Path(row[0]) for row in rows] if p.exists()]
+        else:
+            raise FileNotFoundError(f"core id not found ({self.id})")
+
+
 class FuseServer(fuse.Fuse):
     def __init__(self, *args, **kwargs):
         fuse.Fuse.__init__(self, *args, **kwargs)
@@ -158,6 +193,8 @@ class FuseServer(fuse.Fuse):
             possible_id = File.from_part(fuse_request)
         elif fuse_request.startswith("!"):
             possible_id = Pool.from_part(fuse_request)
+        elif fuse_request.startswith("#"):
+            possible_id = Tag.from_part(fuse_request)
         else:
             raise FileNotFoundError(f"not any actionable request ({vfs_path!r})")
 
