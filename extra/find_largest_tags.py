@@ -72,7 +72,8 @@ def main():
         as_kb = used_bytes / 1024
         as_mb = as_kb / 1024
         as_gb = as_mb / 1024
-        print(f"{core_hash}\t{tag_text}\t{as_gb}\tgb")
+        count = len(tagmap[core_hash])
+        print(f"{core_hash}\t{tag_text}\t{as_gb}\tgb\t{count}\tfiles")
 
     ender_ts = time.monotonic()
     time_taken = round(ender_ts - end_ts, 2)
