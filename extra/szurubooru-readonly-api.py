@@ -222,7 +222,7 @@ async def info():
                 "posts:delete": "moderator",
                 "posts:score": "regular",
                 "posts:merge": "moderator",
-                "posts:favorite": "regular",
+                "posts:favorite": "anonymous",
                 "posts:bulk-edit:tags": "power",
                 "posts:bulk-edit:safety": "power",
                 "tags:create": "regular",
@@ -1110,6 +1110,12 @@ async def fetch_file_entity(
 
         # sort tags by name instead of by hash
         returned_file["tags"] = sorted(file_tags, key=lambda t: t["names"][0])
+
+        favorite_tag = os.environ.get("FAVORITE_TAG")
+        if favorite_tag is not None:
+            if favorite_tag in [t["names"][0] for t in returned_file["tags"]]:
+                returned_file["ownFavorite"] = True
+                returned_file["favoriteCount"] = 1
 
         pool_rows = await query_db().execute_fetchall(
             "select pool_hash from pool_entries where file_hash = ?",
