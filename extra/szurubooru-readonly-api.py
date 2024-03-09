@@ -308,6 +308,7 @@ async def tags_fetch():
     )
     rows = []
     async for tag in tag_rows:
+        start_ts = time.monotonic()
         tag_timestamp = get_ulid_datetime(tag[0])
         tags = await fetch_tag(tag[0])
         for tag in tags:
@@ -324,6 +325,8 @@ async def tags_fetch():
                     "description": "awooga",
                 }
             )
+        end_ts = time.monotonic()
+        log.info("tag process %.2f msec", round((end_ts - start_ts) * 1000, 5))
 
     rows = sorted(rows, key=lambda r: r["usages"], reverse=True)
 
@@ -973,6 +976,7 @@ async def fetch_tag(core_hash) -> list:
             (core_hash,),
         )
 
+        start_ts = time.monotonic()
         usages_from_metrics = await query_db().execute_fetchall(
             """
             select relationship_count
@@ -983,6 +987,11 @@ async def fetch_tag(core_hash) -> list:
             """,
             (core_hash,),
         )
+        end_ts = time.monotonic()
+        log.info(
+            "took %.2f msec fetching tag usage", round((end_ts - start_ts) * 1000, 3)
+        )
+
         if usages_from_metrics:
             usages = usages_from_metrics[0][0]
         else:
@@ -990,8 +999,13 @@ async def fetch_tag(core_hash) -> list:
             usages = 1
 
         tag_entry = []
+        start_ts = time.monotonic()
         async for named_tag in named_tag_cursor:
             tag_entry.append(TagEntry(named_tag[0], usages))
+        end_ts = time.monotonic()
+        log.info(
+            "took %.2f msec fetching tag names", round((end_ts - start_ts) * 1000, 3)
+        )
 
         app.tag_cache[core_hash] = tag_entry
 
