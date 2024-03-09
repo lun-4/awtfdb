@@ -293,6 +293,15 @@ pub const MIGRATIONS = .{
         .{ .transaction = false },
         \\ PRAGMA journal_mode=WAL;
     },
+    .{
+        11,
+        "create indexes",
+        .{},
+        \\ create index tag_files_file_hash_idx on tag_files (file_hash);
+        \\ create index tag_files_core_hash_idx on tag_files (core_hash);
+        \\ create index tag_names_core_hash_idx on tag_names (core_hash);
+        \\ create index metrics_tag_usage_values_core_hash_idx on metrics_tag_usage_values (core_hash);
+    },
 };
 
 pub const MIGRATION_LOG_TABLE =
