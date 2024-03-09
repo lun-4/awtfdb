@@ -903,10 +903,11 @@ async def posts_fetch():
     log.info("exec main query in %s", main_exectimer)
     with Timer() as main_counttimer:
         total_rows_count = await app.db.execute(
-            result.query,
+            f"select count(*) from ({result.query})",
             mapped_tag_args,
         )
-        total_files = len(await total_rows_count.fetchall())
+        row = await total_rows_count.fetchone()
+        total_files = row[0]
     log.info("count query in %s", main_counttimer)
 
     rows_coroutines = []
