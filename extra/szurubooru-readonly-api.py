@@ -526,6 +526,7 @@ async def content(file_id: str):
 def blocking_thumbnail_image(path, thumbnail_path, size):
     try:
         with Image.open(path) as file_as_image:
+            file_as_image = file_as_image.convert("RGB")
             file_as_image.thumbnail(size)
             file_as_image.save(thumbnail_path)
     except UnidentifiedImageError:
