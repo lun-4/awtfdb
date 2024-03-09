@@ -581,21 +581,17 @@ const SearchAction = struct {
 
         var stmt = if (self.config.exact)
             try self.ctx.db.prepareDynamic(
-                \\ select distinct core_hash core_hash, hashes.hash_data
+                \\ select distinct core_hash
                 \\ from tag_names
-                \\ join hashes
-                \\  on hashes.id = tag_names.core_hash
                 \\ where tag_text = ?
-                \\ order by hashes.id asc
+                \\ order by core_hash asc
             )
         else
             try self.ctx.db.prepareDynamic(
-                \\ select distinct core_hash core_hash, hashes.hash_data
+                \\ select distinct core_hash
                 \\ from tag_names
-                \\ join hashes
-                \\  on hashes.id = tag_names.core_hash
                 \\ where tag_text LIKE '%' || ? || '%'
-                \\ order by hashes.id asc
+                \\ order by core_hash asc
             );
 
         defer stmt.deinit();
@@ -603,7 +599,6 @@ const SearchAction = struct {
         var tag_names = try stmt.all(
             struct {
                 core_hash: ID.SQL,
-                hash_data: sqlite.Blob,
             },
             self.ctx.allocator,
             .{},
@@ -620,7 +615,7 @@ const SearchAction = struct {
         for (tag_names) |tag_name| {
             const fake_hash = Context.HashSQL{
                 .id = tag_name.core_hash,
-                .hash_data = tag_name.hash_data,
+                .hash_data = undefined,
             };
             var related_tags = try self.ctx.fetchTagsFromCore(
                 self.ctx.allocator,
