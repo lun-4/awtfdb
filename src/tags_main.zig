@@ -606,9 +606,6 @@ const SearchAction = struct {
         );
 
         defer {
-            for (tag_names) |tag| {
-                self.ctx.allocator.free(tag.hash_data.data);
-            }
             self.ctx.allocator.free(tag_names);
         }
 
