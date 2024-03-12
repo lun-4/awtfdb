@@ -616,12 +616,15 @@ const SearchAction = struct {
             };
             var related_tags = try self.ctx.fetchTagsFromCore(
                 self.ctx.allocator,
-                fake_hash.toRealHash(),
+                Context.Hash{
+                    .id = ID.new(fake_hash.id),
+                    .hash_data = undefined,
+                },
             );
             defer related_tags.deinit();
 
             const full_tag_core = related_tags.items[0].core;
-            try stdout.print("{s}", .{full_tag_core});
+            try stdout.print("{s}", .{full_tag_core.id});
             for (related_tags.items) |tag| {
                 try stdout.print(" '{s}'", .{tag});
             }
