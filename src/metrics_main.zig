@@ -14,11 +14,11 @@ const HELPTEXT =
     \\ that much. maybe 5am
     \\
     \\ usage:
-    \\ 	awtfdb-metrics
+    \\ \tawtfdb-metrics
     \\
     \\ options:
-    \\ 	-h				prints this help and exits
-    \\ 	-V				prints version and exits
+    \\ \t-h\tprints this help and exits
+    \\ \t-V\tprints version and exits
 ;
 
 const StringList = std.ArrayList([]const u8);
@@ -319,9 +319,9 @@ test "metrics (tags and files)" {
     try std.testing.expectEqual(@as(usize, 3), last_metrics_file);
 
     // fact on this test:
-    // 	tag1 has 3 relationships,
-    // 	tag2 has 1 relationship,
-    // 	tag3 has 2 relationships
+    // \ttag1 has 3 relationships,
+    // \ttag2 has 1 relationship,
+    // \ttag3 has 2 relationships
 
     const last_metrics_tag_usage_timestamp = (try ctx.db.one(usize, "select timestamp from metrics_tag_usage_timestamps", .{}, .{})).?;
 

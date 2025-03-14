@@ -12,11 +12,11 @@ const HELPTEXT =
     \\ amv: move files
     \\
     \\ usage:
-    \\ 	amv [options] <path_from> <path_to>
+    \\ \tamv [options] <path_from> <path_to>
     \\
     \\ options:
-    \\ 	-h				prints this help and exits
-    \\ 	-V				prints version and exits
+    \\ \t-h\tprints this help and exits
+    \\ \t-V\tprints version and exits
     \\
     \\ examples:
     \\     amv path1 path2

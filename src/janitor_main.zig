@@ -12,21 +12,21 @@ const HELPTEXT =
     \\ awtfdb-janitor: investigate the semantic consistency of the index file
     \\
     \\ usage:
-    \\ 	awtfdb-janitor
+    \\ \tawtfdb-janitor
     \\
     \\ options:
-    \\ 	-h				prints this help and exits
-    \\ 	-V				prints version and exits
-    \\ 	--full				validate hashes of all files (very slow)
-    \\ 	--only <path>			only run full validation on given path
-    \\ 	--repair			attempt to repair consistency
-    \\ 					(this operation may be destructive to
-    \\ 					the index file, only run this manually)
-    \\ 	--hash-files-smaller-than			only hash files smaller than a specific size
-    \\				e.g 10K, 10M, 3G
-    \\ 	--from-report <path>			use existing report file for double check
-    \\ 	--skip-db			skip db checks
-    \\ 	--skip-tag-cores			skip tag cores
+    \\ \t-h\tprints this help and exits
+    \\ \t-V\tprints version and exits
+    \\ \t--full\tvalidate hashes of all files (very slow)
+    \\ \t--only <path>\tonly run full validation on given path
+    \\ \t--repair\tattempt to repair consistency
+    \\ \t(this operation may be destructive to
+    \\ \tthe index file, only run this manually)
+    \\ \t--hash-files-smaller-than\tonly hash files smaller than a specific size
+    \\\te.g 10K, 10M, 3G
+    \\ \t--from-report <path>\tuse existing report file for double check
+    \\ \t--skip-db\tskip db checks
+    \\ \t--skip-tag-cores\tskip tag cores
 ;
 
 const Counter = struct { total: usize = 0, unrepairable: usize = 0 };
@@ -670,7 +670,7 @@ pub fn main() anyerror!u8 {
     const CountersTypeInfo = @typeInfo(ErrorCounters);
 
     var total_problems: usize = 0;
-    inline for (CountersTypeInfo.Struct.fields) |field| {
+    inline for (CountersTypeInfo.@"struct".fields) |field| {
         const total = @field(report.counters, field.name).total;
 
         logger.info("problem {s}, {d} found, {d} unrepairable", .{
@@ -749,7 +749,7 @@ pub fn temporaryName(allocator: std.mem.Allocator) ![]u8 {
     std.mem.copyForwards(u8, nam, template);
 
     const seed = @as(u64, @truncate(@as(u128, @bitCast(std.time.nanoTimestamp()))));
-    var r = std.rand.DefaultPrng.init(seed);
+    var r = std.Random.DefaultPrng.init(seed);
 
     var fill = nam[template_start.len..nam.len];
 

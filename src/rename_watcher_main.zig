@@ -20,8 +20,8 @@ const HELPTEXT =
     \\  awtfdb-watcher [options...] path_to_home_directory
     \\
     \\ options:
-    \\ 	-h				prints this help and exits
-    \\ 	-V				prints version and exits
+    \\ \t-h\tprints this help and exits
+    \\ \t-V\tprints version and exits
 ;
 
 const PidTid = struct { pid: std.posix.pid_t, tid: std.posix.pid_t };
@@ -47,7 +47,7 @@ const RenameContext = struct {
     }
 
     pub fn processLine(self: *Self, line: []const u8) anyerror!void {
-        var line_it = std.mem.split(u8, line, ":");
+        var line_it = std.mem.splitSequence(u8, line, ":");
 
         const version_string = line_it.next().?;
         const is_v1_message = std.mem.eql(u8, version_string, "v1");
@@ -527,8 +527,8 @@ pub fn main() anyerror!void {
         .mask = mask,
         .flags = 0,
     };
-    try std.posix.sigaction(std.posix.SIG.TERM, &sa, null);
-    try std.posix.sigaction(std.posix.SIG.INT, &sa, null);
+    std.posix.sigaction(std.posix.SIG.TERM, &sa, null);
+    std.posix.sigaction(std.posix.SIG.INT, &sa, null);
 
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
@@ -761,7 +761,7 @@ test "rename syscalls trigger db rename" {
     );
 
     // give those lines to context
-    var it = std.mem.split(u8, lines, "\n");
+    var it = std.mem.splitSequence(u8, lines, "\n");
     while (it.next()) |line|
         try rename_ctx.processLine(line);
 
@@ -852,7 +852,7 @@ test "rename syscalls trigger db rename (target being a folder)" {
     );
 
     // give those lines to context
-    var it = std.mem.split(u8, lines, "\n");
+    var it = std.mem.splitSequence(u8, lines, "\n");
     while (it.next()) |line|
         try rename_ctx.processLine(line);
 

@@ -14,27 +14,27 @@ const HELPTEXT =
     \\  afind [options...] query
     \\
     \\ options:
-    \\ 	-h				prints this help and exits
-    \\ 	-V				prints version and exits
-    \\ 	-L, --link			creates a temporary folder with
-    \\ 					symlinks to the resulting files from
-    \\ 					the query. deletes the folder on
-    \\ 					CTRL-C.
-    \\ 					(linux only)
+    \\ \t-h\tprints this help and exits
+    \\ \t-V\tprints version and exits
+    \\ \t-L, --link\tcreates a temporary folder with
+    \\ \tsymlinks to the resulting files from
+    \\ \tthe query. deletes the folder on
+    \\ \tCTRL-C.
+    \\ \t(linux only)
     \\
     \\ query examples:
-    \\ 	afind 'mytag1'
-    \\ 		search all files with mytag1
-    \\ 	afind 'mytag1 mytag2'
-    \\ 		search all files with mytag1 AND mytag2
-    \\ 	afind 'mytag1 | mytag2'
-    \\ 		search all files with mytag1 OR mytag2
-    \\ 	afind '"mytag1" | "mytag2"'
-    \\ 		search all files with mytag1 OR mytag2 (raw tag syntax)
-    \\ 		not all characters are allowed in non-raw tag syntax
-    \\ 	afind '"mytag1" -"mytag2"'
-    \\ 	afind 'mytag1 -mytag2'
-    \\ 		search all files with mytag1 but they do NOT have mytag2
+    \\ \tafind 'mytag1'
+    \\ \tsearch all files with mytag1
+    \\ \tafind 'mytag1 mytag2'
+    \\ \tsearch all files with mytag1 AND mytag2
+    \\ \tafind 'mytag1 | mytag2'
+    \\ \tsearch all files with mytag1 OR mytag2
+    \\ \tafind '"mytag1" | "mytag2"'
+    \\ \tsearch all files with mytag1 OR mytag2 (raw tag syntax)
+    \\ \tnot all characters are allowed in non-raw tag syntax
+    \\ \tafind '"mytag1" -"mytag2"'
+    \\ \tafind 'mytag1 -mytag2'
+    \\ \tsearch all files with mytag1 but they do NOT have mytag2
 ;
 
 pub const std_options = struct {
@@ -222,7 +222,7 @@ pub fn main() anyerror!void {
         const fill_here = tmp_path[PREFIX.len..];
 
         const seed = @as(u64, @truncate(@as(u128, @bitCast(std.time.nanoTimestamp()))));
-        var r = std.rand.DefaultPrng.init(seed);
+        var r = std.Random.DefaultPrng.init(seed);
         for (fill_here) |*el| {
             const ascii_idx = @as(u8, @intCast(r.random().uintLessThan(u5, 24)));
             const letter: u8 = @as(u8, 65) + ascii_idx;
@@ -285,8 +285,8 @@ pub fn main() anyerror!void {
             .flags = 0,
         };
 
-        try std.posix.sigaction(std.posix.SIG.TERM, &sa, null);
-        try std.posix.sigaction(std.posix.SIG.INT, &sa, null);
+        std.posix.sigaction(std.posix.SIG.TERM, &sa, null);
+        std.posix.sigaction(std.posix.SIG.INT, &sa, null);
 
         const PollFdList = std.ArrayList(std.posix.pollfd);
         var sockets = PollFdList.init(allocator);
@@ -501,7 +501,7 @@ pub const SqlGiver = struct {
                         }
 
                         if (std.mem.startsWith(u8, match_text, "hash:")) {
-                            var it = std.mem.split(u8, match_text, ":");
+                            var it = std.mem.splitScalar(u8, match_text, ':');
                             _ = it.next();
                             const file_blake3_hash_hex = it.next() orelse
                                 return Result{ .Error = .{ .character = index, .error_type = .InvalidHashScopedTag } };
@@ -517,7 +517,7 @@ pub const SqlGiver = struct {
                             try list.writer().print(" file_hash = ?", .{});
                             try arguments.append(Argument{ .file = hash_as_blob });
                         } else if (std.mem.startsWith(u8, match_text, "system:low_tags:")) {
-                            var it = std.mem.split(u8, match_text, ":");
+                            var it = std.mem.splitSequence(u8, match_text, ":");
 
                             _ = it.next();
                             _ = it.next();

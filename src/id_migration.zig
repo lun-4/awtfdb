@@ -47,7 +47,7 @@ fn migrateFiles(self: *Context) !void {
     );
     defer stmt.deinit();
 
-    var rng = std.rand.DefaultPrng.init(
+    var rng = std.Random.DefaultPrng.init(
         @as(u64, @truncate(@as(u128, @intCast(std.time.nanoTimestamp())))),
     );
     const random = rng.random();
@@ -112,7 +112,7 @@ fn migrateFiles(self: *Context) !void {
 }
 
 fn migrateCores(self: *Context) !void {
-    var rng = std.rand.DefaultPrng.init(
+    var rng = std.Random.DefaultPrng.init(
         @as(u64, @truncate(@as(u128, @intCast(std.time.nanoTimestamp())))),
     );
     const random = rng.random();
@@ -262,7 +262,7 @@ fn migrateTagFiles(self: *Context) !void {
 }
 
 fn migratePools(self: *Context) !void {
-    var rng = std.rand.DefaultPrng.init(@as(u64, @truncate(@as(u128, @intCast(std.time.nanoTimestamp())))));
+    var rng = std.Random.DefaultPrng.init(@as(u64, @truncate(@as(u128, @intCast(std.time.nanoTimestamp())))));
     const random = rng.random();
 
     var stmt = try self.db.prepare(
@@ -426,11 +426,11 @@ pub fn migrate(self: *Context) !void {
         \\  ) without rowid, strict;
         \\
         \\ CREATE TABLE IF NOT EXISTS tag_names_v2 (
-        \\ 	tag_text text not null,
-        \\ 	tag_language text not null,
+        \\  tag_text text not null,
+        \\  tag_language text not null,
         \\      core_hash text
         \\         constraint tag_names_v2_core_fk references tag_cores_v2 (core_hash) on delete restrict,
-        \\ 	constraint tag_names_v2_pk primary key (tag_text, tag_language)
+        \\  constraint tag_names_v2_pk primary key (tag_text, tag_language)
         \\  ) without rowid, strict;
         \\
         \\CREATE TABLE IF NOT EXISTS tag_implications_v2 (

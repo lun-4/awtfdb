@@ -12,36 +12,36 @@ const HELPTEXT =
     \\ atags: manage your tags
     \\
     \\ usage:
-    \\ 	atags action [arguments...]
+    \\ \tatags action [arguments...]
     \\
     \\ options:
-    \\ 	-h				prints this help and exits
-    \\ 	-V				prints version and exits
-    \\ 	--no-confirm			do not ask for confirmation on remove
-    \\ 					commands.
+    \\ \t-h\tprints this help and exits
+    \\ \t-V\tprints version and exits
+    \\ \t--no-confirm\tdo not ask for confirmation on remove
+    \\ \tcommands.
     \\
     \\ examples of tag operations::
-    \\ 	atags create tag
-    \\ 	atags create --core lkdjfalskjg tag
-    \\ 	atags search tag
-    \\ 	atags search --exact tag
-    \\ 	atags remove --tag tag
-    \\ 	atags remove --core dslkjfsldkjf
-    \\ 	atags remove --only-tag-name mytag --> only deleted name, no actual tag cores deleted
+    \\ \tatags create tag
+    \\ \tatags create --core lkdjfalskjg tag
+    \\ \tatags search tag
+    \\ \tatags search --exact tag
+    \\ \tatags remove --tag tag
+    \\ \tatags remove --core dslkjfsldkjf
+    \\ \tatags remove --only-tag-name mytag --> only deleted name, no actual tag cores deleted
     \\
     \\ tag parent operations:
-    \\ 	atags parent create child_tag parent_tag
-    \\ 	atags parent list
-    \\ 	atags parent remove id
-    \\ 	atags parent remove --delete-tag-file-entries id
-    \\ 		remove the parent entry and clean up the files that had tags
-    \\ 		added by this parent relationship
+    \\ \tatags parent create child_tag parent_tag
+    \\ \tatags parent list
+    \\ \tatags parent remove id
+    \\ \tatags parent remove --delete-tag-file-entries id
+    \\ \tremove the parent entry and clean up the files that had tags
+    \\ \tadded by this parent relationship
     \\
     \\ pool operations:
-    \\ 	atags pool create "my pool title"
-    \\ 	atags pool search "my"
-    \\ 	atags pool fetch id
-    \\ 	atags pool remove id
+    \\ \tatags pool create "my pool title"
+    \\ \tatags pool search "my"
+    \\ \tatags pool fetch id
+    \\ \tatags pool remove id
     \\
     \\ source operations:
     \\  atags source create "deepdanbooru"
@@ -423,9 +423,9 @@ const RemoveAction = struct {
                 \\ where tag_text = ?
                 \\ and tag_language = ?
                 \\ returning (
-                \\ 	select count(*)
-                \\ 	from tag_names
-                \\ 	where tag_text = ? and tag_language = ?
+                \\  select count(*)
+                \\  from tag_names
+                \\  where tag_text = ? and tag_language = ?
                 \\ ) as deleted_count
             ,
                 .{},
@@ -463,9 +463,9 @@ const RemoveAction = struct {
                 \\ delete from tag_names
                 \\ where core_hash = ?
                 \\ returning (
-                \\ 	select count(*)
-                \\ 	from tag_names
-                \\ 	where core_hash = ?
+                \\  select count(*)
+                \\  from tag_names
+                \\  where core_hash = ?
                 \\ ) as deleted_count
             ,
                 .{},
@@ -479,9 +479,9 @@ const RemoveAction = struct {
                 \\ delete from tag_names
                 \\ where tag_text = ? and tag_language = ?
                 \\ returning (
-                \\ 	select count(*)
-                \\ 	from tag_names
-                \\ 	where tag_text = ? and tag_language = ?
+                \\  select count(*)
+                \\  from tag_names
+                \\  where tag_text = ? and tag_language = ?
                 \\ ) as deleted_count
             ,
                 .{},
@@ -747,9 +747,9 @@ const ListParent = struct {
         var stmt = try self.ctx.db.prepare(
             \\ select rowid,
             \\  parent_tag,
-            \\ 	(select tag_text from tag_names where core_hash = parent_tag),
-            \\ 	child_tag,
-            \\ 	(select tag_text from tag_names where core_hash = child_tag)
+            \\  (select tag_text from tag_names where core_hash = parent_tag),
+            \\  child_tag,
+            \\  (select tag_text from tag_names where core_hash = child_tag)
             \\ from tag_implications
         );
         defer stmt.deinit();
@@ -874,16 +874,16 @@ const RemoveParent = struct {
                     usize,
                     \\ delete from tag_files
                     \\ where
-                    \\ 	parent_source_id = ?
+                    \\  parent_source_id = ?
                     \\  and tag_source_type = 0
                     \\  and tag_source_id = 1
                     \\ returning (
-                    \\ 	select count(*)
-                    \\ 	from tag_files
-                    \\	where
-                    \\	 parent_source_id = ?
-                    \\	 and tag_source_type = 0
-                    \\	 and tag_source_id = 1
+                    \\  select count(*)
+                    \\  from tag_files
+                    \\ where
+                    \\  parent_source_id = ?
+                    \\  and tag_source_type = 0
+                    \\  and tag_source_id = 1
                     \\ ) as updated_count
                 ,
                     .{},
@@ -897,20 +897,20 @@ const RemoveParent = struct {
                     usize,
                     \\ update tag_files
                     \\ set
-                    \\ 	parent_source_id = null,
+                    \\  parent_source_id = null,
                     \\  tag_source_type = 0,
                     \\  tag_source_id = 0
                     \\ where
-                    \\ 	parent_source_id = ?
+                    \\  parent_source_id = ?
                     \\  and tag_source_type = 0
                     \\  and tag_source_id = 1
                     \\ returning (
-                    \\ 	select count(*)
-                    \\ 	from tag_files
-                    \\	where
-                    \\	 parent_source_id = ?
-                    \\	 and tag_source_type = 0
-                    \\	 and tag_source_id = 1
+                    \\  select count(*)
+                    \\  from tag_files
+                    \\ where
+                    \\  parent_source_id = ?
+                    \\  and tag_source_type = 0
+                    \\  and tag_source_id = 1
                     \\ ) as updated_count
                 ,
                     .{},

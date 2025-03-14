@@ -1,34 +1,35 @@
 .{
-    .name = "awtfdb",
+    .name = .awtfdb,
+    .fingerprint = 0x33b26f0d1fbcbc1b,
     .version = "0.1.0",
     .dependencies = .{
         .sqlite = .{
-            .url = "https://github.com/lun-4/zig-sqlite/archive/41b391cf1846b8db8c572da306902f1f59eae4eb.tar.gz",
-            .hash = "1220e0300613f2b949a8328c5b1d9ba84777f2258c1535039afcb536e9e1228d2881",
-        },
-        .@"libpcre.zig" = .{
-            .url = "git+https://github.com/kivikakk/libpcre.zig#1dc32407368651bc0118b752288c3b87af12ff50",
-            .hash = "1220039ac1b212be156069f9ed7e066571a8da5acc8f1adc33eb1a5c3bcbb4a8b47b",
-        },
-        .@"libmagic.zig" = .{
-            .url = "git+https://github.com/lun-4/libmagic.zig#d2c3a620c5a85a742f02a353e2bd80421a6418ed",
-            .hash = "122051ae76e9ddd6a9cef92061e8e6b66ea06c455aa6e1742b069493c71e758f43dd",
+            .url = "git+https://github.com/vrischmann/zig-sqlite#59c06617d5b86546c0c739e73ae01d3965dbe8ce",
+            .hash = "sqlite-3.48.0-F2R_a_uGDgCfOH5UEJYjuOCe-HixnLjToxOdEGAEM3xk",
         },
         .expiring_hash_map = .{
             .url = "https://github.com/lun-4/expiring-hash-map.zig/archive/6768a94377b1b502b8da62de47f5616feee4451b.tar.gz",
             .hash = "122049c6cb05e549154a995b79322475052ad311eb85f26d51a35f5062e691b02384",
         },
         .tunez = .{
-            .url = "https://github.com/haze/tunez/archive/ba51a2596ce469fa154453abe0cf108bbf397127.tar.gz",
-            .hash = "122068805012e59fdbe2f4a7bd3c413e2523c6a94f61e7ad60b7d6cb2dc8be15f642",
-        },
-        .@"zig-ulid" = .{
-            .url = "https://github.com/lun-4/zig-ulid/archive/6b1146ac2aa07e28468600753749b2b35b789332.tar.gz",
-            .hash = "1220f47d7fe37a226bf89f1df08d2fd07d09b5eb0ae81694d8c3fd1d0d827e0c7697",
+            .url = "git+https://github.com/haze/tunez#9ca8cc2d361a458916ba91cbe2183ea61d290b7e",
+            .hash = "tunez-0.1.0-RGmONZ9GAwBmN-RsqqhPqtyokiKK0_DG7jOPGqy_Eomi",
         },
         .libexif = .{
-            .url = "git+https://github.com/lun-4/libexif-zig#11716ff9b15de4394a67060afa416baee030663b",
-            .hash = "12204d79789378f6c3537c53beaaedf9ad77dcc24997a0cbea1e09b87d679c70ac0c",
+            .url = "git+https://github.com/lun-4/libexif-zig#bc135ed39a6b60be16fcbbc5ee1dea03ff560415",
+            .hash = "libexif-0.0.0-u_Ece58kAABH_2QqnNQgJtEAI87MGfiFwO2VNElJV3HB",
+        },
+        .libpcre_zig = .{
+            .url = "git+https://github.com/kivikakk/libpcre.zig#00b62bc8bea7da75ba61f56555ea6cbaf0dc4e26",
+            .hash = "libpcre_zig-0.1.0-Dtf6Cb04AACKHZO38w4gDrY6to4lWHxOmW6htSqrR-f9",
+        },
+        .libmagic_zig = .{
+            .url = "git+https://github.com/lun-4/libmagic.zig#6e0f686885db57484a2b56465176ac016df66506",
+            .hash = "libmagic_zig-0.1.1-P8IMv7VXdgCXzWIf4cuFUSuaPhSQ4atO7Cd1OKW3hcTc",
+        },
+        .zig_ulid = .{
+            .url = "git+https://github.com/lun-4/zig-ulid?ref=no-alloc#2b2a92a829703a98960872efd5e173e19987ad63",
+            .hash = "zig_ulid-0.1.0-W97JmIUXAACdl5P2WqXfmc3FJthLxoqNmo5096Wi1HyX",
         },
     },
     .minimum_zig_version = "0.12.0",

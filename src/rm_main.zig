@@ -13,19 +13,19 @@ const HELPTEXT =
     \\ arm: remove files from the index
     \\
     \\ usage:
-    \\ 	arm [options] path
+    \\ \tarm [options] path
     \\
     \\ options:
-    \\ 	-h				prints this help and exits
-    \\ 	-V				prints version and exits
-    \\ 	-f				forcefully delete a path
-    \\ 					(TODO support folder paths)
-    \\ 	-r				remove files recursively (in a folder)
-    \\ 	-t tag				remove a tag from a file
-    \\ 					(does not delete the file)
-    \\ 	-p pool_id			remove a file from a pool
-    \\ 					(does not delete the file)
-    \\ 	--dry-run			don't edit the index database
+    \\ \t-h\tprints this help and exits
+    \\ \t-V\tprints version and exits
+    \\ \t-f\tforcefully delete a path
+    \\ \t(TODO support folder paths)
+    \\ \t-r\tremove files recursively (in a folder)
+    \\ \t-t tag\tremove a tag from a file
+    \\ \t(does not delete the file)
+    \\ \t-p pool_id\tremove a file from a pool
+    \\ \t(does not delete the file)
+    \\ \t--dry-run\tdon't edit the index database
     \\
     \\ examples:
     \\  arm path/to/file

@@ -12,21 +12,21 @@ const HELPTEXT =
     \\ als: list file tags
     \\
     \\ usage:
-    \\ 	als [options] [path]
+    \\ \tals [options] [path]
     \\
     \\ options:
-    \\ 	-h				prints this help and exits
-    \\ 	-V				prints version and exits
-    \\ 	--id				print file id
+    \\ \t-h\tprints this help and exits
+    \\ \t-V\tprints version and exits
+    \\ \t--id\tprint file id
     \\  --show-sources    show tag sources
     \\
     \\ examples:
-    \\ 	als path/to/file
-    \\ 		shows tags about a single file
-    \\ 	als path/to/directory
-    \\ 		shows files and their respective tags inside a directory
+    \\ \tals path/to/file
+    \\ \tshows tags about a single file
+    \\ \tals path/to/directory
+    \\ \tshows files and their respective tags inside a directory
     \\  als @1234
-    \\  	list file by id
+    \\  \tlist file by id
 ;
 
 pub var current_log_level: std.log.Level = .info;
@@ -103,7 +103,7 @@ pub fn main() anyerror!void {
     for (given_args.paths.items) |query| {
         if (std.mem.startsWith(u8, query, "@")) {
             // direct file id fetch
-            var it = std.mem.split(u8, query, "@");
+            var it = std.mem.splitSequence(u8, query, "@");
             _ = it.next();
             const file_hash_as_str = it.next() orelse return error.InvalidFileIdSyntax;
             const file_hash = ID.fromString(file_hash_as_str);

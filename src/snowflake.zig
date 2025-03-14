@@ -21,7 +21,7 @@ pub const AnimeSnowflake = packed union {
     const Self = @This();
 
     pub fn fromTimestamp(timestamp: u50) Self {
-        var rng = std.rand.DefaultPrng.init(
+        var rng = std.Random.DefaultPrng.init(
             @as(u64, @truncate(@as(u128, @intCast(std.time.nanoTimestamp())))),
         );
         const random = rng.random();

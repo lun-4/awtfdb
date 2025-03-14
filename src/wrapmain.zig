@@ -30,8 +30,8 @@ pub fn main() anyerror!u8 {
         if (std.mem.eql(u8, exec_name, executable.@"0")) {
             const module = executable.@"1";
             const main_type = @typeInfo(@TypeOf(module.main));
-            const ret_type = @typeInfo(main_type.Fn.return_type.?);
-            const payload_type = ret_type.ErrorUnion.payload;
+            const ret_type = @typeInfo(main_type.@"fn".return_type.?);
+            const payload_type = ret_type.error_union.payload;
             if (payload_type == u8) {
                 return module.main();
             } else {

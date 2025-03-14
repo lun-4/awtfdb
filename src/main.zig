@@ -8,18 +8,18 @@ const RowID = i64;
 
 pub const AWTFDB_BLAKE3_CONTEXT = "awtfdb Sun Mar 20 16:58:11 AM +00 2022 main hash key";
 
-const DefaultRegexOptions = .{ .Ucp = true, .Utf8 = true };
+const DefaultRegexOptions = libpcre.Options{ .Ucp = true, .Utf8 = true };
 
 const HELPTEXT =
     \\ awtfdb-manage: main program for awtfdb file management
     \\
     \\ usage:
-    \\ 	awtfdb-manage [global options..] <action> [action options...]
+    \\ \tawtfdb-manage [global options..] <action> [action options...]
     \\
     \\ global options:
-    \\  -h		prints this help and exits
-    \\ 	-V		prints version and exits
-    \\ 	-v		turns on verbosity (debug logging)
+    \\  -h\tprints this help and exits
+    \\ \t-V\tprints version and exits
+    \\ \t-v\tturns on verbosity (debug logging)
     \\
     \\ creating an awtfdb index file:
     \\  awtfdb-manage create
@@ -56,7 +56,7 @@ pub const Migration = struct {
         } else Self{
             .version = decl.@"0",
             .name = decl.@"1",
-            .options = decl.@"2",
+            .options = @as(MigrationOptions, decl.@"2"),
             .sql = decl.@"3",
         };
         return self;
@@ -72,8 +72,8 @@ pub const MIGRATIONS = .{
         \\ create table hashes (
         \\     id integer primary key,
         \\     hash_data blob
-        \\     	constraint hashes_length check (length(hash_data) == 32)
-        \\     	constraint hashes_unique unique
+        \\     \tconstraint hashes_length check (length(hash_data) == 32)
+        \\     \tconstraint hashes_unique unique
         \\ ) strict;
         \\
         \\ -- uniquely identifies a tag in the ENTIRE UNIVERSE!!!
@@ -86,8 +86,8 @@ pub const MIGRATIONS = .{
         \\ -- (since they all reference the core!)
         \\ create table tag_cores (
         \\     core_hash int
-        \\     	constraint tag_cores_hash_fk references hashes (id) on delete restrict
-        \\     	constraint tag_cores_pk primary key,
+        \\     \tconstraint tag_cores_hash_fk references hashes (id) on delete restrict
+        \\     \tconstraint tag_cores_pk primary key,
         \\     core_data blob not null
         \\ ) strict;
         \\ 
@@ -96,7 +96,7 @@ pub const MIGRATIONS = .{
         \\ -- having to recalculate the hash over and over.
         \\ create table files (
         \\     file_hash int not null
-        \\     	constraint files_hash_fk references hashes (id) on delete restrict,
+        \\     \tconstraint files_hash_fk references hashes (id) on delete restrict,
         \\     local_path text not null,
         \\     constraint files_pk primary key (file_hash, local_path)
         \\ ) strict;
@@ -106,9 +106,9 @@ pub const MIGRATIONS = .{
         \\ create table tag_files (
         \\     file_hash int not null
         \\      -- not referencing files (file_hash) so that it still works
-        \\     	constraint tag_files_file_fk references hashes (id) on delete cascade,
+        \\     \tconstraint tag_files_file_fk references hashes (id) on delete cascade,
         \\     core_hash int not null
-        \\     	constraint tag_files_core_fk references tag_cores (core_hash) on delete cascade,
+        \\     \tconstraint tag_files_core_fk references tag_cores (core_hash) on delete cascade,
         \\     constraint tag_files_pk primary key (file_hash, core_hash)
         \\ ) strict;
         \\ 
@@ -117,7 +117,7 @@ pub const MIGRATIONS = .{
         \\     tag_text text not null,
         \\     tag_language text not null,
         \\     core_hash int not null
-        \\     	constraint tag_names_core_fk references tag_cores (core_hash) on delete cascade,
+        \\     \tconstraint tag_names_core_fk references tag_cores (core_hash) on delete cascade,
         \\     constraint tag_names_pk primary key (tag_text, tag_language, core_hash)
         \\ ) strict;
     },
@@ -127,9 +127,9 @@ pub const MIGRATIONS = .{
         2, "fix missing unqiue constraint for local paths",
         \\ create table files_local_path_constraint_fix (
         \\     file_hash int not null
-        \\     	constraint files_hash_fk references hashes (id) on delete restrict,
+        \\     \tconstraint files_hash_fk references hashes (id) on delete restrict,
         \\     local_path text not null
-        \\     	constraint files_local_path_uniq unique on conflict abort,
+        \\     \tconstraint files_local_path_uniq unique on conflict abort,
         \\     constraint files_pk primary key (file_hash, local_path)
         \\ ) strict;
         \\
@@ -143,9 +143,9 @@ pub const MIGRATIONS = .{
         3, "add tag implication system",
         \\ create table tag_implications (
         \\     child_tag int not null
-        \\     	constraint tag_implications_child_fk references tag_cores (core_hash) on delete cascade,
+        \\     \tconstraint tag_implications_child_fk references tag_cores (core_hash) on delete cascade,
         \\     parent_tag int not null
-        \\     	constraint tag_implications_parent_fk references tag_cores (core_hash) on delete cascade,
+        \\     \tconstraint tag_implications_parent_fk references tag_cores (core_hash) on delete cascade,
         \\     constraint tag_implications_pk primary key (child_tag, parent_tag)
         \\ ) strict;
     },
@@ -154,11 +154,11 @@ pub const MIGRATIONS = .{
         4, "add pool system",
         \\ create table pools (
         \\     pool_hash int
-        \\     	constraint pools_hash_fk references hashes (id) on delete restrict
-        \\     	constraint pools_pk primary key,
+        \\     \tconstraint pools_hash_fk references hashes (id) on delete restrict
+        \\     \tconstraint pools_pk primary key,
         \\
         \\     pool_core_data blob not null
-        \\     	constraint pool_core_data check (length(pool_core_data) >= 64),
+        \\     \tconstraint pool_core_data check (length(pool_core_data) >= 64),
         \\
         \\     title text not null
         \\ ) strict;
@@ -166,9 +166,9 @@ pub const MIGRATIONS = .{
         \\ create table pool_entries (
         \\     file_hash int not null
         \\      -- not referencing files (file_hash) so that it still works
-        \\     	constraint pool_entries_file_fk references hashes (id) on delete cascade,
+        \\     \tconstraint pool_entries_file_fk references hashes (id) on delete cascade,
         \\     pool_hash int not null
-        \\     	constraint pool_entries_pool_fk references pools (pool_hash) on delete cascade,
+        \\     \tconstraint pool_entries_pool_fk references pools (pool_hash) on delete cascade,
         \\     entry_index int not null,
         \\     constraint pool_entries_pk primary key (file_hash, pool_hash),
         \\     constraint pool_unique_index unique (pool_hash, entry_index)
@@ -239,9 +239,9 @@ pub const MIGRATIONS = .{
         // to do all of that, we need to copy into a new table
         \\ create table tag_files_with_tag_sources (
         \\     file_hash int not null
-        \\     	constraint tag_files_file_fk references hashes (id) on delete cascade,
+        \\     \tconstraint tag_files_file_fk references hashes (id) on delete cascade,
         \\     core_hash int not null
-        \\     	constraint tag_files_core_fk references tag_cores (core_hash) on delete cascade,
+        \\     \tconstraint tag_files_core_fk references tag_cores (core_hash) on delete cascade,
         \\     tag_source_type int default 0,
         \\     tag_source_id int default 0,
         \\     parent_source_id int default null,
@@ -274,7 +274,7 @@ pub const MIGRATIONS = .{
 
     .{
         8, "migrate to ulids for local ids",
-        .{
+        MigrationOptions{
             .function = IdMigration.migrate,
         },
         null,
@@ -290,13 +290,13 @@ pub const MIGRATIONS = .{
     .{
         10,
         "move to WAL",
-        .{ .transaction = false },
+        MigrationOptions{ .transaction = false },
         \\ PRAGMA journal_mode=WAL;
     },
     .{
         11,
         "create indexes",
-        .{},
+        MigrationOptions{},
         \\ create index tag_files_file_hash_idx on tag_files (file_hash);
         \\ create index tag_files_core_hash_idx on tag_files (core_hash);
         \\ create index tag_names_core_hash_idx on tag_names (core_hash);
@@ -334,7 +334,7 @@ pub const SystemTagSources = enum(usize) {
     tag_parenting = 1,
 };
 
-pub fn ulidFromTimestamp(rand: std.rand.Random, timestamp: anytype) ulid.ULID {
+pub fn ulidFromTimestamp(rand: std.Random, timestamp: anytype) ulid.ULID {
     return ulid.ULID{
         .timestamp = std.math.cast(u48, timestamp) orelse @panic("time.milliTimestamp() is higher than 281474976710655"),
         .randomnes = rand.int(u80),
@@ -353,7 +353,7 @@ pub const ID = struct {
     const Self = @This();
 
     pub fn generate() Self {
-        var rng = std.rand.DefaultPrng.init(
+        var rng = std.Random.DefaultPrng.init(
             @as(u64, @truncate(@as(u128, @intCast(std.time.nanoTimestamp())))),
         );
         const rand = rng.random();
@@ -362,7 +362,7 @@ pub const ID = struct {
     }
 
     pub fn generateWithTimestamp(milliTimestamp: anytype) Self {
-        var rng = std.rand.DefaultPrng.init(
+        var rng = std.Random.DefaultPrng.init(
             @as(u64, @truncate(@as(u128, @intCast(std.time.nanoTimestamp())))),
         );
         const rand = rng.random();
@@ -834,7 +834,7 @@ pub const Context = struct {
             \\ select hashes.id, hashes.hash_data
             \\ from tag_names
             \\ join hashes
-            \\ 	on tag_names.core_hash = hashes.id
+            \\ \ton tag_names.core_hash = hashes.id
             \\ where tag_text = ? and tag_language = ?
         ,
             .{},
@@ -856,7 +856,7 @@ pub const Context = struct {
     fn randomCoreData(self: *Self, core_output: []u8) void {
         _ = self;
         const seed = @as(u64, @truncate(@as(u128, @bitCast(std.time.nanoTimestamp()))));
-        var r = std.rand.DefaultPrng.init(seed);
+        var r = std.Random.DefaultPrng.init(seed);
         for (core_output, 0..) |_, index| {
             const random_byte = r.random().uintAtMost(u8, 255);
             core_output[index] = random_byte;
@@ -1235,7 +1235,7 @@ pub const Context = struct {
                 \\ select hashes.id, hashes.hash_data, tag_source_type, tag_source_id, parent_source_id
                 \\ from tag_files
                 \\ join hashes
-                \\ 	on tag_files.core_hash = hashes.id
+                \\ \ton tag_files.core_hash = hashes.id
                 \\ where tag_files.file_hash = ?
             );
             defer stmt.deinit();
@@ -1493,7 +1493,7 @@ pub const Context = struct {
             \\ select local_path, hashes.hash_data
             \\ from files
             \\ join hashes
-            \\ 	on files.file_hash = hashes.id
+            \\ \ton files.file_hash = hashes.id
             \\ where files.file_hash = ?
         ,
             .{},
@@ -1528,7 +1528,7 @@ pub const Context = struct {
             \\ select files.local_path, hashes.hash_data
             \\ from files
             \\ join hashes
-            \\ 	on files.file_hash = hashes.id
+            \\ \ton files.file_hash = hashes.id
             \\ where files.file_hash = ? and files.local_path = ?
         ,
             .{},
@@ -1565,7 +1565,7 @@ pub const Context = struct {
             \\ select local_path, hashes.id
             \\ from files
             \\ join hashes
-            \\ 	on files.file_hash = hashes.id
+            \\ \ton files.file_hash = hashes.id
             \\ where hashes.hash_data = ?
         ,
             .{},
@@ -1594,7 +1594,7 @@ pub const Context = struct {
             \\ select hashes.id, hashes.hash_data
             \\ from files
             \\ join hashes
-            \\ 	on files.file_hash = hashes.id
+            \\ \ton files.file_hash = hashes.id
             \\ where files.local_path = ?
         ,
             .{},
@@ -1878,7 +1878,7 @@ pub const Context = struct {
                 \\ select hashes.id, hashes.hash_data
                 \\ from pool_entries
                 \\ join hashes
-                \\ 	on pool_entries.file_hash = hashes.id
+                \\ \ton pool_entries.file_hash = hashes.id
                 \\ where pool_entries.pool_hash = ?
                 \\ order by pool_entries.entry_index asc
             , .{ .diags = &diags }) catch |err| {
@@ -1955,7 +1955,7 @@ pub const Context = struct {
             \\ select title, hashes.hash_data
             \\ from pools
             \\ join hashes
-            \\ 	on pools.pool_hash = hashes.id
+            \\ \ton pools.pool_hash = hashes.id
             \\ where pools.pool_hash = ?
         ,
             .{},

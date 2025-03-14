@@ -26,11 +26,11 @@ pub fn build(b: *std.Build) !void {
     const optimize = b.standardOptimizeOption(.{});
 
     const sqlite_pkg = b.dependency("sqlite", .{ .optimize = optimize, .target = target });
-    const pcre_pkg = b.dependency("libpcre.zig", .{ .optimize = optimize, .target = target });
-    const magic_pkg = b.dependency("libmagic.zig", .{ .optimize = optimize, .target = target });
+    const pcre_pkg = b.dependency("libpcre_zig", .{ .optimize = optimize, .target = target });
+    const magic_pkg = b.dependency("libmagic_zig", .{ .optimize = optimize, .target = target });
     const expiring_hash_map_pkg = b.dependency("expiring_hash_map", .{ .optimize = optimize, .target = target });
     const tunez_pkg = b.dependency("tunez", .{ .optimize = optimize, .target = target });
-    const ulid_pkg = b.dependency("zig-ulid", .{ .optimize = optimize, .target = target });
+    const ulid_pkg = b.dependency("zig_ulid", .{ .optimize = optimize, .target = target });
     const libexif_pkg = b.dependency("libexif", .{ .optimize = optimize, .target = target });
     const Mod = struct { name: []const u8, mod: *std.Build.Module };
 
@@ -168,8 +168,8 @@ const CustomHardLinkStep = struct {
 
     const Self = @This();
 
-    fn make(step: *std.Build.Step, node: std.Progress.Node) !void {
-        _ = node;
+    fn make(step: *std.Build.Step, opts: std.Build.Step.MakeOptions) !void {
+        _ = opts;
         const self: *Self = @fieldParentPtr("step", step);
         const builder = self.builder;
 
