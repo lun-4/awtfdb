@@ -72,8 +72,8 @@ pub const MIGRATIONS = .{
         \\ create table hashes (
         \\     id integer primary key,
         \\     hash_data blob
-        \\     \tconstraint hashes_length check (length(hash_data) == 32)
-        \\     \tconstraint hashes_unique unique
+        \\      constraint hashes_length check (length(hash_data) == 32)
+        \\      constraint hashes_unique unique
         \\ ) strict;
         \\
         \\ -- uniquely identifies a tag in the ENTIRE UNIVERSE!!!
@@ -86,8 +86,8 @@ pub const MIGRATIONS = .{
         \\ -- (since they all reference the core!)
         \\ create table tag_cores (
         \\     core_hash int
-        \\     \tconstraint tag_cores_hash_fk references hashes (id) on delete restrict
-        \\     \tconstraint tag_cores_pk primary key,
+        \\      constraint tag_cores_hash_fk references hashes (id) on delete restrict
+        \\      constraint tag_cores_pk primary key,
         \\     core_data blob not null
         \\ ) strict;
         \\ 
@@ -96,7 +96,7 @@ pub const MIGRATIONS = .{
         \\ -- having to recalculate the hash over and over.
         \\ create table files (
         \\     file_hash int not null
-        \\     \tconstraint files_hash_fk references hashes (id) on delete restrict,
+        \\      constraint files_hash_fk references hashes (id) on delete restrict,
         \\     local_path text not null,
         \\     constraint files_pk primary key (file_hash, local_path)
         \\ ) strict;
@@ -106,9 +106,9 @@ pub const MIGRATIONS = .{
         \\ create table tag_files (
         \\     file_hash int not null
         \\      -- not referencing files (file_hash) so that it still works
-        \\     \tconstraint tag_files_file_fk references hashes (id) on delete cascade,
+        \\      constraint tag_files_file_fk references hashes (id) on delete cascade,
         \\     core_hash int not null
-        \\     \tconstraint tag_files_core_fk references tag_cores (core_hash) on delete cascade,
+        \\      constraint tag_files_core_fk references tag_cores (core_hash) on delete cascade,
         \\     constraint tag_files_pk primary key (file_hash, core_hash)
         \\ ) strict;
         \\ 
@@ -117,7 +117,7 @@ pub const MIGRATIONS = .{
         \\     tag_text text not null,
         \\     tag_language text not null,
         \\     core_hash int not null
-        \\     \tconstraint tag_names_core_fk references tag_cores (core_hash) on delete cascade,
+        \\      constraint tag_names_core_fk references tag_cores (core_hash) on delete cascade,
         \\     constraint tag_names_pk primary key (tag_text, tag_language, core_hash)
         \\ ) strict;
     },
@@ -127,9 +127,9 @@ pub const MIGRATIONS = .{
         2, "fix missing unqiue constraint for local paths",
         \\ create table files_local_path_constraint_fix (
         \\     file_hash int not null
-        \\     \tconstraint files_hash_fk references hashes (id) on delete restrict,
+        \\      constraint files_hash_fk references hashes (id) on delete restrict,
         \\     local_path text not null
-        \\     \tconstraint files_local_path_uniq unique on conflict abort,
+        \\      constraint files_local_path_uniq unique on conflict abort,
         \\     constraint files_pk primary key (file_hash, local_path)
         \\ ) strict;
         \\
@@ -143,9 +143,9 @@ pub const MIGRATIONS = .{
         3, "add tag implication system",
         \\ create table tag_implications (
         \\     child_tag int not null
-        \\     \tconstraint tag_implications_child_fk references tag_cores (core_hash) on delete cascade,
+        \\      constraint tag_implications_child_fk references tag_cores (core_hash) on delete cascade,
         \\     parent_tag int not null
-        \\     \tconstraint tag_implications_parent_fk references tag_cores (core_hash) on delete cascade,
+        \\      constraint tag_implications_parent_fk references tag_cores (core_hash) on delete cascade,
         \\     constraint tag_implications_pk primary key (child_tag, parent_tag)
         \\ ) strict;
     },
@@ -154,11 +154,11 @@ pub const MIGRATIONS = .{
         4, "add pool system",
         \\ create table pools (
         \\     pool_hash int
-        \\     \tconstraint pools_hash_fk references hashes (id) on delete restrict
-        \\     \tconstraint pools_pk primary key,
+        \\      constraint pools_hash_fk references hashes (id) on delete restrict
+        \\      constraint pools_pk primary key,
         \\
         \\     pool_core_data blob not null
-        \\     \tconstraint pool_core_data check (length(pool_core_data) >= 64),
+        \\      constraint pool_core_data check (length(pool_core_data) >= 64),
         \\
         \\     title text not null
         \\ ) strict;
@@ -166,9 +166,9 @@ pub const MIGRATIONS = .{
         \\ create table pool_entries (
         \\     file_hash int not null
         \\      -- not referencing files (file_hash) so that it still works
-        \\     \tconstraint pool_entries_file_fk references hashes (id) on delete cascade,
+        \\      constraint pool_entries_file_fk references hashes (id) on delete cascade,
         \\     pool_hash int not null
-        \\     \tconstraint pool_entries_pool_fk references pools (pool_hash) on delete cascade,
+        \\      constraint pool_entries_pool_fk references pools (pool_hash) on delete cascade,
         \\     entry_index int not null,
         \\     constraint pool_entries_pk primary key (file_hash, pool_hash),
         \\     constraint pool_unique_index unique (pool_hash, entry_index)
@@ -239,9 +239,9 @@ pub const MIGRATIONS = .{
         // to do all of that, we need to copy into a new table
         \\ create table tag_files_with_tag_sources (
         \\     file_hash int not null
-        \\     \tconstraint tag_files_file_fk references hashes (id) on delete cascade,
+        \\      constraint tag_files_file_fk references hashes (id) on delete cascade,
         \\     core_hash int not null
-        \\     \tconstraint tag_files_core_fk references tag_cores (core_hash) on delete cascade,
+        \\      constraint tag_files_core_fk references tag_cores (core_hash) on delete cascade,
         \\     tag_source_type int default 0,
         \\     tag_source_id int default 0,
         \\     parent_source_id int default null,
