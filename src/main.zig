@@ -834,7 +834,7 @@ pub const Context = struct {
             \\ select hashes.id, hashes.hash_data
             \\ from tag_names
             \\ join hashes
-            \\ \ton tag_names.core_hash = hashes.id
+            \\  on tag_names.core_hash = hashes.id
             \\ where tag_text = ? and tag_language = ?
         ,
             .{},
@@ -1235,7 +1235,7 @@ pub const Context = struct {
                 \\ select hashes.id, hashes.hash_data, tag_source_type, tag_source_id, parent_source_id
                 \\ from tag_files
                 \\ join hashes
-                \\ \ton tag_files.core_hash = hashes.id
+                \\  on tag_files.core_hash = hashes.id
                 \\ where tag_files.file_hash = ?
             );
             defer stmt.deinit();
@@ -1493,7 +1493,7 @@ pub const Context = struct {
             \\ select local_path, hashes.hash_data
             \\ from files
             \\ join hashes
-            \\ \ton files.file_hash = hashes.id
+            \\  on files.file_hash = hashes.id
             \\ where files.file_hash = ?
         ,
             .{},
@@ -1528,7 +1528,7 @@ pub const Context = struct {
             \\ select files.local_path, hashes.hash_data
             \\ from files
             \\ join hashes
-            \\ \ton files.file_hash = hashes.id
+            \\  on files.file_hash = hashes.id
             \\ where files.file_hash = ? and files.local_path = ?
         ,
             .{},
@@ -1565,7 +1565,7 @@ pub const Context = struct {
             \\ select local_path, hashes.id
             \\ from files
             \\ join hashes
-            \\ \ton files.file_hash = hashes.id
+            \\  on files.file_hash = hashes.id
             \\ where hashes.hash_data = ?
         ,
             .{},
@@ -1594,7 +1594,7 @@ pub const Context = struct {
             \\ select hashes.id, hashes.hash_data
             \\ from files
             \\ join hashes
-            \\ \ton files.file_hash = hashes.id
+            \\  on files.file_hash = hashes.id
             \\ where files.local_path = ?
         ,
             .{},
@@ -1878,7 +1878,7 @@ pub const Context = struct {
                 \\ select hashes.id, hashes.hash_data
                 \\ from pool_entries
                 \\ join hashes
-                \\ \ton pool_entries.file_hash = hashes.id
+                \\  on pool_entries.file_hash = hashes.id
                 \\ where pool_entries.pool_hash = ?
                 \\ order by pool_entries.entry_index asc
             , .{ .diags = &diags }) catch |err| {
@@ -1955,7 +1955,7 @@ pub const Context = struct {
             \\ select title, hashes.hash_data
             \\ from pools
             \\ join hashes
-            \\ \ton pools.pool_hash = hashes.id
+            \\  on pools.pool_hash = hashes.id
             \\ where pools.pool_hash = ?
         ,
             .{},
