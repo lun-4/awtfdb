@@ -68,25 +68,33 @@ const ActionConfig = union(enum) {
     RemoveSource: RemoveSource.Config,
 };
 
+const BufferedStdout = std.io.BufferedWriter(4096, std.fs.File.Writer);
+
 const IOContext = struct {
-    stdout: std.io.BufferedWriter(4096, std.fs.File.Writer).Writer,
+    buffered_stdout: BufferedStdout,
     const Self = @This();
 
     pub fn system() Self {
         const raw_stdout = std.io.getStdOut().writer();
-        const BufferedFileWriter = std.io.BufferedWriter(4096, std.fs.File.Writer);
-        var buffered_stdout = BufferedFileWriter{ .unbuffered_writer = raw_stdout };
+        const buffered_stdout = BufferedStdout{ .unbuffered_writer = raw_stdout };
         return Self{
-            .stdout = buffered_stdout.writer(),
+            .buffered_stdout = buffered_stdout,
         };
     }
 
     pub fn captured(target_fd: std.fs.File.Writer) Self {
-        const BufferedFileWriter = std.io.BufferedWriter(4096, std.fs.File.Writer);
-        var buffered = BufferedFileWriter{ .unbuffered_writer = target_fd };
+        const buffered = BufferedStdout{ .unbuffered_writer = target_fd };
         return Self{
-            .stdout = buffered.writer(),
+            .buffered_stdout = buffered,
         };
+    }
+
+    pub fn stdout(self: *Self) BufferedStdout.Writer {
+        return self.buffered_stdout.writer();
+    }
+
+    pub fn flushStdout(self: *Self) !void {
+        try self.buffered_stdout.flush();
     }
 };
 
@@ -128,11 +136,11 @@ const CreateAction = struct {
 
     ctx: *Context,
     config: Config,
-    io: IOContext,
+    io: *IOContext,
 
     const Self = @This();
 
-    pub fn init(ctx: *Context, config: Config, io: IOContext) !Self {
+    pub fn init(ctx: *Context, config: Config, io: *IOContext) !Self {
         return Self{ .ctx = ctx, .config = config, .io = io };
     }
 
@@ -221,9 +229,9 @@ const CreateAction = struct {
                 defer file.deinit();
                 try file.addTag(tag_to_be_aliased_to, .{});
 
-                try self.io.stdout.print("relinked {s}", .{file.local_path});
-                try file.printTagsTo(self.ctx.allocator, self.io.stdout, .{});
-                try self.io.stdout.print("\n", .{});
+                try self.io.stdout().print("relinked {s}", .{file.local_path});
+                try file.printTagsTo(self.ctx.allocator, self.io.stdout(), .{});
+                try self.io.stdout().print("\n", .{});
             }
 
             // delete tag_to_be_aliased_from
@@ -239,21 +247,23 @@ const CreateAction = struct {
 
         const tag = try self.ctx.createNamedTag(self.config.tag.?, "en", maybe_core, .{});
 
-        try self.io.stdout.print(
+        try self.io.stdout().print(
             "created tag with core '{s}' name '{s}'\n",
             .{ tag.core, tag },
         );
     }
 };
 
-fn testIO() !struct {
+const TestIO = struct {
     f: std.fs.File,
     io: IOContext,
 
     pub fn deinit(self: @This()) void {
         self.f.close();
     }
-} {
+};
+
+fn testIO() !TestIO {
     var tmp = std.testing.tmpDir(.{});
     // dont care about cleaning tmp
 
@@ -271,11 +281,13 @@ test "create action" {
     var ctx = try manage_main.makeTestContext();
     defer ctx.deinit();
 
-    const tio = try testIO();
+    var tio = try testIO();
     defer tio.deinit();
 
-    var action = try CreateAction.init(&ctx, config, tio.io);
+    var action = try CreateAction.init(&ctx, config, &tio.io);
     defer action.deinit();
+
+    try (&tio.io).stdout().print("test!!\n", .{});
 
     try action.run();
 
@@ -300,10 +312,10 @@ test "create action (aliasing)" {
         .tag = "test tag2",
     };
 
-    const tio = try testIO();
+    var tio = try testIO();
     defer tio.deinit();
 
-    var action = try CreateAction.init(&ctx, config, tio.io);
+    var action = try CreateAction.init(&ctx, config, &tio.io);
     defer action.deinit();
 
     try action.run();
@@ -381,11 +393,12 @@ const RemoveAction = struct {
 
     ctx: *Context,
     config: Config,
+    io: *IOContext,
 
     const Self = @This();
 
-    pub fn init(ctx: *Context, config: Config) !Self {
-        return Self{ .ctx = ctx, .config = config };
+    pub fn init(ctx: *Context, config: Config, io: *IOContext) !Self {
+        return Self{ .ctx = ctx, .config = config, .io = io };
     }
 
     pub fn deinit(self: *Self) void {
@@ -393,13 +406,11 @@ const RemoveAction = struct {
     }
 
     pub fn run(self: *Self) !void {
-        var stdout = std.io.getStdOut().writer();
-
         var raw_core_hash_buffer: [32]u8 = undefined;
 
         var amount: usize = 0;
         var core_hash_id: ?ID = null;
-        try stdout.print("the following tags will be removed:\n", .{});
+        try self.io.stdout().print("the following tags will be removed:\n", .{});
 
         if (self.config.tag_core) |tag_core_hex_string| {
             var core = try consumeCoreHash(self.ctx, &raw_core_hash_buffer, tag_core_hex_string);
@@ -430,20 +441,20 @@ const RemoveAction = struct {
                     self.ctx.allocator.free(tag_name.tag_text);
                     self.ctx.allocator.free(tag_name.tag_language);
                 }
-                try stdout.print(" {s}", .{tag_name.tag_text});
+                try self.io.stdout().print(" {s}", .{tag_name.tag_text});
                 amount += 1;
             }
-            try stdout.print("\n", .{});
+            try self.io.stdout().print("\n", .{});
         } else if (self.config.tag) |tag_text| {
             const maybe_tag = try self.ctx.fetchNamedTag(tag_text, "en");
             if (maybe_tag) |tag| {
-                try stdout.print(" {s}", .{tag.kind.Named.text});
+                try self.io.stdout().print(" {s}", .{tag.kind.Named.text});
                 core_hash_id = tag.core.id;
                 amount += 1;
             } else {
                 return error.NamedTagNotFound;
             }
-            try stdout.print("\n", .{});
+            try self.io.stdout().print("\n", .{});
         } else if (self.config.only_tag_name) |only_tag_name| {
             // only delete a singular tag name. do not delete any files.
             // tag core will be garbage collected in a janitor run
@@ -486,7 +497,7 @@ const RemoveAction = struct {
                 .{},
                 .{core_hash_id.?.sql()},
             )) orelse 0;
-            try stdout.print("{d} files reference this tag.\n", .{referenced_files});
+            try self.io.stdout().print("{d} files reference this tag.\n", .{referenced_files});
         }
 
         try self.config.given_args.maybeAskConfirmation(
@@ -529,13 +540,16 @@ const RemoveAction = struct {
                 .{ tag_text, "en", tag_text, "en" },
             )).?;
         }
-        try stdout.print("deleted {d} tags\n", .{deleted_count.?});
+        try self.io.stdout().print("deleted {d} tags\n", .{deleted_count.?});
     }
 };
 
 test "remove action" {
     var ctx = try manage_main.makeTestContext();
     defer ctx.deinit();
+
+    var tio = try testIO();
+    defer tio.deinit();
 
     var tag = try ctx.createNamedTag("test tag", "en", null, .{});
     const tag2 = try ctx.createNamedTag("test tag2", "en", tag.core, .{});
@@ -563,8 +577,10 @@ test "remove action" {
         .given_args = &args,
     };
 
-    var action = try RemoveAction.init(&ctx, config);
+    var action = try RemoveAction.init(&ctx, config, &tio.io);
     defer action.deinit();
+
+    try (&tio.io).stdout().print("HIIII\n", .{});
 
     try action.run();
 
@@ -609,11 +625,12 @@ const SearchAction = struct {
 
     ctx: *Context,
     config: Config,
+    io: *IOContext,
 
     const Self = @This();
 
-    pub fn init(ctx: *Context, config: Config) !Self {
-        return Self{ .ctx = ctx, .config = config };
+    pub fn init(ctx: *Context, config: Config, io: *IOContext) !Self {
+        return Self{ .ctx = ctx, .config = config, .io = io };
     }
 
     pub fn deinit(self: *Self) void {
@@ -621,8 +638,6 @@ const SearchAction = struct {
     }
 
     pub fn run(self: *Self) !void {
-        var stdout = std.io.getStdOut().writer();
-
         var stmt = if (self.config.exact)
             try self.ctx.db.prepareDynamic(
                 \\ select distinct core_hash core_hash, hashes.hash_data
@@ -675,14 +690,14 @@ const SearchAction = struct {
 
             const full_tag_core = related_tags.items[0].core;
             if (self.config.show_hashes) {
-                try stdout.print("{s}", .{fake_hash.toRealHash()});
+                try self.io.stdout().print("{s}", .{fake_hash.toRealHash()});
             } else {
-                try stdout.print("{s}", .{full_tag_core.id});
+                try self.io.stdout().print("{s}", .{full_tag_core.id});
             }
             for (related_tags.items) |tag| {
-                try stdout.print(" '{s}'", .{tag});
+                try self.io.stdout().print(" '{s}'", .{tag});
             }
-            try stdout.print("\n", .{});
+            try self.io.stdout().print("\n", .{});
         }
     }
 };
@@ -727,11 +742,12 @@ const CreateParent = struct {
 
     ctx: *Context,
     config: Config,
+    io: *IOContext,
 
     const Self = @This();
 
-    pub fn init(ctx: *Context, config: Config) !Self {
-        return Self{ .ctx = ctx, .config = config };
+    pub fn init(ctx: *Context, config: Config, io: *IOContext) !Self {
+        return Self{ .ctx = ctx, .config = config, .io = io };
     }
 
     pub fn deinit(self: *Self) void {
@@ -739,7 +755,6 @@ const CreateParent = struct {
     }
 
     pub fn run(self: *Self) !void {
-        var stdout = std.io.getStdOut().writer();
         const child_tag = (try self.ctx.fetchNamedTag(self.config.child_tag.?, "en")) orelse {
             logger.err("expected '{s}' to be a named tag", .{self.config.child_tag.?});
             return error.ChildTagNotFound;
@@ -750,7 +765,7 @@ const CreateParent = struct {
         };
 
         const tree_id = try self.ctx.createTagParent(child_tag, parent_tag);
-        try stdout.print(
+        try self.io.stdout().print(
             "created tag parent where every file with '{s}' is also '{s}' (tree id {d})\nprocessing new parents...\n",
             .{ child_tag, parent_tag, tree_id },
         );
@@ -770,12 +785,13 @@ const ListParent = struct {
 
     ctx: *Context,
     config: void,
+    io: *IOContext,
 
     const Self = @This();
 
-    pub fn init(ctx: *Context, config: void) !Self {
+    pub fn init(ctx: *Context, config: void, io: *IOContext) !Self {
         _ = config;
-        return Self{ .ctx = ctx, .config = {} };
+        return Self{ .ctx = ctx, .config = {}, .io = io };
     }
 
     pub fn deinit(self: *Self) void {
@@ -783,8 +799,6 @@ const ListParent = struct {
     }
 
     pub fn run(self: *Self) !void {
-        const raw_stdout = std.io.getStdOut().writer();
-
         var stmt = try self.ctx.db.prepare(
             \\ select rowid,
             \\  parent_tag,
@@ -809,12 +823,8 @@ const ListParent = struct {
             self.ctx.allocator.free(entries);
         }
 
-        const BufferedFileWriter = std.io.BufferedWriter(4096, std.fs.File.Writer);
-        var buffered_stdout = BufferedFileWriter{ .unbuffered_writer = raw_stdout };
-        var stdout = buffered_stdout.writer();
-
         for (entries) |tree_row| {
-            try stdout.print(
+            try self.io.stdout().print(
                 "{d}: {d} {s} -> {d} {s}\n",
                 .{
                     tree_row.rowid,
@@ -826,7 +836,7 @@ const ListParent = struct {
             );
         }
 
-        try buffered_stdout.flush();
+        try self.io.flushStdout();
     }
 };
 
@@ -855,11 +865,12 @@ const RemoveParent = struct {
 
     ctx: *Context,
     config: Config,
+    io: *IOContext,
 
     const Self = @This();
 
-    pub fn init(ctx: *Context, config: Config) !Self {
-        return Self{ .ctx = ctx, .config = config };
+    pub fn init(ctx: *Context, config: Config, io: *IOContext) !Self {
+        return Self{ .ctx = ctx, .config = config, .io = io };
     }
 
     pub fn deinit(self: *Self) void {
@@ -867,9 +878,7 @@ const RemoveParent = struct {
     }
 
     pub fn run(self: *Self) !void {
-        var stdout = std.io.getStdOut().writer();
-
-        // parent_relationship is only used on that stdout call as
+        // parent_relationship is only used on that stdout) call as
         // information for the user, so it can't be tested until we have
         // stdout capturing.
         const parent_relationship = (try self.ctx.db.one(
@@ -879,7 +888,7 @@ const RemoveParent = struct {
             .{self.config.rowid.?},
         )) orelse return error.InvalidParentId;
 
-        try stdout.print(
+        try self.io.stdout().print(
             "the parent relationship is between tags {s} -> {s}\n",
             .{ parent_relationship.parent_tag, parent_relationship.child_tag },
         );
@@ -892,9 +901,9 @@ const RemoveParent = struct {
         )).?;
 
         if (self.config.delete_file_entries) {
-            try stdout.print("tag entries in files that were made by this relationship will be removed ({d} entries)\n", .{tag_file_count});
+            try self.io.stdout().print("tag entries in files that were made by this relationship will be removed ({d} entries)\n", .{tag_file_count});
         } else {
-            try stdout.print("tag entries in files that were made by this relationship will be retained but their relationship metadata will be removed. ({d} entries)\n", .{tag_file_count});
+            try self.io.stdout().print("tag entries in files that were made by this relationship will be retained but their relationship metadata will be removed. ({d} entries)\n", .{tag_file_count});
         }
 
         try self.config.given_args.maybeAskConfirmation(
@@ -968,13 +977,16 @@ const RemoveParent = struct {
             );
         }
 
-        try stdout.print("deleted parent id {d}\n", .{self.config.rowid.?});
+        try self.io.stdout().print("deleted parent id {d}\n", .{self.config.rowid.?});
     }
 };
 
 test "remove parent (no entry deletion)" {
     var ctx = try manage_main.makeTestContext();
     defer ctx.deinit();
+
+    var tio = try testIO();
+    defer tio.deinit();
 
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
@@ -985,7 +997,7 @@ test "remove parent (no entry deletion)" {
     var indexed_file = try ctx.createFileFromDir(tmp.dir, "test_file", .{});
     defer indexed_file.deinit();
 
-    const ids = try parentTestSetup(&ctx, &indexed_file);
+    const ids = try parentTestSetup(&ctx, &indexed_file, &tio.io);
 
     // attempt to run command with delete_file_entries = false
 
@@ -997,7 +1009,7 @@ test "remove parent (no entry deletion)" {
         .delete_file_entries = false,
     };
 
-    var action = try RemoveParent.init(&ctx, config);
+    var action = try RemoveParent.init(&ctx, config, &tio.io);
     defer action.deinit();
 
     try action.run();
@@ -1031,6 +1043,7 @@ const ParentTestSetupResult = struct {
 fn parentTestSetup(
     ctx: *Context,
     indexed_file: *Context.File,
+    io: *IOContext,
 ) !ParentTestSetupResult {
     const child_tag = try ctx.createNamedTag("child_test_tag", "en", null, .{});
     try indexed_file.addTag(child_tag.core, .{});
@@ -1048,7 +1061,7 @@ fn parentTestSetup(
 
     // always run ListParent so that it compiles
     // TODO write test for ListParent (capture stdout??)
-    var action = try ListParent.init(ctx, {});
+    var action = try ListParent.init(ctx, {}, io);
     defer action.deinit();
     try action.run();
 
@@ -1065,6 +1078,8 @@ fn parentTestSetup(
 test "remove parent (with entry deletion)" {
     var ctx = try manage_main.makeTestContext();
     defer ctx.deinit();
+    var tio = try testIO();
+    defer tio.deinit();
 
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
@@ -1075,7 +1090,7 @@ test "remove parent (with entry deletion)" {
     var indexed_file = try ctx.createFileFromDir(tmp.dir, "test_file", .{});
     defer indexed_file.deinit();
 
-    const ids = try parentTestSetup(&ctx, &indexed_file);
+    const ids = try parentTestSetup(&ctx, &indexed_file, &tio.io);
 
     var args = Args{ .ask_confirmation = false };
     const config = RemoveParent.Config{
@@ -1085,7 +1100,7 @@ test "remove parent (with entry deletion)" {
         .delete_file_entries = true,
     };
 
-    var action = try RemoveParent.init(&ctx, config);
+    var action = try RemoveParent.init(&ctx, config, &tio.io);
     defer action.deinit();
 
     try action.run();
@@ -1562,37 +1577,37 @@ pub fn main() anyerror!void {
     defer ctx.deinit();
     if (given_args.dry_run) try ctx.turnIntoMemoryDb();
 
-    const default_io = IOContext.system();
+    var default_io = IOContext.system();
 
     errdefer ctx.logLastError();
     switch (action_config) {
         .Search => |search_config| {
-            var self = try SearchAction.init(&ctx, search_config);
+            var self = try SearchAction.init(&ctx, search_config, &default_io);
             defer self.deinit();
             try self.run();
         },
         .Create => |create_config| {
-            var self = try CreateAction.init(&ctx, create_config, default_io);
+            var self = try CreateAction.init(&ctx, create_config, &default_io);
             defer self.deinit();
             try self.run();
         },
         .Remove => |remove_config| {
-            var self = try RemoveAction.init(&ctx, remove_config);
+            var self = try RemoveAction.init(&ctx, remove_config, &default_io);
             defer self.deinit();
             try self.run();
         },
         .CreateParent => |config| {
-            var self = try CreateParent.init(&ctx, config);
+            var self = try CreateParent.init(&ctx, config, &default_io);
             defer self.deinit();
             try self.run();
         },
         .ListParent => |config| {
-            var self = try ListParent.init(&ctx, config);
+            var self = try ListParent.init(&ctx, config, &default_io);
             defer self.deinit();
             try self.run();
         },
         .RemoveParent => |config| {
-            var self = try RemoveParent.init(&ctx, config);
+            var self = try RemoveParent.init(&ctx, config, &default_io);
             defer self.deinit();
             try self.run();
         },

@@ -2174,6 +2174,7 @@ pub fn makeTestContextWithOptions(options: MakeTestContextOptions) !Context {
         .db = db,
     };
 
+    logger.warn("==TEST CTX CREATED", .{});
     if (options.load_migrations) {
         try migrateCommand(undefined, &ctx);
     }
@@ -2204,6 +2205,7 @@ pub fn makeTestContextRealFileWithOptions(options: MakeTestContextOptions) !Cont
         .db_path = try std.testing.allocator.dupe(u8, dbpath),
     });
 
+    logger.warn("==TEST CTX CREATED. REAL FILE: {s}", .{dbpath});
     if (options.load_migrations) try migrateCommand(undefined, &ctx);
     return ctx;
 }
