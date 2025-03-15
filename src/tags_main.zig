@@ -68,6 +68,28 @@ const ActionConfig = union(enum) {
     RemoveSource: RemoveSource.Config,
 };
 
+const IOContext = struct {
+    stdout: std.io.BufferedWriter(4096, std.fs.File.Writer).Writer,
+    const Self = @This();
+
+    pub fn system() Self {
+        const raw_stdout = std.io.getStdOut().writer();
+        const BufferedFileWriter = std.io.BufferedWriter(4096, std.fs.File.Writer);
+        var buffered_stdout = BufferedFileWriter{ .unbuffered_writer = raw_stdout };
+        return Self{
+            .stdout = buffered_stdout.writer(),
+        };
+    }
+
+    pub fn captured(target_fd: std.fs.File.Writer) Self {
+        const BufferedFileWriter = std.io.BufferedWriter(4096, std.fs.File.Writer);
+        var buffered = BufferedFileWriter{ .unbuffered_writer = target_fd };
+        return Self{
+            .stdout = buffered.writer(),
+        };
+    }
+};
+
 const CreateAction = struct {
     pub const Config = struct {
         tag_core: ?[]const u8 = null,
@@ -106,11 +128,12 @@ const CreateAction = struct {
 
     ctx: *Context,
     config: Config,
+    io: IOContext,
 
     const Self = @This();
 
-    pub fn init(ctx: *Context, config: Config) !Self {
-        return Self{ .ctx = ctx, .config = config };
+    pub fn init(ctx: *Context, config: Config, io: IOContext) !Self {
+        return Self{ .ctx = ctx, .config = config, .io = io };
     }
 
     pub fn deinit(self: *Self) void {
@@ -118,10 +141,6 @@ const CreateAction = struct {
     }
 
     pub fn run(self: *Self) !void {
-        const unbuffered_stdout = std.io.getStdOut().writer();
-        var buffered_stream = std.io.bufferedWriter(unbuffered_stdout);
-        var stdout = buffered_stream.writer();
-
         var raw_core_hash_buffer: [32]u8 = undefined;
         var maybe_core: ?Context.Hash = null;
 
@@ -202,9 +221,9 @@ const CreateAction = struct {
                 defer file.deinit();
                 try file.addTag(tag_to_be_aliased_to, .{});
 
-                try stdout.print("relinked {s}", .{file.local_path});
-                try file.printTagsTo(self.ctx.allocator, stdout, .{});
-                try stdout.print("\n", .{});
+                try self.io.stdout.print("relinked {s}", .{file.local_path});
+                try file.printTagsTo(self.ctx.allocator, self.io.stdout, .{});
+                try self.io.stdout.print("\n", .{});
             }
 
             // delete tag_to_be_aliased_from
@@ -220,12 +239,28 @@ const CreateAction = struct {
 
         const tag = try self.ctx.createNamedTag(self.config.tag.?, "en", maybe_core, .{});
 
-        try stdout.print(
+        try self.io.stdout.print(
             "created tag with core '{s}' name '{s}'\n",
             .{ tag.core, tag },
         );
     }
 };
+
+fn testIO() !struct {
+    f: std.fs.File,
+    io: IOContext,
+
+    pub fn deinit(self: @This()) void {
+        self.f.close();
+    }
+} {
+    var tmp = std.testing.tmpDir(.{});
+    // dont care about cleaning tmp
+
+    const file = try tmp.dir.createFile("captured.txt", .{});
+    const io = IOContext.captured(file.writer());
+    return .{ .f = file, .io = io };
+}
 
 test "create action" {
     const config = CreateAction.Config{
@@ -236,7 +271,10 @@ test "create action" {
     var ctx = try manage_main.makeTestContext();
     defer ctx.deinit();
 
-    var action = try CreateAction.init(&ctx, config);
+    const tio = try testIO();
+    defer tio.deinit();
+
+    var action = try CreateAction.init(&ctx, config, tio.io);
     defer action.deinit();
 
     try action.run();
@@ -262,7 +300,10 @@ test "create action (aliasing)" {
         .tag = "test tag2",
     };
 
-    var action = try CreateAction.init(&ctx, config);
+    const tio = try testIO();
+    defer tio.deinit();
+
+    var action = try CreateAction.init(&ctx, config, tio.io);
     defer action.deinit();
 
     try action.run();
@@ -1521,6 +1562,8 @@ pub fn main() anyerror!void {
     defer ctx.deinit();
     if (given_args.dry_run) try ctx.turnIntoMemoryDb();
 
+    const default_io = IOContext.system();
+
     errdefer ctx.logLastError();
     switch (action_config) {
         .Search => |search_config| {
@@ -1529,7 +1572,7 @@ pub fn main() anyerror!void {
             try self.run();
         },
         .Create => |create_config| {
-            var self = try CreateAction.init(&ctx, create_config);
+            var self = try CreateAction.init(&ctx, create_config, default_io);
             defer self.deinit();
             try self.run();
         },
