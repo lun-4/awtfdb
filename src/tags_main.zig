@@ -267,7 +267,7 @@ fn testIO() !TestIO {
     var tmp = std.testing.tmpDir(.{});
     // dont care about cleaning tmp
 
-    const file = try tmp.dir.createFile("captured.txt", .{});
+    const file = try tmp.dir.createFile("captured.txt", .{ .read = true });
     const io = IOContext.captured(file.writer());
     return .{ .f = file, .io = io };
 }
@@ -878,7 +878,7 @@ const RemoveParent = struct {
     }
 
     pub fn run(self: *Self) !void {
-        // parent_relationship is only used on that stdout) call as
+        // parent_relationship is only used on that stdout call as
         // information for the user, so it can't be tested until we have
         // stdout capturing.
         const parent_relationship = (try self.ctx.db.one(
@@ -997,7 +997,7 @@ test "remove parent (no entry deletion)" {
     var indexed_file = try ctx.createFileFromDir(tmp.dir, "test_file", .{});
     defer indexed_file.deinit();
 
-    const ids = try parentTestSetup(&ctx, &indexed_file, &tio.io);
+    const ids = try parentTestSetup(&ctx, &indexed_file, &tio);
 
     // attempt to run command with delete_file_entries = false
 
@@ -1043,7 +1043,7 @@ const ParentTestSetupResult = struct {
 fn parentTestSetup(
     ctx: *Context,
     indexed_file: *Context.File,
-    io: *IOContext,
+    tio: *TestIO,
 ) !ParentTestSetupResult {
     const child_tag = try ctx.createNamedTag("child_test_tag", "en", null, .{});
     try indexed_file.addTag(child_tag.core, .{});
@@ -1060,10 +1060,18 @@ fn parentTestSetup(
     try ctx.processTagTree(.{});
 
     // always run ListParent so that it compiles
-    // TODO write test for ListParent (capture stdout??)
-    var action = try ListParent.init(ctx, {}, io);
+    // TODO write test for ListParent (capture stdout from test io)
+    var action = try ListParent.init(ctx, {}, &tio.io);
     defer action.deinit();
     try action.run();
+
+    try tio.f.seekTo(0);
+    var buf: [8192]u8 = undefined;
+    const bytes = try tio.f.readAll(&buf);
+    const stdout_sent = buf[0..bytes];
+    try std.testing.expect(std.mem.containsAtLeast(u8, stdout_sent, 1, parent_tag.core.id.str()));
+    try std.testing.expect(std.mem.containsAtLeast(u8, stdout_sent, 1, parent_tag2.core.id.str()));
+    try std.testing.expect(std.mem.containsAtLeast(u8, stdout_sent, 1, parent_tag3.core.id.str()));
 
     return ParentTestSetupResult{
         .tag_tree_entry_id = tag_tree_entry_id,
@@ -1090,7 +1098,7 @@ test "remove parent (with entry deletion)" {
     var indexed_file = try ctx.createFileFromDir(tmp.dir, "test_file", .{});
     defer indexed_file.deinit();
 
-    const ids = try parentTestSetup(&ctx, &indexed_file, &tio.io);
+    const ids = try parentTestSetup(&ctx, &indexed_file, &tio);
 
     var args = Args{ .ask_confirmation = false };
     const config = RemoveParent.Config{
