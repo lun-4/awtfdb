@@ -72,6 +72,7 @@ const BufferedStdout = std.io.BufferedWriter(4096, std.fs.File.Writer);
 
 const IOContext = struct {
     buffered_stdout: BufferedStdout,
+    unbuffered_stdout: std.fs.File.Writer,
     const Self = @This();
 
     pub fn system() Self {
@@ -79,6 +80,7 @@ const IOContext = struct {
         const buffered_stdout = BufferedStdout{ .unbuffered_writer = raw_stdout };
         return Self{
             .buffered_stdout = buffered_stdout,
+            .unbuffered_stdout = raw_stdout,
         };
     }
 
@@ -86,10 +88,16 @@ const IOContext = struct {
         const buffered = BufferedStdout{ .unbuffered_writer = target_fd };
         return Self{
             .buffered_stdout = buffered,
+            .unbuffered_stdout = target_fd,
         };
     }
 
-    pub fn stdout(self: *Self) BufferedStdout.Writer {
+    pub fn stdout(self: *Self) std.fs.File.Writer {
+        return self.unbuffered_stdout;
+    }
+
+    /// Must use flushStdout afterwards.
+    pub fn bufferedStdout(self: *Self) BufferedStdout.Writer {
         return self.buffered_stdout.writer();
     }
 
@@ -265,9 +273,12 @@ const TestIO = struct {
 
 fn testIO() !TestIO {
     var tmp = std.testing.tmpDir(.{});
-    // dont care about cleaning tmp
+    // dont want to clean tmp -- has debug info
 
     const file = try tmp.dir.createFile("captured.txt", .{ .read = true });
+    var realpath_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const realpath = tmp.dir.realpath("captured.txt", &realpath_buf) catch unreachable;
+    std.debug.print("realpath = {s}\n", .{realpath});
     const io = IOContext.captured(file.writer());
     return .{ .f = file, .io = io };
 }
@@ -1059,8 +1070,7 @@ fn parentTestSetup(
     const tag_tree_entry3_id = try ctx.createTagParent(parent_tag2, parent_tag3);
     try ctx.processTagTree(.{});
 
-    // always run ListParent so that it compiles
-    // TODO write test for ListParent (capture stdout from test io)
+    // always run ListParent to ensure that tag parenting worked
     var action = try ListParent.init(ctx, {}, &tio.io);
     defer action.deinit();
     try action.run();
@@ -1112,6 +1122,16 @@ test "remove parent (with entry deletion)" {
     defer action.deinit();
 
     try action.run();
+
+    {
+        try tio.f.seekTo(0);
+        var buf: [8192]u8 = undefined;
+        const bytes = try tio.f.readAll(&buf);
+        const stdout_sent = buf[0..bytes];
+        try std.testing.expect(bytes > 0);
+        try std.testing.expect(std.mem.containsAtLeast(u8, stdout_sent, 1, "the parent relationship is between tags"));
+        try std.testing.expect(std.mem.containsAtLeast(u8, stdout_sent, 1, ids.parent_tag_core_id.str()));
+    }
 
     const file_tags = try indexed_file.fetchTags(std.testing.allocator);
     defer std.testing.allocator.free(file_tags);
@@ -1417,7 +1437,7 @@ const ListSource = struct {
         }
 
         for (entries) |row| {
-            try self.io.stdout().print(
+            try self.io.bufferedStdout().print(
                 "type={d} id={d}: name={s}\n",
                 .{ row.type, row.id, row.name },
             );
