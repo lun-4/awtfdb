@@ -1131,11 +1131,12 @@ const CreatePool = struct {
 
     ctx: *Context,
     config: Config,
+    io: *IOContext,
 
     const Self = @This();
 
-    pub fn init(ctx: *Context, config: Config) !Self {
-        return Self{ .ctx = ctx, .config = config };
+    pub fn init(ctx: *Context, config: Config, io: *IOContext) !Self {
+        return Self{ .ctx = ctx, .config = config, .io = io };
     }
 
     pub fn deinit(self: *Self) void {
@@ -1143,13 +1144,11 @@ const CreatePool = struct {
     }
 
     pub fn run(self: *Self) !void {
-        var stdout = std.io.getStdOut().writer();
-
         var pool = try self.ctx.createPool(self.config.title);
         defer pool.deinit();
 
-        std.debug.print("pool created with id ", .{});
-        try stdout.print("{d}\n", .{pool.hash});
+        std.debug.print("pool created with id {d}", .{pool.hash.id});
+        try self.io.stdout().print("{d}\n", .{pool.hash});
     }
 };
 
@@ -1170,11 +1169,12 @@ const FetchPool = struct {
 
     ctx: *Context,
     config: Config,
+    io: *IOContext,
 
     const Self = @This();
 
-    pub fn init(ctx: *Context, config: Config) !Self {
-        return Self{ .ctx = ctx, .config = config };
+    pub fn init(ctx: *Context, config: Config, io: *IOContext) !Self {
+        return Self{ .ctx = ctx, .config = config, .io = io };
     }
 
     pub fn deinit(self: *Self) void {
@@ -1182,15 +1182,13 @@ const FetchPool = struct {
     }
 
     pub fn run(self: *Self) !void {
-        var stdout = std.io.getStdOut().writer();
-
         var pool = (try self.ctx.fetchPool(self.config.pool_id)) orelse return error.PoolNotFound;
         defer pool.deinit();
 
         const file_hashes = try pool.fetchFiles(self.ctx.allocator);
         defer self.ctx.allocator.free(file_hashes);
 
-        try stdout.print(
+        try self.io.stdout().print(
             "pool '{s}' {s}\n",
             .{ pool.title, pool.hash },
         );
@@ -1199,9 +1197,9 @@ const FetchPool = struct {
             var file = (try self.ctx.fetchFile(file_hash.id)).?;
             defer file.deinit();
 
-            try stdout.print("- {s}", .{file.local_path});
-            try file.printTagsTo(self.ctx.allocator, stdout, .{});
-            try stdout.print("\n", .{});
+            try self.io.stdout().print("- {s}", .{file.local_path});
+            try file.printTagsTo(self.ctx.allocator, self.io.stdout(), .{});
+            try self.io.stdout().print("\n", .{});
         }
     }
 };
@@ -1221,11 +1219,12 @@ const SearchPool = struct {
 
     ctx: *Context,
     config: Config,
+    io: *IOContext,
 
     const Self = @This();
 
-    pub fn init(ctx: *Context, config: Config) !Self {
-        return Self{ .ctx = ctx, .config = config };
+    pub fn init(ctx: *Context, config: Config, io: *IOContext) !Self {
+        return Self{ .ctx = ctx, .config = config, .io = io };
     }
 
     pub fn deinit(self: *Self) void {
@@ -1233,8 +1232,6 @@ const SearchPool = struct {
     }
 
     pub fn run(self: *Self) !void {
-        var stdout = std.io.getStdOut().writer();
-
         var stmt = try self.ctx.db.prepare(
             \\ select pool_hash
             \\ from pools
@@ -1254,7 +1251,7 @@ const SearchPool = struct {
             var pool = (try self.ctx.fetchPool(ID.new(pool_hash))).?;
             defer pool.deinit();
 
-            try stdout.print(
+            try self.io.stdout().print(
                 "pool '{s}' {s}\n",
                 .{ pool.title, pool.hash },
             );
@@ -1277,11 +1274,12 @@ const RemovePool = struct {
 
     ctx: *Context,
     config: Config,
+    io: *IOContext,
 
     const Self = @This();
 
-    pub fn init(ctx: *Context, config: Config) !Self {
-        return Self{ .ctx = ctx, .config = config };
+    pub fn init(ctx: *Context, config: Config, io: *IOContext) !Self {
+        return Self{ .ctx = ctx, .config = config, .io = io };
     }
 
     pub fn deinit(self: *Self) void {
@@ -1289,12 +1287,10 @@ const RemovePool = struct {
     }
 
     pub fn run(self: *Self) !void {
-        var stdout = std.io.getStdOut().writer();
-
         var pool = (try self.ctx.fetchPool(self.config.pool_id)) orelse return error.PoolNotFound;
         defer pool.deinit();
 
-        try stdout.print(
+        try self.io.stdout().print(
             "pool '{s}' {s} will be removed\n",
             .{ pool.title, pool.hash },
         );
@@ -1323,11 +1319,12 @@ const CreateSource = struct {
 
     ctx: *Context,
     config: Config,
+    io: *IOContext,
 
     const Self = @This();
 
-    pub fn init(ctx: *Context, config: Config) !Self {
-        return Self{ .ctx = ctx, .config = config };
+    pub fn init(ctx: *Context, config: Config, io: *IOContext) !Self {
+        return Self{ .ctx = ctx, .config = config, .io = io };
     }
 
     pub fn deinit(self: *Self) void {
@@ -1335,11 +1332,9 @@ const CreateSource = struct {
     }
 
     pub fn run(self: *Self) !void {
-        var stdout = std.io.getStdOut().writer();
-
         const source = try self.ctx.createTagSource(self.config.title, .{});
-        std.debug.print("source created with id ", .{});
-        try stdout.print("{d}\n", .{source.id});
+        std.debug.print("source created with id {d}", .{source.id});
+        try self.io.stdout().print("{d}\n", .{source.id});
     }
 };
 
@@ -1357,11 +1352,12 @@ const RemoveSource = struct {
 
     ctx: *Context,
     config: Config,
+    io: *IOContext,
 
     const Self = @This();
 
-    pub fn init(ctx: *Context, config: Config) !Self {
-        return Self{ .ctx = ctx, .config = config };
+    pub fn init(ctx: *Context, config: Config, io: *IOContext) !Self {
+        return Self{ .ctx = ctx, .config = config, .io = io };
     }
 
     pub fn deinit(self: *Self) void {
@@ -1369,14 +1365,11 @@ const RemoveSource = struct {
     }
 
     pub fn run(self: *Self) !void {
-        var stdout = std.io.getStdOut().writer();
-
         const source =
             (try self.ctx.fetchTagSource(.external, self.config.id)) orelse return error.SourceNotFound;
 
         try source.delete();
-
-        try stdout.print("ok\n", .{});
+        try self.io.stdout().print("ok\n", .{});
     }
 };
 
@@ -1389,11 +1382,12 @@ const ListSource = struct {
 
     ctx: *Context,
     config: void,
+    io: *IOContext,
 
     const Self = @This();
 
-    pub fn init(ctx: *Context, config: void) !Self {
-        return Self{ .ctx = ctx, .config = config };
+    pub fn init(ctx: *Context, config: void, io: *IOContext) !Self {
+        return Self{ .ctx = ctx, .config = config, .io = io };
     }
 
     pub fn deinit(self: *Self) void {
@@ -1401,8 +1395,6 @@ const ListSource = struct {
     }
 
     pub fn run(self: *Self) !void {
-        const raw_stdout = std.io.getStdOut().writer();
-
         var stmt = try self.ctx.db.prepare(
             \\ select type, id, name
             \\ from tag_sources
@@ -1416,18 +1408,14 @@ const ListSource = struct {
             self.ctx.allocator.free(entries);
         }
 
-        const BufferedFileWriter = std.io.BufferedWriter(4096, std.fs.File.Writer);
-        var buffered_stdout = BufferedFileWriter{ .unbuffered_writer = raw_stdout };
-        var stdout = buffered_stdout.writer();
-
         for (entries) |row| {
-            try stdout.print(
+            try self.io.stdout().print(
                 "type={d} id={d}: name={s}\n",
                 .{ row.type, row.id, row.name },
             );
         }
 
-        try buffered_stdout.flush();
+        try self.io.flushStdout();
     }
 };
 
@@ -1613,38 +1601,38 @@ pub fn main() anyerror!void {
         },
 
         .CreatePool => |config| {
-            var self = try CreatePool.init(&ctx, config);
+            var self = try CreatePool.init(&ctx, config, &default_io);
             defer self.deinit();
             try self.run();
         },
         .FetchPool => |config| {
-            var self = try FetchPool.init(&ctx, config);
+            var self = try FetchPool.init(&ctx, config, &default_io);
             defer self.deinit();
             try self.run();
         },
         .SearchPool => |config| {
-            var self = try SearchPool.init(&ctx, config);
+            var self = try SearchPool.init(&ctx, config, &default_io);
             defer self.deinit();
             try self.run();
         },
         .RemovePool => |config| {
-            var self = try RemovePool.init(&ctx, config);
+            var self = try RemovePool.init(&ctx, config, &default_io);
             defer self.deinit();
             try self.run();
         },
 
         .CreateSource => |config| {
-            var self = try CreateSource.init(&ctx, config);
+            var self = try CreateSource.init(&ctx, config, &default_io);
             defer self.deinit();
             try self.run();
         },
         .ListSource => |config| {
-            var self = try ListSource.init(&ctx, config);
+            var self = try ListSource.init(&ctx, config, &default_io);
             defer self.deinit();
             try self.run();
         },
         .RemoveSource => |config| {
-            var self = try RemoveSource.init(&ctx, config);
+            var self = try RemoveSource.init(&ctx, config, &default_io);
             defer self.deinit();
             try self.run();
         },
