@@ -13,6 +13,7 @@ jobs:
       # TODO crosscompile testing: https://github.com/lun-4/awtfdb/issues/1
       # TODO crosscompile testing: https://github.com/lun-4/awtfdb/issues/2
       - run: zig build
+      - run: zig build test
       - run: ci/smoketest.sh
   test-awtfdb-macos:
     runs-on: macos-latest
@@ -27,4 +28,5 @@ jobs:
           brew unlink gettext && brew link gettext --force
       - run: zig build build-test-only -freference-trace --verbose --verbose-link --verbose-cc
       - run: zig build
+      - run: zig build test
       - run: ci/smoketest.sh
