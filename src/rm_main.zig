@@ -10,30 +10,6 @@ const logger = std.log.scoped(.arm);
 const janitor = @import("janitor_main.zig");
 
 const VERSION = "0.0.1";
-const HELPTEXT =
-    \\ arm: remove files from the index
-    \\
-    \\ usage:
-    \\ \tarm [options] path
-    \\
-    \\ options:
-    \\ \t-h\tprints this help and exits
-    \\ \t-V\tprints version and exits
-    \\ \t-f\tforcefully delete a path
-    \\ \t(TODO support folder paths)
-    \\ \t-r\tremove files recursively (in a folder)
-    \\ \t-t tag\tremove a tag from a file
-    \\ \t(does not delete the file)
-    \\ \t-p pool_id\tremove a file from a pool
-    \\ \t(does not delete the file)
-    \\ \t--dry-run\tdon't edit the index database
-    \\
-    \\ examples:
-    \\  arm path/to/file
-    \\  arm -r path/to/folder
-    \\  arm -t mytag path/to/file
-    \\  arm -p 1234 file/in/pool
-;
 
 const StringList = std.ArrayList([]const u8);
 const CoreList = std.ArrayList(Context.Hash);
