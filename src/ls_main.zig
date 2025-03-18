@@ -56,7 +56,7 @@ pub fn main() anyerror!void {
         \\-f, --force            force resolution of the file even if it doesnt exist in the os.
         \\--id                   show file ids.
         \\--show-sources         show tag sources alongside the tags.
-        \\<str>...
+        \\<str>...             file paths, or folder paths, can also be "@<file id>" format
     );
 
     var diag = clap.Diagnostic{};
