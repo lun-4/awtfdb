@@ -181,13 +181,7 @@ const CustomHardLinkStep = struct {
             const exec_name = exec_decl.@"0";
             const full_dest_path = builder.getInstallPath(.{ .bin = {} }, exec_name);
             std.debug.print("{s} -> {s}\n", .{ wrapmain_path, full_dest_path });
-            _ = try std.fs.Dir.updateFile(
-                std.fs.cwd(),
-                wrapmain_path,
-                std.fs.cwd(),
-                full_dest_path,
-                .{},
-            );
+            try std.fs.cwd().atomicSymLink(wrapmain_path, full_dest_path, .{});
         }
     }
 };
