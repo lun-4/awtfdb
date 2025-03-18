@@ -2,6 +2,7 @@ const std = @import("std");
 const sqlite = @import("sqlite");
 const manage_main = @import("main.zig");
 const libpcre = @import("libpcre");
+const clap = @import("clap");
 const Context = manage_main.Context;
 const ID = manage_main.ID;
 
@@ -88,8 +89,30 @@ pub fn main() anyerror!void {
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
-    var args_it = std.process.args();
-    _ = args_it.skip();
+    const params = comptime clap.parseParamsComptime(
+        \\-h, --help                  display this help and exit.
+        \\-V, --version               print version and exit.
+        \\-v, --verbose               enable debug logs.
+        \\-f, --force                 force deletion of the file even if it doesnt exist in the os (TODO does not support folder).
+        \\-r, --recursive             delete all files in a folder, or any subfolders, recursively
+        \\--v1                        use "v1" arguments, doesn't do anything atm (useful for scripts)
+        \\--no-auto-gc                do not automatically garbage collect after deleting a file (default is on)
+        \\--dry-run                   don't delete any files, just display what would be deleted
+        \\-t, --tag <str>...    remove a tag from a file (does not delete file nor the tag, use atags for that)
+        \\-p, --pool <str>    remove a pool from a file (does not delete the file nor the pool, use atags for that)
+        \\<str>...                    file paths, or folder paths
+    );
+
+    var diag = clap.Diagnostic{};
+    var res = clap.parse(clap.Help, &params, clap.parsers.default, .{
+        .diagnostic = &diag,
+        .allocator = allocator,
+    }) catch |err| {
+        // Report useful error and exit.
+        diag.report(std.io.getStdErr().writer(), err) catch {};
+        return err;
+    };
+    defer res.deinit();
 
     var given_args = Args{
         .paths = StringList.init(allocator),
@@ -98,62 +121,39 @@ pub fn main() anyerror!void {
     defer given_args.paths.deinit();
     defer given_args.tags.deinit();
 
-    var state: enum { FetchTag, None, FetchPool } = .None;
     var ctx = try manage_main.loadDatabase(allocator, .{});
     defer ctx.deinit();
 
-    while (args_it.next()) |arg| {
-        switch (state) {
-            .FetchTag => {
-                const tag = (try ctx.fetchNamedTag(arg, "en")) orelse {
-                    logger.err("tag '{s}' not found", .{arg});
-                    return error.UnknownNamedTag;
-                };
-                try given_args.tags.append(tag.core);
-                state = .None;
-                continue;
-            },
+    given_args.help = res.args.help != 0;
+    given_args.version = res.args.version != 0;
+    if (res.args.verbose != 0)
+        current_log_level = .debug;
 
-            .FetchPool => {
-                const pool_id = ID.fromString(arg);
-                given_args.pool = (try ctx.fetchPool(pool_id)) orelse return error.PoolNotFound;
-                state = .None;
-                continue;
-            },
+    given_args.force = res.args.force != 0;
+    given_args.recursive = res.args.recursive != 0;
+    given_args.cli_v1 = res.args.v1 != 0;
+    given_args.no_auto_gc = res.args.@"no-auto-gc" != 0;
+    given_args.dry_run = res.args.@"dry-run" != 0;
 
-            .None => {},
-        }
-
-        if (std.mem.eql(u8, arg, "-h")) {
-            given_args.help = true;
-        } else if (std.mem.eql(u8, arg, "-V")) {
-            given_args.version = true;
-        } else if (std.mem.eql(u8, arg, "-v")) {
-            current_log_level = .debug;
-        } else if (std.mem.eql(u8, arg, "-r")) {
-            given_args.recursive = true;
-        } else if (std.mem.eql(u8, arg, "-f")) {
-            given_args.force = true;
-        } else if (std.mem.eql(u8, arg, "--dry-run")) {
-            given_args.dry_run = true;
-        } else if (std.mem.eql(u8, arg, "-t")) {
-            state = .FetchTag;
-        } else if (std.mem.eql(u8, arg, "-p")) {
-            state = .FetchPool;
-        } else if (std.mem.eql(u8, arg, "--no-auto-gc")) {
-            given_args.no_auto_gc = true;
-        } else if (std.mem.eql(u8, arg, "--v1")) {
-            given_args.cli_v1 = true; // doesn't do anything yet
-        } else {
-            try given_args.paths.append(arg);
-        }
+    for (res.args.tag) |arg| {
+        const tag = (try ctx.fetchNamedTag(arg, "en")) orelse {
+            logger.err("tag '{s}' not found", .{arg});
+            return error.UnknownNamedTag;
+        };
+        try given_args.tags.append(tag.core);
+    }
+    if (res.args.pool) |arg| {
+        const pool_id = ID.fromString(arg);
+        given_args.pool = (try ctx.fetchPool(pool_id)) orelse return error.PoolNotFound;
+    }
+    for (res.positionals[0]) |arg| {
+        try given_args.paths.append(arg);
     }
 
     if (given_args.help) {
-        std.debug.print(HELPTEXT, .{});
-        return;
+        return clap.help(std.io.getStdErr().writer(), clap.Help, &params, .{});
     } else if (given_args.version) {
-        std.debug.print("ainclude {s}\n", .{VERSION});
+        std.debug.print("arm {s}\n", .{VERSION});
         return;
     }
 
