@@ -666,7 +666,7 @@ pub const Context = struct {
     ///
     /// This function is useful for '--dry-run' switches in CLI applications.
     pub fn turnIntoMemoryDb(self: *Self) !void {
-        logger.debug("turning current db connection into an in-memory db", .{});
+        logger.warn("turning current db connection into an in-memory db (this may take a while!)", .{});
 
         // first, make sure our current connection can't do shit
         try self.db.exec("PRAGMA query_only = ON;", .{}, .{});
@@ -1171,7 +1171,7 @@ pub const Context = struct {
                 .{},
                 .{ core_hash.id.sql(), self.hash.id.sql() },
             );
-            logger.debug("remove file {s} (hash {s}) with tag core hash {d}", .{ self.local_path, self.hash, core_hash.id });
+            logger.debug("remove file tag, file {s} (hash {s}) with tag core hash {d}", .{ self.local_path, self.hash, core_hash.id });
         }
 
         /// Copies ownership of given new_local_path
