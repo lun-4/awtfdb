@@ -9,26 +9,6 @@ const ID = manage_main.ID;
 const logger = std.log.scoped(.als);
 
 const VERSION = "0.0.1";
-const HELPTEXT =
-    \\ als: list file tags
-    \\
-    \\ usage:
-    \\ \tals [options] [path]
-    \\
-    \\ options:
-    \\ \t-h\tprints this help and exits
-    \\ \t-V\tprints version and exits
-    \\ \t--id\tprint file id
-    \\  --show-sources    show tag sources
-    \\
-    \\ examples:
-    \\ \tals path/to/file
-    \\ \tshows tags about a single file
-    \\ \tals path/to/directory
-    \\ \tshows files and their respective tags inside a directory
-    \\  als @1234
-    \\  \tlist file by id
-;
 
 pub var current_log_level: std.log.Level = .info;
 pub const std_options = struct {
@@ -85,9 +65,7 @@ pub fn main() anyerror!void {
     var given_args = Args{ .paths = StringList.init(allocator) };
     defer given_args.paths.deinit();
 
-    if (res.args.help != 0)
-        given_args.help = true;
-
+    given_args.help = res.args.help != 0;
     given_args.version = res.args.version != 0;
     if (res.args.verbose != 0)
         current_log_level = .debug;
