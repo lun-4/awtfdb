@@ -31,6 +31,10 @@
             .url = "git+https://github.com/lun-4/zig-ulid?ref=no-alloc#2b2a92a829703a98960872efd5e173e19987ad63",
             .hash = "zig_ulid-0.1.0-W97JmIUXAACdl5P2WqXfmc3FJthLxoqNmo5096Wi1HyX",
         },
+        .clap = .{
+            .url = "https://github.com/Hejsil/zig-clap/archive/refs/tags/0.10.0.tar.gz",
+            .hash = "clap-0.10.0-oBajB434AQBDh-Ei3YtoKIRxZacVPF1iSwp3IX_ZB8f0",
+        },
     },
     .minimum_zig_version = "0.12.0",
     .paths = .{

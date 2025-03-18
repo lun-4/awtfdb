@@ -2,6 +2,7 @@ const std = @import("std");
 const sqlite = @import("sqlite");
 const manage_main = @import("main.zig");
 const libpcre = @import("libpcre");
+const clap = @import("clap");
 const Context = manage_main.Context;
 const ID = manage_main.ID;
 
@@ -48,8 +49,26 @@ pub fn main() anyerror!void {
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
-    var args_it = std.process.args();
-    _ = args_it.skip();
+    const params = comptime clap.parseParamsComptime(
+        \\-h, --help             display this help and exit.
+        \\-V, --version          print version and exit.
+        \\-v, --verbose          enable debug logs.
+        \\-f, --force            force resolution of the file even if it doesnt exist in the os.
+        \\--id                   show file ids.
+        \\--show-sources         show tag sources alongside the tags.
+        \\<str>...
+    );
+
+    var diag = clap.Diagnostic{};
+    var res = clap.parse(clap.Help, &params, clap.parsers.default, .{
+        .diagnostic = &diag,
+        .allocator = allocator,
+    }) catch |err| {
+        // Report useful error and exit.
+        diag.report(std.io.getStdErr().writer(), err) catch {};
+        return err;
+    };
+    defer res.deinit();
 
     const StringList = std.ArrayList([]const u8);
 
@@ -66,31 +85,26 @@ pub fn main() anyerror!void {
     var given_args = Args{ .paths = StringList.init(allocator) };
     defer given_args.paths.deinit();
 
-    while (args_it.next()) |arg| {
-        if (std.mem.eql(u8, arg, "-h")) {
-            given_args.help = true;
-        } else if (std.mem.eql(u8, arg, "-V")) {
-            given_args.version = true;
-        } else if (std.mem.eql(u8, arg, "-v")) {
-            current_log_level = .debug;
-        } else if (std.mem.eql(u8, arg, "-f")) {
-            given_args.force = true;
-        } else if (std.mem.eql(u8, arg, "--id")) {
-            given_args.show_id = true;
-        } else if (std.mem.eql(u8, arg, "--show-sources")) {
-            print_tag_options.show_sources = true;
-        } else {
-            try given_args.paths.append(arg);
-        }
-    }
+    if (res.args.help != 0)
+        given_args.help = true;
+
+    given_args.version = res.args.version != 0;
+    if (res.args.verbose != 0)
+        current_log_level = .debug;
+    given_args.force = res.args.force != 0;
+
+    given_args.show_id = res.args.id != 0;
+    print_tag_options.show_sources = res.args.@"show-sources" != 0;
+
+    for (res.positionals[0]) |pos|
+        try given_args.paths.append(pos);
 
     if (given_args.paths.items.len == 0) {
         try given_args.paths.append(".");
     }
 
     if (given_args.help) {
-        std.debug.print(HELPTEXT, .{});
-        return;
+        return clap.help(std.io.getStdErr().writer(), clap.Help, &params, .{});
     } else if (given_args.version) {
         std.debug.print("ainclude {s}\n", .{VERSION});
         return;

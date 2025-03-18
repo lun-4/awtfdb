@@ -32,6 +32,8 @@ pub fn build(b: *std.Build) !void {
     const tunez_pkg = b.dependency("tunez", .{ .optimize = optimize, .target = target });
     const ulid_pkg = b.dependency("zig_ulid", .{ .optimize = optimize, .target = target });
     const libexif_pkg = b.dependency("libexif", .{ .optimize = optimize, .target = target });
+    const clap = b.dependency("clap", .{});
+
     const Mod = struct { name: []const u8, mod: *std.Build.Module };
 
     const mod_deps = &[_]Mod{
@@ -41,6 +43,7 @@ pub fn build(b: *std.Build) !void {
         .{ .name = "expiring_hash_map", .mod = expiring_hash_map_pkg.module("expiring-hash-map") },
         .{ .name = "tunez", .mod = tunez_pkg.module("tunez") },
         .{ .name = "ulid", .mod = ulid_pkg.module("zig-ulid") },
+        .{ .name = "clap", .mod = clap.module("clap") },
     };
 
     const exif_artifact = libexif_pkg.artifact("exif");
