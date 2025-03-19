@@ -3,6 +3,7 @@ const sqlite = @import("sqlite");
 const manage_main = @import("main.zig");
 const libpcre = @import("libpcre");
 const Context = manage_main.Context;
+const clap = @import("clap");
 const ID = manage_main.ID;
 
 const logger = std.log.scoped(.als);
@@ -42,8 +43,23 @@ pub fn main() anyerror!void {
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
-    var args_it = std.process.args();
-    _ = args_it.skip();
+    const params = comptime clap.parseParamsComptime(
+        \\-h, --help                  display this help and exit.
+        \\-V, --version               print version and exit.
+        \\-v, --verbose               enable debug logs.
+        \\<str>...                    file paths, or folder paths
+    );
+
+    var diag = clap.Diagnostic{};
+    var res = clap.parse(clap.Help, &params, clap.parsers.default, .{
+        .diagnostic = &diag,
+        .allocator = allocator,
+    }) catch |err| {
+        // Report useful error and exit.
+        diag.report(std.io.getStdErr().writer(), err) catch {};
+        return err;
+    };
+    defer res.deinit();
 
     const StringList = std.ArrayList([]const u8);
 
@@ -56,34 +72,17 @@ pub fn main() anyerror!void {
     var given_args = Args{ .paths = StringList.init(allocator) };
     defer given_args.paths.deinit();
 
-    var state: enum { None, Path } = .None;
-
-    while (args_it.next()) |arg| {
-        logger.debug("state: {}, arg: {s}", .{ state, arg });
-        switch (state) {
-            .Path => {
-                try given_args.paths.append(arg);
-                continue;
-            },
-            .None => {},
-        }
-        if (std.mem.eql(u8, arg, "-h")) {
-            given_args.help = true;
-        } else if (std.mem.eql(u8, arg, "-V")) {
-            given_args.version = true;
-        } else if (std.mem.eql(u8, arg, "-v")) {
-            current_log_level = .debug;
-        } else {
-            try given_args.paths.append(arg);
-            state = .Path;
-        }
-    }
+    given_args.help = res.args.help != 0;
+    given_args.version = res.args.version != 0;
+    if (res.args.verbose != 0)
+        current_log_level = .debug;
+    for (res.positionals[0]) |arg|
+        try given_args.paths.append(arg);
 
     if (given_args.help) {
-        std.debug.print(HELPTEXT, .{});
-        return;
+        return clap.help(std.io.getStdErr().writer(), clap.Help, &params, .{});
     } else if (given_args.version) {
-        std.debug.print("ainclude {s}\n", .{VERSION});
+        std.debug.print("amv {s}\n", .{VERSION});
         return;
     }
 
