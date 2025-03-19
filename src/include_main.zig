@@ -11,63 +11,6 @@ const libpcre = @import("libpcre");
 const logger = std.log.scoped(.ainclude);
 
 const VERSION = "0.0.1";
-const HELPTEXT =
-    \\ ainclude: include a file/folder into the awtfdb
-    \\
-    \\ usage:
-    \\ \tainclude [options..] <file/folder path...>
-    \\
-    \\ options:
-    \\ \t-h\tprints this help and exits
-    \\ \t-V\tprints version and exits
-    \\ \t-v\tturns on verbosity (debug logging)
-    \\ \t-t <tag>, --tag <tag>\tadd the following tag to the given path
-    \\ \t (if its a folder, add the tag to all files in the folder)
-    \\ \t--infer-tags <inferrer>\tinfer tags using a processor.
-    \\\tall tags after that argument shall be
-    \\\tprocessed using that inferrer's options,
-    \\\tif any of them don't match, then argument
-    \\\tprocessing comes back to normal options
-    \\ \t (available processors: regex, audio, mime)
-    \\ --filter-indexed-files-only\tonly include files already indexed
-    \\ \t(useful if you're moving files around
-    \\ \tand they're not catched by the
-    \\ \trename watcher)
-    \\ --dry-run\tdo not do any index file modifications
-    \\ -p pool_id\tadd given arguments in order into a pool
-    \\ \t(recommended to do it with files only,
-    \\ \tnever folders)
-    \\ --strict\tdo not implicitly add any tags, fail
-    \\ \ton unknown tags.
-    \\ --use-file-timestamp\tuse file timestamp on the internal file
-    \\ \tid.
-    \\
-    \\ example, adding a single file:
-    \\  ainclude --tag format:mp4 --tag "meme:what the dog doing" /downloads/funny_meme.mp4
-    \\
-    \\ example, adding a batch of files:
-    \\  ainclude --tag format:mp4 --tag "meme:what the dog doing" /downloads/funny_meme.mp4 /download/another_dog_meme.mp4 /downloads/butter_dog.mp4
-    \\
-    \\ example, adding a media library:
-    \\  ainclude --tag type:music --infer-tags media /my/music/collection
-    \\
-    \\ regex tag inferrer:
-    \\ \truns a regex over the filename of each included file and adds every
-    \\ \tmatch as a tag for that file in the index.
-    \\
-    \\ \tevery match group in the regex will be processed as a new tag
-    \\
-    \\ regex tag inferrer options:
-    \\ \t--regex text\tthe regex to use (PCRE syntax)
-    \\ \t--regex-use-full-path\tif we should infer tags from the entire
-    \\ \tpath, instead of only the filename
-    \\ \t--regex-text-scope scope\tthe tag scope to use (say, "mytag:")
-    \\ \t--regex-cast-lowercase\tif the content of the tag should be
-    \\ \tconverted to lowercase before adding it
-    \\
-    \\ example, using regex to infer tags based on filenames with "[tag]" as tags:
-    \\  ainclude --infer-tags regex --regex '\[(.*?)\]' /my/movies/collection
-;
 
 fn utilAddScope(maybe_tag_scope: ?[]const u8, out: *std.ArrayList(u8).Writer) !usize {
     if (maybe_tag_scope) |tag_scope| {
