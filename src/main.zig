@@ -2,6 +2,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const sqlite = @import("sqlite");
 const ulid = @import("ulid");
+const clap = @import("clap");
 const IdMigration = @import("id_migration.zig");
 
 const RowID = i64;
@@ -539,11 +540,14 @@ pub fn migrateCommand(args_it: *std.process.ArgIterator, ctx: *Context) !void {
         try std.fs.copyFileAbsolute(db_path, backup_db_path, .{});
     }
 
+    var migration_count: usize = 0;
+
     {
         inline for (MIGRATIONS) |migration_decl| {
             const migration = Migration.fromTuple(migration_decl);
 
             if (current_version < migration.version) {
+                migration_count += 1;
 
                 // NOTE: i don't think transactions work for
                 // ALTER TABLE, but i'm using it regardless because
@@ -590,6 +594,8 @@ pub fn migrateCommand(args_it: *std.process.ArgIterator, ctx: *Context) !void {
             }
         }
     }
+
+    logger.info("ran {d} migrations", .{migration_count});
 
     logger.info("running PRAGMA integrity_check...", .{});
     const val = (try ctx.db.one(i64, "PRAGMA integrity_check", .{}, .{})) orelse return error.PossiblyFailedIntegrityCheck;
@@ -2026,8 +2032,6 @@ pub fn main() anyerror!void {
         return error.ConfigFail;
     }
 
-    var args_it = std.process.args();
-    _ = args_it.skip();
     const stdout = std.io.getStdOut();
 
     const Args = struct {
@@ -2038,31 +2042,49 @@ pub fn main() anyerror!void {
     };
 
     var given_args = Args{};
-    while (args_it.next()) |arg| {
-        if (std.mem.eql(u8, arg, "-h")) {
-            given_args.help = true;
-        } else if (std.mem.eql(u8, arg, "-v")) {
-            given_args.verbose = true;
-        } else if (std.mem.eql(u8, arg, "-V")) {
-            given_args.version = true;
-        } else {
-            if (std.mem.eql(u8, arg, "create")) {
-                given_args.action = .Create;
-            } else if (std.mem.eql(u8, arg, "migrate")) {
-                given_args.action = .Migrate;
-            } else if (std.mem.eql(u8, arg, "config")) {
-                given_args.action = .Config;
-            } else {
-                logger.err("unknown action {s}", .{arg});
-                return error.UnknownAction;
-            }
-            break;
-        }
-    }
+
+    const SubCommands = enum {
+        create,
+        migrate,
+        config,
+    };
+
+    const custom_parsers = .{
+        .command = clap.parsers.enumeration(SubCommands),
+    };
+
+    const params = comptime clap.parseParamsComptime(
+        \\-h, --help                  display this help and exit.
+        \\-V, --version               print version and exit.
+        \\-v, --verbose               enable debug logs.
+        \\<command>                   action (create, migrate, config)
+    );
+
+    //const MainArgs = clap.ResultEx(clap.Help, &params, custom_parsers);
+
+    var iter = try std.process.ArgIterator.initWithAllocator(allocator);
+    defer iter.deinit();
+
+    _ = iter.next(); // skip args[0] as that's exec name
+
+    // from https://github.com/Hejsil/zig-clap/blob/master/example/subcommands.zig
+    var diag = clap.Diagnostic{};
+    var res = clap.parseEx(clap.Help, &params, custom_parsers, &iter, .{
+        .diagnostic = &diag,
+        .allocator = allocator,
+        .terminating_positional = 0,
+    }) catch |err| {
+        diag.report(std.io.getStdErr().writer(), err) catch {};
+        return err;
+    };
+    defer res.deinit();
+
+    given_args.help = res.args.help != 0;
+    given_args.version = res.args.version != 0;
+    given_args.verbose = res.args.verbose != 0;
 
     if (given_args.help) {
-        try stdout.writer().print(HELPTEXT, .{});
-        return;
+        return clap.help(std.io.getStdErr().writer(), clap.Help, &params, .{});
     } else if (given_args.version) {
         try stdout.writer().print("awtfdb-manage 0.0.1\n", .{});
         return;
@@ -2072,45 +2094,64 @@ pub fn main() anyerror!void {
         current_log_level = .debug;
     }
 
-    if (given_args.action == null) {
-        logger.err("action argument is required", .{});
-        return error.MissingActionArgument;
-    }
-
-    switch (given_args.action.?) {
-        .Create => {
-            try createCommand(allocator, &args_it);
-        },
-        .Migrate => {
+    const command = res.positionals[0] orelse return error.MissingCommand;
+    switch (command) {
+        .create => try createCommand(allocator, &iter),
+        .migrate => {
             var ctx = try loadDatabase(allocator, .{});
             defer ctx.deinit();
             errdefer ctx.logLastError();
 
-            try migrateCommand(&args_it, &ctx);
+            try migrateCommand(&iter, &ctx);
         },
-        .Config => {
+        .config => {
             var ctx = try loadDatabase(allocator, .{});
             defer ctx.deinit();
             errdefer ctx.logLastError();
 
-            try configCommand(&args_it, &ctx);
+            try configCommand(&iter, &ctx);
         },
     }
 }
 
 fn configCommand(args_it: *std.process.ArgIterator, ctx: *Context) !void {
-    const config_action_string = args_it.next() orelse "get";
-    const config_action = std.meta.stringToEnum(
-        enum { get, set },
-        config_action_string,
-    ) orelse return error.InvalidConfigAction;
+    const Modes = enum {
+        get,
+        set,
+    };
 
-    // get or set
-    // cconst action
-    const key = args_it.next() orelse return error.ExpectedKeyArgument;
-    const maybe_value = args_it.next();
+    const custom_parsers = .{
+        .string = clap.parsers.string,
+        .u8 = clap.parsers.int(u8, 0),
+        .mode = clap.parsers.enumeration(Modes),
+    };
+    const params = comptime clap.parseParamsComptime(
+        \\-h, --help   display this help and exit.
+        \\<mode>       action (get or set)
+        \\<string>     config key
+        \\<string>...  config value
+    );
+
+    var diag = clap.Diagnostic{};
+    var res = clap.parseEx(clap.Help, &params, custom_parsers, args_it, .{
+        .diagnostic = &diag,
+        .allocator = ctx.allocator,
+    }) catch |err| {
+        diag.report(std.io.getStdErr().writer(), err) catch {};
+        return err;
+    };
+    defer res.deinit();
+
+    if (res.args.help != 0)
+        return clap.help(std.io.getStdErr().writer(), clap.Help, &params, .{});
+
+    const key = res.positionals[1] orelse return error.MissingKey;
+    const maybe_value = if (res.positionals[2].len > 1)
+        res.positionals[2][0]
+    else
+        null;
     var stdout = std.io.getStdOut().writer();
-    switch (config_action) {
+    switch (res.positionals[0] orelse return error.MissingMode) {
         .get => {
             if (std.mem.eql(u8, key, "tag_name_regex")) {
                 try ctx.wantConfigFields(.{ .tag_name_regex = true });
