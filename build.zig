@@ -177,10 +177,17 @@ const CustomHardLinkStep = struct {
         const builder = self.builder;
 
         const wrapmain_path = self.exe.getEmittedBin().getPath(builder);
+        var madeDir = false;
         inline for (EXECUTABLES) |exec_decl| {
             const exec_name = exec_decl.@"0";
             const full_dest_path = builder.getInstallPath(.{ .bin = {} }, exec_name);
-            std.debug.print("{s} -> {s}\n", .{ wrapmain_path, full_dest_path });
+            if (!madeDir) {
+                const dirpath = std.fs.path.dirname(full_dest_path).?;
+                std.debug.print("mkdir -p {s}\n", .{dirpath});
+                try std.fs.Dir.makePath(std.fs.cwd(), dirpath);
+                madeDir = true;
+            }
+            std.debug.print("symlink {s} to {s}\n", .{ wrapmain_path, full_dest_path });
             try std.fs.cwd().atomicSymLink(wrapmain_path, full_dest_path, .{});
         }
     }
