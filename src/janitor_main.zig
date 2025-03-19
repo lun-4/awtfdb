@@ -9,26 +9,6 @@ const ID = manage_main.ID;
 const logger = std.log.scoped(.awtfdb_janitor);
 
 const VERSION = "0.0.1";
-const HELPTEXT =
-    \\ awtfdb-janitor: investigate the semantic consistency of the index file
-    \\
-    \\ usage:
-    \\ \tawtfdb-janitor
-    \\
-    \\ options:
-    \\ \t-h\tprints this help and exits
-    \\ \t-V\tprints version and exits
-    \\ \t--full\tvalidate hashes of all files (very slow)
-    \\ \t--only <path>\tonly run full validation on given path
-    \\ \t--repair\tattempt to repair consistency
-    \\ \t(this operation may be destructive to
-    \\ \tthe index file, only run this manually)
-    \\ \t--hash-files-smaller-than\tonly hash files smaller than a specific size
-    \\\te.g 10K, 10M, 3G
-    \\ \t--from-report <path>\tuse existing report file for double check
-    \\ \t--skip-db\tskip db checks
-    \\ \t--skip-tag-cores\tskip tag cores
-;
 
 const Counter = struct { total: usize = 0, unrepairable: usize = 0 };
 const ErrorCounters = struct {
@@ -561,6 +541,8 @@ pub fn main() anyerror!u8 {
         \\--from-report <str>      use existing report file for double check
         \\--skip-db       skip db checks
         \\--skip-tag-cores    skip tag core checks
+        \\
+        \\awtfdb-janitor: ensure index file is consistent with the filesystem
     );
 
     var diag = clap.Diagnostic{};
