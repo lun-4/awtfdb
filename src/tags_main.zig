@@ -3,6 +3,7 @@ const sqlite = @import("sqlite");
 const manage_main = @import("main.zig");
 const libpcre = @import("libpcre");
 const Context = manage_main.Context;
+const clap = @import("clap");
 const ID = manage_main.ID;
 
 const logger = std.log.scoped(.atags);
@@ -113,31 +114,38 @@ const CreateAction = struct {
         tag: ?[]const u8 = null,
     };
 
-    pub fn processArgs(args_it: *std.process.ArgIterator, given_args: *Args) !ActionConfig {
+    pub fn processArgs(args_it: *std.process.ArgIterator, allocator: std.mem.Allocator, given_args: *Args) !ActionConfig {
         _ = given_args;
-        var config = Config{};
+        const params = comptime clap.parseParamsComptime(
+            \\-h, --help   display this help and exit.
+            \\--core <string>      tag core data for the new tag
+            \\--alias <string>     create a tag alias based on an existing tag
+            \\<string>     name of the new tag
+        );
 
-        const ArgState = enum { None, NeedTagCore, NeedTagAlias };
-        var state: ArgState = .None;
-        while (args_it.next()) |arg| {
-            if (state == .NeedTagCore) {
-                config.tag_core = arg;
-                state = .None;
-            } else if (state == .NeedTagAlias) {
-                config.tag_alias = arg;
-                state = .None;
-            } else if (std.mem.eql(u8, arg, "--core")) {
-                state = .NeedTagCore;
-            } else if (std.mem.eql(u8, arg, "--alias")) {
-                state = .NeedTagAlias;
-            } else {
-                config.tag = arg;
-            }
+        var diag = clap.Diagnostic{};
+        var res = clap.parseEx(clap.Help, &params, clap.parsers.default, args_it, .{
+            .diagnostic = &diag,
+            .allocator = allocator,
+        }) catch |err| {
+            diag.report(std.io.getStdErr().writer(), err) catch {};
+            return err;
+        };
+        defer res.deinit();
 
-            if (config.tag_core != null and config.tag_alias != null) {
-                logger.err("only one of --core or --alias may be provided", .{});
-                return error.OnlyOneAliasOrCore;
-            }
+        if (res.args.help != 0) {
+            try clap.help(std.io.getStdErr().writer(), clap.Help, &params, .{});
+            return error.NoArgs;
+        }
+
+        const config = Config{
+            .tag_core = res.args.core,
+            .tag_alias = res.args.alias,
+            .tag = res.positionals[0] orelse return error.MissingTagName,
+        };
+        if (config.tag_core != null and config.tag_alias != null) {
+            logger.err("only one of --core or --alias may be provided", .{});
+            return error.OnlyOneAliasOrCore;
         }
         return ActionConfig{ .Create = config };
     }
@@ -374,31 +382,35 @@ const RemoveAction = struct {
         given_args: *const Args,
     };
 
-    pub fn processArgs(args_it: *std.process.ArgIterator, given_args: *Args) !ActionConfig {
-        var config = Config{ .given_args = given_args };
+    pub fn processArgs(args_it: *std.process.ArgIterator, allocator: std.mem.Allocator, given_args: *Args) !ActionConfig {
+        const params = comptime clap.parseParamsComptime(
+            \\-h, --help           display this help and exit.
+            \\--core <string>      remove by tag core
+            \\--tag <string>       remove by tag name
+            \\--only-tag-name <string>     only remove the given tag name, don't delete the tag itself
+        );
 
-        const ArgState = enum { None, NeedTagCore, NeedTag, NeedTagName };
-        var state: ArgState = .None;
-        while (args_it.next()) |arg| {
-            if (state == .NeedTagCore) {
-                config.tag_core = arg;
-                state = .None;
-            } else if (state == .NeedTag) {
-                config.tag = arg;
-                state = .None;
-            } else if (state == .NeedTagName) {
-                config.only_tag_name = arg;
-                state = .None;
-            } else if (std.mem.eql(u8, arg, "--core")) {
-                state = .NeedTagCore;
-            } else if (std.mem.eql(u8, arg, "--tag")) {
-                state = .NeedTag;
-            } else if (std.mem.eql(u8, arg, "--only-tag-name")) {
-                state = .NeedTagName;
-            } else {
-                return error.InvalidArgument;
-            }
+        var diag = clap.Diagnostic{};
+        var res = clap.parseEx(clap.Help, &params, clap.parsers.default, args_it, .{
+            .diagnostic = &diag,
+            .allocator = allocator,
+        }) catch |err| {
+            diag.report(std.io.getStdErr().writer(), err) catch {};
+            return err;
+        };
+        defer res.deinit();
+
+        if (res.args.help != 0) {
+            try clap.help(std.io.getStdErr().writer(), clap.Help, &params, .{});
+            return error.NoArgs;
         }
+
+        const config = Config{
+            .given_args = given_args,
+            .tag_core = res.args.core,
+            .tag = res.args.tag,
+            .only_tag_name = res.args.@"only-tag-name",
+        };
         return ActionConfig{ .Remove = config };
     }
 
@@ -618,19 +630,35 @@ const SearchAction = struct {
         query: ?[]const u8 = null,
     };
 
-    pub fn processArgs(args_it: *std.process.ArgIterator, given_args: *Args) !ActionConfig {
+    pub fn processArgs(args_it: *std.process.ArgIterator, allocator: std.mem.Allocator, given_args: *Args) !ActionConfig {
         _ = given_args;
-        var config = Config{};
-        while (args_it.next()) |arg| {
-            if (std.mem.eql(u8, arg, "--exact")) {
-                config.exact = true;
-            } else if (std.mem.eql(u8, arg, "--hash")) {
-                config.show_hashes = true;
-            } else {
-                config.query = arg;
-            }
+        const params = comptime clap.parseParamsComptime(
+            \\-h, --help           display this help and exit.
+            \\--exact              search tags by exact match
+            \\--hash               show hash of tag cores on returned results
+            \\<string>             search query
+        );
+
+        var diag = clap.Diagnostic{};
+        var res = clap.parseEx(clap.Help, &params, clap.parsers.default, args_it, .{
+            .diagnostic = &diag,
+            .allocator = allocator,
+        }) catch |err| {
+            diag.report(std.io.getStdErr().writer(), err) catch {};
+            return err;
+        };
+        defer res.deinit();
+
+        if (res.args.help != 0) {
+            try clap.help(std.io.getStdErr().writer(), clap.Help, &params, .{});
+            return error.NoArgs;
         }
-        if (config.query == null) return error.MissingQuery;
+
+        const config = Config{
+            .exact = res.args.exact != 0,
+            .show_hashes = res.args.hash != 0,
+            .query = res.positionals[0] orelse return error.MissingQuery,
+        };
         return ActionConfig{ .Search = config };
     }
 
@@ -719,24 +747,32 @@ const CreateParent = struct {
         parent_tag: ?[]const u8 = null,
     };
 
-    pub fn processArgs(args_it: *std.process.ArgIterator, given_args: *Args) !ActionConfig {
+    pub fn processArgs(args_it: *std.process.ArgIterator, allocator: std.mem.Allocator, given_args: *Args) !ActionConfig {
+        const params = comptime clap.parseParamsComptime(
+            \\-h, --help   display this help and exit.
+            \\<string>       child tag
+            \\<string>       parent tag
+        );
+
+        var diag = clap.Diagnostic{};
+        var res = clap.parseEx(clap.Help, &params, clap.parsers.default, args_it, .{
+            .diagnostic = &diag,
+            .allocator = allocator,
+        }) catch |err| {
+            diag.report(std.io.getStdErr().writer(), err) catch {};
+            return err;
+        };
+        defer res.deinit();
+
+        if (res.args.help != 0) {
+            try clap.help(std.io.getStdErr().writer(), clap.Help, &params, .{});
+            return error.NoArgs;
+        }
+
         _ = given_args;
         var config = Config{};
-
-        const ArgState = enum { None, NeedChildTag, NeedParentTag };
-        var state: ArgState = .NeedChildTag;
-        while (args_it.next()) |arg| {
-            if (state == .NeedChildTag) {
-                config.child_tag = arg;
-                state = .NeedParentTag;
-            } else if (state == .NeedParentTag) {
-                config.parent_tag = arg;
-                state = .None;
-            } else {
-                logger.err("invalid argument '{s}'", .{arg});
-                return error.InvalidArgument;
-            }
-        }
+        config.child_tag = res.positionals[0];
+        config.parent_tag = res.positionals[1];
 
         if (config.child_tag == null) {
             logger.err("child tag is required", .{});
@@ -788,7 +824,8 @@ const CreateParent = struct {
 };
 
 const ListParent = struct {
-    pub fn processArgs(args_it: *std.process.ArgIterator, given_args: *Args) !ActionConfig {
+    pub fn processArgs(args_it: *std.process.ArgIterator, allocator: std.mem.Allocator, given_args: *Args) !ActionConfig {
+        _ = allocator;
         _ = given_args;
         _ = args_it;
         return ActionConfig{ .ListParent = {} };
@@ -854,23 +891,37 @@ const ListParent = struct {
 const RemoveParent = struct {
     pub const Config = struct {
         given_args: *Args,
-        rowid: ?i64 = null,
+        rowid: i64,
         delete_file_entries: bool = false,
     };
 
-    pub fn processArgs(args_it: *std.process.ArgIterator, given_args: *Args) !ActionConfig {
-        var config = Config{ .given_args = given_args };
+    pub fn processArgs(args_it: *std.process.ArgIterator, allocator: std.mem.Allocator, given_args: *Args) !ActionConfig {
+        const params = comptime clap.parseParamsComptime(
+            \\-h, --help   display this help and exit.
+            \\--delete-file-entries     if we should remove the tag relationships created by this tag parent
+            \\<i64>     id of the tag parent relationship
+        );
 
-        while (args_it.next()) |arg| {
-            if (std.mem.eql(u8, arg, "--delete-tag-file-entries")) {
-                config.delete_file_entries = true;
-            } else {
-                config.rowid = try std.fmt.parseInt(i64, arg, 10);
-                break;
-            }
+        var diag = clap.Diagnostic{};
+        var res = clap.parseEx(clap.Help, &params, clap.parsers.default, args_it, .{
+            .diagnostic = &diag,
+            .allocator = allocator,
+        }) catch |err| {
+            diag.report(std.io.getStdErr().writer(), err) catch {};
+            return err;
+        };
+        defer res.deinit();
+
+        if (res.args.help != 0) {
+            try clap.help(std.io.getStdErr().writer(), clap.Help, &params, .{});
+            return error.NoArgs;
         }
 
-        if (config.rowid == null) return error.NeedParentId;
+        const config = Config{
+            .given_args = given_args,
+            .rowid = res.positionals[0] orelse return error.NeedParentId,
+            .delete_file_entries = res.args.@"delete-file-entries" != 0,
+        };
         return ActionConfig{ .RemoveParent = config };
     }
 
@@ -896,7 +947,7 @@ const RemoveParent = struct {
             struct { child_tag: ID.SQL, parent_tag: ID.SQL },
             "select child_tag, parent_tag from tag_implications where rowid = ?",
             .{},
-            .{self.config.rowid.?},
+            .{self.config.rowid},
         )) orelse return error.InvalidParentId;
 
         try self.io.stdout().print(
@@ -908,7 +959,7 @@ const RemoveParent = struct {
             usize,
             "select count(*) from tag_files where parent_source_id = ?",
             .{},
-            .{self.config.rowid.?},
+            .{self.config.rowid},
         )).?;
 
         if (self.config.delete_file_entries) {
@@ -927,7 +978,7 @@ const RemoveParent = struct {
             errdefer savepoint.rollback();
             defer savepoint.commit();
 
-            const rowid = self.config.rowid.?;
+            const rowid = self.config.rowid;
 
             if (self.config.delete_file_entries) {
                 logger.info("REMOVING all tag file entries that were made by this parent...", .{});
@@ -984,11 +1035,11 @@ const RemoveParent = struct {
             try self.ctx.db.exec(
                 "delete from tag_implications where rowid = ?",
                 .{},
-                .{self.config.rowid.?},
+                .{self.config.rowid},
             );
         }
 
-        try self.io.stdout().print("deleted parent id {d}\n", .{self.config.rowid.?});
+        try self.io.stdout().print("deleted parent id {d}\n", .{self.config.rowid});
     }
 };
 
@@ -1149,10 +1200,30 @@ const CreatePool = struct {
         title: []const u8,
     };
 
-    pub fn processArgs(args_it: *std.process.ArgIterator, given_args: *Args) !ActionConfig {
+    pub fn processArgs(args_it: *std.process.ArgIterator, allocator: std.mem.Allocator, given_args: *Args) !ActionConfig {
         _ = given_args;
+        const params = comptime clap.parseParamsComptime(
+            \\-h, --help   display this help and exit.
+            \\<string>     title of the pool
+        );
+
+        var diag = clap.Diagnostic{};
+        var res = clap.parseEx(clap.Help, &params, clap.parsers.default, args_it, .{
+            .diagnostic = &diag,
+            .allocator = allocator,
+        }) catch |err| {
+            diag.report(std.io.getStdErr().writer(), err) catch {};
+            return err;
+        };
+        defer res.deinit();
+
+        if (res.args.help != 0) {
+            try clap.help(std.io.getStdErr().writer(), clap.Help, &params, .{});
+            return error.NoArgs;
+        }
+
         const config = Config{
-            .title = args_it.next() orelse return error.ExpectedPoolTitle,
+            .title = res.positionals[0] orelse return error.ExpectedPoolTitle,
         };
         return ActionConfig{ .CreatePool = config };
     }
@@ -1185,12 +1256,30 @@ const FetchPool = struct {
         pool_id: ID,
     };
 
-    pub fn processArgs(args_it: *std.process.ArgIterator, given_args: *Args) !ActionConfig {
+    pub fn processArgs(args_it: *std.process.ArgIterator, allocator: std.mem.Allocator, given_args: *Args) !ActionConfig {
         _ = given_args;
+        const params = comptime clap.parseParamsComptime(
+            \\-h, --help   display this help and exit.
+            \\<string>     id of the pool
+        );
 
-        const pool_id_str = args_it.next() orelse return error.ExpectedPoolTitle;
+        var diag = clap.Diagnostic{};
+        var res = clap.parseEx(clap.Help, &params, clap.parsers.default, args_it, .{
+            .diagnostic = &diag,
+            .allocator = allocator,
+        }) catch |err| {
+            diag.report(std.io.getStdErr().writer(), err) catch {};
+            return err;
+        };
+        defer res.deinit();
+
+        if (res.args.help != 0) {
+            try clap.help(std.io.getStdErr().writer(), clap.Help, &params, .{});
+            return error.NoArgs;
+        }
+
         const config = Config{
-            .pool_id = ID.fromString(pool_id_str),
+            .pool_id = ID.fromString(res.positionals[0] orelse return error.MissingPoolID),
         };
         return ActionConfig{ .FetchPool = config };
     }
@@ -1237,10 +1326,30 @@ const SearchPool = struct {
         search_term: ?[]const u8 = null,
     };
 
-    pub fn processArgs(args_it: *std.process.ArgIterator, given_args: *Args) !ActionConfig {
+    pub fn processArgs(args_it: *std.process.ArgIterator, allocator: std.mem.Allocator, given_args: *Args) !ActionConfig {
         _ = given_args;
+        const params = comptime clap.parseParamsComptime(
+            \\-h, --help   display this help and exit.
+            \\<string>     search term
+        );
+
+        var diag = clap.Diagnostic{};
+        var res = clap.parseEx(clap.Help, &params, clap.parsers.default, args_it, .{
+            .diagnostic = &diag,
+            .allocator = allocator,
+        }) catch |err| {
+            diag.report(std.io.getStdErr().writer(), err) catch {};
+            return err;
+        };
+        defer res.deinit();
+
+        if (res.args.help != 0) {
+            try clap.help(std.io.getStdErr().writer(), clap.Help, &params, .{});
+            return error.NoArgs;
+        }
+
         const config = Config{
-            .search_term = args_it.next() orelse return error.ExpectedSearchTerm,
+            .search_term = res.positionals[0] orelse return error.ExpectedSearchTerm,
         };
         return ActionConfig{ .SearchPool = config };
     }
@@ -1293,8 +1402,8 @@ const RemovePool = struct {
         pool_id: ID,
     };
 
-    pub fn processArgs(args_it: *std.process.ArgIterator, given_args: *Args) !ActionConfig {
-        const fetch_config = try FetchPool.processArgs(args_it, given_args);
+    pub fn processArgs(args_it: *std.process.ArgIterator, allocator: std.mem.Allocator, given_args: *Args) !ActionConfig {
+        const fetch_config = try FetchPool.processArgs(args_it, allocator, given_args);
         return ActionConfig{
             .RemovePool = Config{ .given_args = given_args, .pool_id = fetch_config.FetchPool.pool_id },
         };
@@ -1337,10 +1446,30 @@ const CreateSource = struct {
         title: []const u8,
     };
 
-    pub fn processArgs(args_it: *std.process.ArgIterator, given_args: *Args) !ActionConfig {
+    pub fn processArgs(args_it: *std.process.ArgIterator, allocator: std.mem.Allocator, given_args: *Args) !ActionConfig {
         _ = given_args;
+        const params = comptime clap.parseParamsComptime(
+            \\-h, --help   display this help and exit.
+            \\<string>     title of the new tag source
+        );
+
+        var diag = clap.Diagnostic{};
+        var res = clap.parseEx(clap.Help, &params, clap.parsers.default, args_it, .{
+            .diagnostic = &diag,
+            .allocator = allocator,
+        }) catch |err| {
+            diag.report(std.io.getStdErr().writer(), err) catch {};
+            return err;
+        };
+        defer res.deinit();
+
+        if (res.args.help != 0) {
+            try clap.help(std.io.getStdErr().writer(), clap.Help, &params, .{});
+            return error.NoArgs;
+        }
+
         const config = Config{
-            .title = args_it.next() orelse return error.ExpectedSourceTitle,
+            .title = res.positionals[0] orelse return error.ExpectedSourceTitle,
         };
         return ActionConfig{ .CreateSource = config };
     }
@@ -1371,10 +1500,30 @@ const RemoveSource = struct {
         id: i64,
     };
 
-    pub fn processArgs(args_it: *std.process.ArgIterator, given_args: *Args) !ActionConfig {
+    pub fn processArgs(args_it: *std.process.ArgIterator, allocator: std.mem.Allocator, given_args: *Args) !ActionConfig {
         _ = given_args;
+        const params = comptime clap.parseParamsComptime(
+            \\-h, --help   display this help and exit.
+            \\<i64>     id of the tag source to remove
+        );
+
+        var diag = clap.Diagnostic{};
+        var res = clap.parseEx(clap.Help, &params, clap.parsers.default, args_it, .{
+            .diagnostic = &diag,
+            .allocator = allocator,
+        }) catch |err| {
+            diag.report(std.io.getStdErr().writer(), err) catch {};
+            return err;
+        };
+        defer res.deinit();
+
+        if (res.args.help != 0) {
+            try clap.help(std.io.getStdErr().writer(), clap.Help, &params, .{});
+            return error.NoArgs;
+        }
+
         return ActionConfig{ .RemoveSource = Config{
-            .id = try std.fmt.parseInt(i64, args_it.next() orelse return error.RequiredId, 10),
+            .id = res.positionals[0] orelse return error.RequiredId,
         } };
     }
 
@@ -1402,8 +1551,9 @@ const RemoveSource = struct {
 };
 
 const ListSource = struct {
-    pub fn processArgs(args_it: *std.process.ArgIterator, given_args: *Args) !ActionConfig {
+    pub fn processArgs(args_it: *std.process.ArgIterator, allocator: std.mem.Allocator, given_args: *Args) !ActionConfig {
         _ = given_args;
+        _ = allocator;
         _ = args_it;
         return ActionConfig{ .ListSource = {} };
     }
@@ -1474,6 +1624,128 @@ pub const std_options = struct {
     pub const logFn = manage_main.log;
 };
 
+fn parentMain(args_it: *std.process.ArgIterator, allocator: std.mem.Allocator, given_args: *Args) !ActionConfig {
+    const Modes = enum {
+        create,
+        list,
+        remove,
+    };
+
+    const custom_parsers = .{
+        .string = clap.parsers.string,
+        .u8 = clap.parsers.int(u8, 0),
+        .mode = clap.parsers.enumeration(Modes),
+    };
+    const params = comptime clap.parseParamsComptime(
+        \\-h, --help   display this help and exit.
+        \\<mode>       action (create, list, remove)
+    );
+
+    var diag = clap.Diagnostic{};
+    var res = clap.parseEx(clap.Help, &params, custom_parsers, args_it, .{
+        .diagnostic = &diag,
+        .allocator = allocator,
+        .terminating_positional = 0,
+    }) catch |err| {
+        diag.report(std.io.getStdErr().writer(), err) catch {};
+        return err;
+    };
+    defer res.deinit();
+
+    if (res.args.help != 0) {
+        try clap.help(std.io.getStdErr().writer(), clap.Help, &params, .{});
+        return error.NoArgs;
+    }
+
+    return switch (res.positionals[0] orelse return error.MissingMode) {
+        .create => try CreateParent.processArgs(args_it, allocator, given_args),
+        .list => try ListParent.processArgs(args_it, allocator, given_args),
+        .remove => try RemoveParent.processArgs(args_it, allocator, given_args),
+    };
+}
+
+fn sourceMain(args_it: *std.process.ArgIterator, allocator: std.mem.Allocator, given_args: *Args) !ActionConfig {
+    const Modes = enum {
+        create,
+        list,
+        remove,
+    };
+
+    const custom_parsers = .{
+        .string = clap.parsers.string,
+        .u8 = clap.parsers.int(u8, 0),
+        .mode = clap.parsers.enumeration(Modes),
+    };
+    const params = comptime clap.parseParamsComptime(
+        \\-h, --help   display this help and exit.
+        \\<mode>       action (create, list, remove)
+    );
+
+    var diag = clap.Diagnostic{};
+    var res = clap.parseEx(clap.Help, &params, custom_parsers, args_it, .{
+        .diagnostic = &diag,
+        .allocator = allocator,
+        .terminating_positional = 0,
+    }) catch |err| {
+        diag.report(std.io.getStdErr().writer(), err) catch {};
+        return err;
+    };
+    defer res.deinit();
+
+    if (res.args.help != 0) {
+        try clap.help(std.io.getStdErr().writer(), clap.Help, &params, .{});
+        return error.NoArgs;
+    }
+
+    return switch (res.positionals[0] orelse return error.MissingMode) {
+        .create => try CreateSource.processArgs(args_it, allocator, given_args),
+        .list => try ListSource.processArgs(args_it, allocator, given_args),
+        .remove => try RemoveSource.processArgs(args_it, allocator, given_args),
+    };
+}
+
+fn poolMain(args_it: *std.process.ArgIterator, allocator: std.mem.Allocator, given_args: *Args) !ActionConfig {
+    const Modes = enum {
+        create,
+        fetch,
+        search,
+        remove,
+    };
+
+    const custom_parsers = .{
+        .string = clap.parsers.string,
+        .u8 = clap.parsers.int(u8, 0),
+        .mode = clap.parsers.enumeration(Modes),
+    };
+    const params = comptime clap.parseParamsComptime(
+        \\-h, --help   display this help and exit.
+        \\<mode>       action (create, fetch, search, remove)
+    );
+
+    var diag = clap.Diagnostic{};
+    var res = clap.parseEx(clap.Help, &params, custom_parsers, args_it, .{
+        .diagnostic = &diag,
+        .allocator = allocator,
+        .terminating_positional = 0,
+    }) catch |err| {
+        diag.report(std.io.getStdErr().writer(), err) catch {};
+        return err;
+    };
+    defer res.deinit();
+
+    if (res.args.help != 0) {
+        try clap.help(std.io.getStdErr().writer(), clap.Help, &params, .{});
+        return error.NoArgs;
+    }
+
+    return switch (res.positionals[0] orelse return error.MissingMode) {
+        .create => try CreatePool.processArgs(args_it, allocator, given_args),
+        .fetch => try FetchPool.processArgs(args_it, allocator, given_args),
+        .search => try SearchPool.processArgs(args_it, allocator, given_args),
+        .remove => try RemovePool.processArgs(args_it, allocator, given_args),
+    };
+}
+
 pub fn main() anyerror!void {
     const rc = sqlite.c.sqlite3_config(sqlite.c.SQLITE_CONFIG_LOG, manage_main.sqliteLog, @as(?*anyopaque, null));
     if (rc != sqlite.c.SQLITE_OK) {
@@ -1487,102 +1759,81 @@ pub fn main() anyerror!void {
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
-    var args_it = std.process.args();
-    _ = args_it.skip();
-
     var given_args = Args{};
-    var arg_state: enum { None, Parent, Pool, Source } = .None;
 
-    while (args_it.next()) |arg| {
-        switch (arg_state) {
-            .Parent => {
-                if (std.mem.eql(u8, arg, "create")) {
-                    given_args.action_config = try CreateParent.processArgs(&args_it, &given_args);
-                } else if (std.mem.eql(u8, arg, "list")) {
-                    given_args.action_config = try ListParent.processArgs(&args_it, &given_args);
-                } else if (std.mem.eql(u8, arg, "remove")) {
-                    given_args.action_config = try RemoveParent.processArgs(&args_it, &given_args);
-                } else {
-                    logger.err("{s} is an invalid parent action", .{arg});
-                    return error.InvalidParentAction;
-                }
-                arg_state = .None;
-                continue;
-            },
+    const SubCommands = enum {
+        // tags
+        create,
+        search,
+        remove,
+        // sub: parent
+        parent,
+        // sub: pool
+        pool,
+        // sub: source
+        source,
+    };
 
-            .Pool => {
-                if (std.mem.eql(u8, arg, "create")) {
-                    given_args.action_config = try CreatePool.processArgs(&args_it, &given_args);
-                } else if (std.mem.eql(u8, arg, "fetch")) {
-                    given_args.action_config = try FetchPool.processArgs(&args_it, &given_args);
-                } else if (std.mem.eql(u8, arg, "search")) {
-                    given_args.action_config = try SearchPool.processArgs(&args_it, &given_args);
-                } else if (std.mem.eql(u8, arg, "remove")) {
-                    given_args.action_config = try RemovePool.processArgs(&args_it, &given_args);
-                } else {
-                    logger.err("{s} is an invalid pool action", .{arg});
-                    return error.InvalidPoolAction;
-                }
-                arg_state = .None;
-                continue;
-            },
+    const custom_parsers = .{
+        .command = clap.parsers.enumeration(SubCommands),
+    };
 
-            .Source => {
-                if (std.mem.eql(u8, arg, "create")) {
-                    given_args.action_config = try CreateSource.processArgs(&args_it, &given_args);
-                } else if (std.mem.eql(u8, arg, "list")) {
-                    given_args.action_config = try ListSource.processArgs(&args_it, &given_args);
-                } else if (std.mem.eql(u8, arg, "remove")) {
-                    given_args.action_config = try RemoveSource.processArgs(&args_it, &given_args);
-                } else {
-                    logger.err("{s} is an invalid source action", .{arg});
-                    return error.InvalidPoolAction;
-                }
-                arg_state = .None;
-                continue;
-            },
+    const params = comptime clap.parseParamsComptime(
+        \\-h, --help                  display this help and exit.
+        \\-V, --version               print version and exit.
+        \\-v, --verbose               enable debug logs.
+        \\--no-confirm                do not ask for confirmation on remove commands
+        \\--dry-run                   do not modify the index file
+        \\--v1                        cli v1 mode (useful for scripts)
+        \\<command>                   action (for tags: create, search, remove. there's parent, pool, source)
+        \\
+        \\ atags: manage tags, tag parents, pools, and tag sources
+    );
 
-            .None => {},
-        }
+    var iter = try std.process.ArgIterator.initWithAllocator(allocator);
+    defer iter.deinit();
 
-        if (std.mem.eql(u8, arg, "-h")) {
-            given_args.help = true;
-        } else if (std.mem.eql(u8, arg, "-V")) {
-            given_args.version = true;
-        } else if (std.mem.eql(u8, arg, "-v")) {
-            current_log_level = .debug;
-        } else if (std.mem.eql(u8, arg, "--no-confirm")) {
-            given_args.ask_confirmation = false;
-        } else if (std.mem.eql(u8, arg, "--dry-run")) {
-            given_args.dry_run = true;
-        } else if (std.mem.eql(u8, arg, "search")) {
-            given_args.action_config = try SearchAction.processArgs(&args_it, &given_args);
-        } else if (std.mem.eql(u8, arg, "create")) {
-            given_args.action_config = try CreateAction.processArgs(&args_it, &given_args);
-        } else if (std.mem.eql(u8, arg, "remove")) {
-            given_args.action_config = try RemoveAction.processArgs(&args_it, &given_args);
-        } else if (std.mem.eql(u8, arg, "parent")) {
-            arg_state = .Parent;
-        } else if (std.mem.eql(u8, arg, "pool")) {
-            arg_state = .Pool;
-        } else if (std.mem.eql(u8, arg, "source")) {
-            arg_state = .Source;
-        } else if (std.mem.eql(u8, arg, "--v1")) {
-            given_args.cli_v1 = true; // doesn't do anything yet
+    _ = iter.next(); // skip args[0] as that's exec name
 
-        } else {
-            logger.err("{s} is an invalid action", .{arg});
-            return error.InvalidAction;
-        }
-    }
+    // from https://github.com/Hejsil/zig-clap/blob/master/example/subcommands.zig
+    var diag = clap.Diagnostic{};
+    var res = clap.parseEx(clap.Help, &params, custom_parsers, &iter, .{
+        .diagnostic = &diag,
+        .allocator = allocator,
+        .terminating_positional = 0,
+    }) catch |err| {
+        diag.report(std.io.getStdErr().writer(), err) catch {};
+        return err;
+    };
+    defer res.deinit();
+
+    given_args.help = res.args.help != 0;
+    given_args.version = res.args.version != 0;
+    if (res.args.verbose != 0) current_log_level = .debug;
+    given_args.cli_v1 = res.args.v1 != 0;
+
+    given_args.ask_confirmation = res.args.@"no-confirm" != 0;
+    given_args.dry_run = res.args.@"dry-run" != 0;
 
     if (given_args.help) {
-        std.debug.print(HELPTEXT, .{});
-        return;
+        return try clap.help(std.io.getStdErr().writer(), clap.Help, &params, .{});
     } else if (given_args.version) {
-        std.debug.print("ainclude {s}\n", .{VERSION});
+        std.debug.print("atags {s}\n", .{VERSION});
         return;
     }
+
+    const command = res.positionals[0] orelse return error.MissingCommand;
+    given_args.action_config = switch (command) {
+        .create => CreateAction.processArgs(&iter, allocator, &given_args),
+        .search => SearchAction.processArgs(&iter, allocator, &given_args),
+        .remove => RemoveAction.processArgs(&iter, allocator, &given_args),
+        .parent => parentMain(&iter, allocator, &given_args),
+        .pool => poolMain(&iter, allocator, &given_args),
+        .source => sourceMain(&iter, allocator, &given_args),
+    } catch |err| switch (err) {
+        error.NoArgs => return {},
+        else => return err,
+    };
 
     if (given_args.action_config == null) {
         logger.err("action is a required argument", .{});
