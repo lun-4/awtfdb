@@ -9,10 +9,6 @@ const logger = std.log.scoped(.awtfdb_janitor);
 
 const VERSION = "0.0.1";
 const HELPTEXT =
-    \\ awtfdb-metrics: run analytical queries on db and submit results inside db
-    \\
-    \\ run this daily, at a time you're not going to use your computer
-    \\ that much. maybe 5am
     \\
     \\ usage:
     \\ \tawtfdb-metrics
@@ -73,6 +69,10 @@ pub fn main() anyerror!u8 {
         \\-V, --version               print version and exit.
         \\-v, --verbose               enable debug logs.
         \\--full                      run all possible metrics (slower).
+        \\
+        \\ awtfdb-metrics: run analytical queries on your awtfdb index and submit results inside the index itself
+        \\
+        \\ run this daily, at a time you're not going to use your computer that much. maybe 5am
     );
 
     var diag = clap.Diagnostic{};

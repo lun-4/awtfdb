@@ -9,20 +9,6 @@ const ID = manage_main.ID;
 const logger = std.log.scoped(.als);
 
 const VERSION = "0.0.1";
-const HELPTEXT =
-    \\ amv: move files
-    \\
-    \\ usage:
-    \\ \tamv [options] <path_from> <path_to>
-    \\
-    \\ options:
-    \\ \t-h\tprints this help and exits
-    \\ \t-V\tprints version and exits
-    \\
-    \\ examples:
-    \\     amv path1 path2
-    \\         move path1 to path2
-;
 
 pub var current_log_level: std.log.Level = .info;
 pub const std_options = struct {
@@ -48,6 +34,18 @@ pub fn main() anyerror!void {
         \\-V, --version               print version and exit.
         \\-v, --verbose               enable debug logs.
         \\<str>...                    file paths, or folder paths
+        \\
+        \\ amv: move files while also carrying the relevant index operations with them
+        \\
+        \\ this is an useful utility if you don't wish to call mv(1) then call ainclude(1) with `--filter-indexed-files-only` then call awtfdb-janitor
+        \\
+        \\ examples:
+        \\
+        \\ amv file ~/folder
+        \\
+        \\ amv file ~/folder/anotherfile
+        \\
+        \\ amv * ~/anotherfolder
     );
 
     var diag = clap.Diagnostic{};

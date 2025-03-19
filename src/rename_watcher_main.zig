@@ -9,15 +9,6 @@ const ExpiringHashMap = @import("expiring_hash_map").ExpiringHashMap;
 const logger = std.log.scoped(.awtfdb_watcher);
 
 const VERSION = "0.0.1";
-const HELPTEXT =
-    \\
-    \\ usage:
-    \\  awtfdb-watcher [options...] path_to_home_directory
-    \\
-    \\ options:
-    \\ \t-h\tprints this help and exits
-    \\ \t-V\tprints version and exits
-;
 
 const PidTid = struct { pid: std.posix.pid_t, tid: std.posix.pid_t };
 const StringAsList = std.ArrayList(u8);

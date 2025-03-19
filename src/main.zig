@@ -10,31 +10,6 @@ const RowID = i64;
 pub const AWTFDB_BLAKE3_CONTEXT = "awtfdb Sun Mar 20 16:58:11 AM +00 2022 main hash key";
 
 const DefaultRegexOptions = libpcre.Options{ .Ucp = true, .Utf8 = true };
-
-const HELPTEXT =
-    \\ awtfdb-manage: main program for awtfdb file management
-    \\
-    \\ usage:
-    \\ \tawtfdb-manage [global options..] <action> [action options...]
-    \\
-    \\ global options:
-    \\  -h\tprints this help and exits
-    \\ \t-V\tprints version and exits
-    \\ \t-v\tturns on verbosity (debug logging)
-    \\
-    \\ creating an awtfdb index file:
-    \\  awtfdb-manage create
-    \\
-    \\ migrating to new versions:
-    \\  awtfdb-manage migrate
-    \\
-    \\ getting statistics:
-    \\  awtfdb-manage stats
-    \\
-    \\ current running jobs:
-    \\  awtfdb-manage jobs
-;
-
 const MigrationOptions = struct {
     function: ?*const fn (*Context) anyerror!void = null,
     transaction: bool = true,
@@ -2058,6 +2033,14 @@ pub fn main() anyerror!void {
         \\-V, --version               print version and exit.
         \\-v, --verbose               enable debug logs.
         \\<command>                   action (create, migrate, config)
+        \\
+        \\ awtfdb-manager: main program for index file management
+        \\
+        \\ you must call `create` to create the index file so any other utility works
+        \\
+        \\ after upgrading awtfdb versions, you must run `migrate`
+        \\
+        \\ if you wish to configure specifics of your awtfdb setup, use `config`
     );
 
     //const MainArgs = clap.ResultEx(clap.Help, &params, custom_parsers);
