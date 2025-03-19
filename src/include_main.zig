@@ -238,52 +238,17 @@ const RegexTagInferrer = struct {
         regex: libpcre.Regex,
     };
 
-    pub fn consumeArguments(args_it: *std.process.ArgIterator) !TagInferrerConfig {
-        var arg_state: enum { None, Text, TagScope, TagOnMatch } = .None;
+    pub fn consumeArguments(res: anytype) !TagInferrerConfig {
         var config = TagInferrerConfig{
             .last_argument = undefined,
             .config = .{ .regex = .{} },
         };
-
-        var arg: []const u8 = undefined;
-        while (args_it.next()) |arg_from_loop| {
-            arg = arg_from_loop;
-            logger.debug("(regex tag inferrer) state: {} arg: {s}", .{ arg_state, arg });
-
-            switch (arg_state) {
-                .None => {},
-                .Text => config.config.regex.text = arg,
-                .TagScope => config.config.regex.tag_scope = arg,
-                .TagOnMatch => config.config.regex.tag_on_match = arg,
-            }
-
-            // if we hit non-None states, we need to know if we're going
-            // to have another configuration parameter or not
-            //
-            // and we do this by next()'ing into the next argument
-            if (arg_state != .None) {
-                arg = args_it.next() orelse break;
-                arg_state = .None;
-            }
-            logger.debug("(regex tag inferrer, main loop) state: {} arg: {s}", .{ arg_state, arg });
-
-            if (std.mem.eql(u8, arg, "--regex")) {
-                arg_state = .Text;
-            } else if (std.mem.eql(u8, arg, "--regex-text-scope")) {
-                arg_state = .TagScope;
-            } else if (std.mem.eql(u8, arg, "--regex-cast-lowercase")) {
-                config.config.regex.cast_lowercase = true;
-            } else if (std.mem.eql(u8, arg, "--regex-use-full-path")) {
-                config.config.regex.use_full_path = true;
-            } else if (std.mem.eql(u8, arg, "--regex-use-exif")) {
-                config.config.regex.use_exif = true;
-            } else if (std.mem.eql(u8, arg, "--regex-tag-on-match")) {
-                arg_state = .TagOnMatch;
-            } else {
-                config.last_argument = arg;
-                break;
-            }
-        }
+        config.config.regex.text = res.args.regex;
+        config.config.regex.tag_scope = res.args.@"regex-text-scope";
+        config.config.regex.cast_lowercase = res.args.@"regex-cast-lowercase" != 0;
+        config.config.regex.tag_on_match = res.args.@"regex-tag-on-match";
+        config.config.regex.use_full_path = res.args.@"regex-use-full-path" != 0;
+        config.config.regex.use_exif = res.args.@"regex-use-exif" != 0;
 
         if (config.config.regex.text == null) return error.RegexArgumentRequired;
         return config;
@@ -470,48 +435,15 @@ const AudioMetadataTagInferrer = struct {
         config: Config,
     };
 
-    pub fn consumeArguments(args_it: *std.process.ArgIterator) !TagInferrerConfig {
-        var arg_state: enum { None, AlbumTagScope, ArtistTagScope, TitleTagScope } = .None;
+    pub fn consumeArguments(res: anytype) !TagInferrerConfig {
         var config: TagInferrerConfig = .{
             .last_argument = undefined,
             .config = .{ .audio = .{} },
         };
-        var arg: []const u8 = undefined;
-        while (args_it.next()) |arg_from_loop| {
-            arg = arg_from_loop;
-            logger.debug("(audio tag inferrer) state: {} arg: {s}", .{ arg_state, arg });
-
-            switch (arg_state) {
-                .None => {},
-                .AlbumTagScope => config.config.audio.tag_scope_album = arg,
-                .ArtistTagScope => config.config.audio.tag_scope_artist = arg,
-                .TitleTagScope => config.config.audio.tag_scope_title = arg,
-            }
-
-            // if we hit non-None states, we need to know if we're going
-            // to have another configuration parameter or not
-            //
-            // and we do this by next()'ing into the next argument
-            if (arg_state != .None) {
-                arg = args_it.next() orelse break;
-                arg_state = .None;
-            }
-            logger.debug("(audio tag inferrer, main loop) state: {} arg: {s}", .{ arg_state, arg });
-
-            if (std.mem.eql(u8, arg, "--artist-tag-scope")) {
-                arg_state = .ArtistTagScope;
-            } else if (std.mem.eql(u8, arg, "--album-tag-scope")) {
-                arg_state = .AlbumTagScope;
-            } else if (std.mem.eql(u8, arg, "--title-tag-scope")) {
-                arg_state = .TitleTagScope;
-            } else if (std.mem.eql(u8, arg, "--cast-lowercase")) {
-                config.config.regex.cast_lowercase = true;
-            } else {
-                config.last_argument = arg;
-                break;
-            }
-        }
-
+        config.config.audio.tag_scope_album = res.args.@"audio-album-tag-scope";
+        config.config.audio.tag_scope_artist = res.args.@"audio-artist-tag-scope";
+        config.config.audio.tag_scope_title = res.args.@"audio-title-tag-scope";
+        config.config.audio.cast_lowercase = res.args.@"audio-cast-lowercase" != 0;
         return config;
     }
 
@@ -643,49 +575,15 @@ const MimeTagInferrer = struct {
         config: Config,
     };
 
-    pub fn consumeArguments(args_it: *std.process.ArgIterator) !TagInferrerConfig {
-        var arg_state: enum { None, TagScopeMimetype, TagImage, TagAudio, TagVideo } = .None;
+    pub fn consumeArguments(res: anytype) !TagInferrerConfig {
         var config: TagInferrerConfig = .{
             .last_argument = undefined,
             .config = .{ .mime = .{} },
         };
-        var arg: []const u8 = undefined;
-        while (args_it.next()) |arg_from_loop| {
-            arg = arg_from_loop;
-            logger.debug("(mime tag inferrer) state: {} arg: {s}", .{ arg_state, arg });
-
-            switch (arg_state) {
-                .None => {},
-                .TagScopeMimetype => config.config.mime.tag_scope_mimetype = arg,
-                .TagAudio => config.config.mime.tag_for_all_audio = arg,
-                .TagVideo => config.config.mime.tag_for_all_video = arg,
-                .TagImage => config.config.mime.tag_for_all_images = arg,
-            }
-
-            // if we hit non-None states, we need to know if we're going
-            // to have another configuration parameter or not
-            //
-            // and we do this by next()'ing into the next argument
-            if (arg_state != .None) {
-                arg = args_it.next() orelse break;
-                arg_state = .None;
-            }
-            logger.debug("(mime tag inferrer, main loop) state: {} arg: {s}", .{ arg_state, arg });
-
-            if (std.mem.eql(u8, arg, "--mime-tag-scope")) {
-                arg_state = .TagScopeMimetype;
-            } else if (std.mem.eql(u8, arg, "--image-tag")) {
-                arg_state = .TagImage;
-            } else if (std.mem.eql(u8, arg, "--audio-tag")) {
-                arg_state = .TagAudio;
-            } else if (std.mem.eql(u8, arg, "--video-tag")) {
-                arg_state = .TagVideo;
-            } else {
-                config.last_argument = arg;
-                break;
-            }
-        }
-
+        config.config.mime.tag_scope_mimetype = res.args.@"mime-tag-scope";
+        config.config.mime.tag_for_all_images = res.args.@"image-tag";
+        config.config.mime.tag_for_all_audio = res.args.@"audio-tag";
+        config.config.mime.tag_for_all_video = res.args.@"video-tag";
         return config;
     }
 
@@ -870,23 +768,55 @@ pub fn main() anyerror!void {
     var allocator = gpa.allocator();
 
     const params = comptime clap.parseParamsComptime(
-        \\-h, --help                  display this help and exit.
-        \\-V, --version               print version and exit.
-        \\-v, --verbose               enable debug logs.
-        \\-s, --source <str>          set tag source
-        \\-t, --tag <str>...          add the tag to the given paths
-        \\-p, --pool <str>            add an existing pool to the given paths (recommended to do it with files only, never folders, as the list ordering is not stable)
-        \\--filter-indexed-files-only only include files already indexed (useful if you're moving files around and they're not catched by rename watcher or you haven't used amv)
-        \\--infer-tags <str>          infer tags based on file data via a specific pre-processor (available: regex, audio, mime). they come with extra options
-        // TODO (DO NOT MERGE) add infer tags regex stuff args
-        // .regex => try RegexTagInferrer.consumeArguments(&args_it),
-        // .audio => try AudioMetadataTagInferrer.consumeArguments(&args_it),
-        // .mime => try MimeTagInferrer.consumeArguments(&args_it),
+        \\-h, --help                     display this help and exit.
+        \\-V, --version                  print version and exit.
+        \\-v, --verbose                  enable debug logs.
+        \\-s, --source <str>             set tag source
+        \\-t, --tag <str>...             add the tag to the given paths
+        \\-p, --pool <str>               add an existing pool to the given paths (recommended to do it with files only, never folders, as the list ordering is not stable)
+        \\--filter-indexed-files-only    only include files already indexed (useful if you're moving files around and they're not catched by rename watcher or you haven't used amv)
+        \\--infer-tags <str>...             infer tags based on file data via a specific pre-processor (available: regex, audio, mime). they come with extra options
+        \\                                   regex: match tags based on filenames
+        \\                                   audio: match tags based on audio metadata (id3)
+        \\                                   mime: match tags based on file mimetype
+        //regex
+        \\--regex <str>                      regex tag inferrer: the actual regex to match against data (PCRE)
+        \\--regex-cast-lowercase             regex tag inferrer: lowercase text for actual tag (matching runs against original filename still)
+        \\--regex-text-scope <str>           regex tag inferrer: which tag scope to use when matching against a regex (e.g "test:", "artist:")
+        \\--regex-use-full-path              regex tag inferrer: use full file path as regex source text instead of just filename
+        \\--regex-use-exif                   regex tag inferrer: add exif Description data as regex source text
+        \\--regex-tag-on-match <str>         regex tag inferrer: add the given full tag on match
+        //audio
+        \\--audio-cast-lowercase             audio tag inferrer: lowercase text for matching
+        \\--audio-artist-tag-scope <str>     audio tag inferrer: tag scope for artist (e.g "artist:")
+        \\--audio-album-tag-scope <str>      audio tag inferrer: tag scope for album (e.g "album:")
+        \\--audio-title-tag-scope <str>      audio tag inferrer: tag scope for title (e.g "title:")
+        //mime
+        \\--mime-tag-scope <str>             mime tag inferrer: tag scope for mime (e.g "type:")
+        \\--image-tag <str>                  mime tag inferrer: add tag from file if its mime matches image/
+        \\--audio-tag <str>                  mime tag inferrer: add tag from file if its mime matches audio/
+        \\--video-tag <str>                  mime tag inferrer: add tag from file if its mime matches video/
         \\--use-file-timestamp        use file timestamp from fs for internal file id
         \\--strict                    validate tags, don't autocreate them (fails if given tag doesn't exist)
         \\--v1                        use "v1" arguments, doesn't do anything atm (useful for scripts)
         \\--dry-run                   do not do any modifications to the index file (good for testing)
-        \\<str>...                    file paths, or folder paths
+        \\<str>...                    file paths, or folder paths (will recurse into folders)
+        \\
+        \\ ainclude: add a file to the awtfdb index
+        \\
+        \\ examples:
+        \\
+        \\ adding a single file:
+        \\  ainclude --tag format:mp4 --tag "meme:what the dog doing" /downloads/funny_meme.mp4
+        \\
+        \\ adding a batch of files:
+        \\  ainclude --tag format:mp4 --tag "meme:what the dog doing" /downloads/funny_meme.mp4 /download/another_dog_meme.mp4 /downloads/butter_dog.mp4
+        \\
+        \\ using regex to infer tags based on filenames with tags in the filename, in the form of "[<tag name>]":
+        \\  ainclude --infer-tags regex --regex '\[(.*?)\]' 
+        \\
+        \\ adding a media library:
+        \\  ainclude --tag type:music --infer-tags audio /my/music/collection
     );
 
     var diag = clap.Diagnostic{};
@@ -923,6 +853,16 @@ pub fn main() anyerror!void {
 
     if (res.args.pool) |arg| {
         given_args.pool = ID.fromString(arg);
+    }
+
+    for (res.args.@"infer-tags") |arg| {
+        const tag_inferrer = std.meta.stringToEnum(TagInferrer, arg) orelse return error.InvalidTagInferrer;
+        const inferrer_config = switch (tag_inferrer) {
+            .regex => try RegexTagInferrer.consumeArguments(res),
+            .audio => try AudioMetadataTagInferrer.consumeArguments(res),
+            .mime => try MimeTagInferrer.consumeArguments(res),
+        };
+        try given_args.wanted_inferrers.append(inferrer_config);
     }
 
     var ctx = try manage_main.loadDatabase(allocator, .{});
