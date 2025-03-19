@@ -2,6 +2,7 @@ const std = @import("std");
 const sqlite = @import("sqlite");
 const manage_main = @import("main.zig");
 const Context = manage_main.Context;
+const clap = @import("clap");
 const ID = manage_main.ID;
 const ExpiringHashMap = @import("expiring_hash_map").ExpiringHashMap;
 
@@ -9,12 +10,6 @@ const logger = std.log.scoped(.awtfdb_watcher);
 
 const VERSION = "0.0.1";
 const HELPTEXT =
-    \\ awtfdb-watcher: watch the entire operating system for renames,
-    \\  updating the database with such
-    \\
-    \\ currently only supports linux with bpftrace installed.
-    \\
-    \\ MUST be run as root.
     \\
     \\ usage:
     \\  awtfdb-watcher [options...] path_to_home_directory
@@ -534,8 +529,30 @@ pub fn main() anyerror!void {
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
-    var args_it = std.process.args();
-    _ = args_it.skip();
+    const params = comptime clap.parseParamsComptime(
+        \\-h, --help                  display this help and exit.
+        \\-V, --version               print version and exit.
+        \\-v, --verbose               enable debug logs.
+        \\<str>                    home path of the user to watch renames for
+        \\
+        \\ awtfdb-watcher: watch the entire operating system for renames,
+        \\  updating the database with such
+        \\
+        \\ currently only supports linux with bpftrace installed.
+        \\
+        \\ MUST be run as root.
+    );
+
+    var diag = clap.Diagnostic{};
+    var res = clap.parse(clap.Help, &params, clap.parsers.default, .{
+        .diagnostic = &diag,
+        .allocator = allocator,
+    }) catch |err| {
+        // Report useful error and exit.
+        diag.report(std.io.getStdErr().writer(), err) catch {};
+        return err;
+    };
+    defer res.deinit();
 
     const Args = struct {
         help: bool = false,
@@ -544,21 +561,15 @@ pub fn main() anyerror!void {
     };
 
     var given_args = Args{};
-    while (args_it.next()) |arg| {
-        if (std.mem.eql(u8, arg, "-h")) {
-            given_args.help = true;
-        } else if (std.mem.eql(u8, arg, "-V")) {
-            given_args.version = true;
-        } else if (std.mem.eql(u8, arg, "-v")) {
-            current_log_level = .debug;
-        } else {
-            given_args.home_path = arg;
-        }
-    }
 
+    given_args.help = res.args.help != 0;
+    given_args.version = res.args.version != 0;
+    if (res.args.verbose != 0)
+        current_log_level = .debug;
+
+    given_args.home_path = res.positionals[0];
     if (given_args.help) {
-        std.debug.print(HELPTEXT, .{});
-        return;
+        return clap.help(std.io.getStdErr().writer(), clap.Help, &params, .{});
     } else if (given_args.version) {
         std.debug.print("awtfdb-watcher {s}\n", .{VERSION});
         return;
