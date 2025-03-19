@@ -2,6 +2,7 @@ const std = @import("std");
 const sqlite = @import("sqlite");
 const manage_main = @import("main.zig");
 const libpcre = @import("libpcre");
+const clap = @import("clap");
 const Context = manage_main.Context;
 const ID = manage_main.ID;
 const logger = std.log.scoped(.afind);
@@ -57,8 +58,25 @@ pub fn main() anyerror!void {
     defer _ = gpa.deinit();
     var allocator = gpa.allocator();
 
-    var args_it = std.process.args();
-    _ = args_it.skip();
+    const params = comptime clap.parseParamsComptime(
+        \\-h, --help                  display this help and exit.
+        \\-V, --version               print version and exit.
+        \\-v, --verbose               enable debug logs.
+        \\-L, --link                 creates a temporary folder with symlinks to all results
+        \\--v1                        use v1 cli api (for scripts)
+        \\<str>...                    list of tags to search on. returned results are an intersection of all given tags' results
+    );
+
+    var diag = clap.Diagnostic{};
+    var res = clap.parse(clap.Help, &params, clap.parsers.default, .{
+        .diagnostic = &diag,
+        .allocator = allocator,
+    }) catch |err| {
+        // Report useful error and exit.
+        diag.report(std.io.getStdErr().writer(), err) catch {};
+        return err;
+    };
+    defer res.deinit();
 
     const StringList = std.ArrayList([]const u8);
     const Args = struct {
@@ -67,44 +85,24 @@ pub fn main() anyerror!void {
         link: bool = false,
         cli_v1: bool = true,
         query: StringList,
-        pub fn deinit(self: *@This()) void {
-            self.query.deinit();
-        }
     };
 
     var given_args = Args{ .query = StringList.init(allocator) };
-    defer given_args.deinit();
-    var arg_state: enum { None, MoreTags } = .None;
+    defer given_args.query.deinit();
 
-    while (args_it.next()) |arg| {
-        switch (arg_state) {
-            .None => {},
-            .MoreTags => {
-                try given_args.query.append(arg);
-                // once in MoreTags state, all next arguments are part
-                // of the query.
-                continue;
-            },
-        }
-        if (std.mem.eql(u8, arg, "-h")) {
-            given_args.help = true;
-        } else if (std.mem.eql(u8, arg, "-V")) {
-            given_args.version = true;
-        } else if (std.mem.eql(u8, arg, "-v")) {
-            current_log_level = .debug;
-        } else if (std.mem.eql(u8, arg, "-L") or std.mem.eql(u8, arg, "--link")) {
-            given_args.link = true;
-        } else if (std.mem.eql(u8, arg, "--v1")) {
-            given_args.cli_v1 = true; // doesn't do anything yet
-        } else {
-            arg_state = .MoreTags;
-            try given_args.query.append(arg);
-        }
+    given_args.help = res.args.help != 0;
+    given_args.version = res.args.version != 0;
+    if (res.args.verbose != 0)
+        current_log_level = .debug;
+    given_args.cli_v1 = res.args.v1 != 0;
+    given_args.link = res.args.link != 0;
+
+    for (res.positionals[0]) |arg| {
+        try given_args.query.append(arg);
     }
 
     if (given_args.help) {
-        std.debug.print(HELPTEXT, .{});
-        return;
+        return clap.help(std.io.getStdErr().writer(), clap.Help, &params, .{});
     } else if (given_args.version) {
         std.debug.print("ainclude {s}\n", .{VERSION});
         return;
