@@ -9,46 +9,6 @@ const ID = manage_main.ID;
 const logger = std.log.scoped(.atags);
 
 const VERSION = "0.0.1";
-const HELPTEXT =
-    \\ atags: manage your tags
-    \\
-    \\ usage:
-    \\ \tatags action [arguments...]
-    \\
-    \\ options:
-    \\ \t-h\tprints this help and exits
-    \\ \t-V\tprints version and exits
-    \\ \t--no-confirm\tdo not ask for confirmation on remove
-    \\ \tcommands.
-    \\
-    \\ examples of tag operations::
-    \\ \tatags create tag
-    \\ \tatags create --core lkdjfalskjg tag
-    \\ \tatags search tag
-    \\ \tatags search --exact tag
-    \\ \tatags remove --tag tag
-    \\ \tatags remove --core dslkjfsldkjf
-    \\ \tatags remove --only-tag-name mytag --> only deleted name, no actual tag cores deleted
-    \\
-    \\ tag parent operations:
-    \\ \tatags parent create child_tag parent_tag
-    \\ \tatags parent list
-    \\ \tatags parent remove id
-    \\ \tatags parent remove --delete-tag-file-entries id
-    \\ \tremove the parent entry and clean up the files that had tags
-    \\ \tadded by this parent relationship
-    \\
-    \\ pool operations:
-    \\ \tatags pool create "my pool title"
-    \\ \tatags pool search "my"
-    \\ \tatags pool fetch id
-    \\ \tatags pool remove id
-    \\
-    \\ source operations:
-    \\  atags source create "deepdanbooru"
-    \\  atags source list
-    \\  atags source remove id
-;
 
 const ActionConfig = union(enum) {
     Create: CreateAction.Config,
@@ -1788,6 +1748,57 @@ pub fn main() anyerror!void {
         \\<command>                   action (for tags: create, search, remove. there's parent, pool, source)
         \\
         \\ atags: manage tags, tag parents, pools, and tag sources
+        \\
+        \\ examples for tag operations:
+        \\
+        \\
+        \\    atags create tag
+        \\
+        \\    atags create --core lkdjfalskjg tag
+        \\
+        \\    atags search tag
+        \\
+        \\    atags search --exact tag
+        \\
+        \\    atags remove --tag tag
+        \\
+        \\    atags remove --core dslkjfsldkjf
+        \\
+        \\    atags remove --only-tag-name mytag --> only deleted name, no actual tag cores deleted
+        \\
+        \\
+        \\ tag parenting operations:
+        \\
+        \\    atags parent create child_tag parent_tag
+        \\
+        \\    atags parent list
+        \\
+        \\    atags parent remove id
+        \\
+        \\    atags parent remove --delete-tag-file-entries id
+        \\
+        \\       remove the parent entry and clean up the files that had tags
+        \\       added by this parent relationship
+        \\
+        \\
+        \\ pool operations:
+        \\
+        \\    atags pool create "my pool title"
+        \\
+        \\    atags pool search "my"
+        \\
+        \\    atags pool fetch id
+        \\
+        \\    atags pool remove id
+        \\
+        \\
+        \\ source operations:
+        \\
+        \\    atags source create "deepdanbooru"
+        \\
+        \\    atags source list
+        \\
+        \\    atags source remove id
     );
 
     var iter = try std.process.ArgIterator.initWithAllocator(allocator);
