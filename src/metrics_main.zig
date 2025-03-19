@@ -8,15 +8,6 @@ const ID = manage_main.ID;
 const logger = std.log.scoped(.awtfdb_janitor);
 
 const VERSION = "0.0.1";
-const HELPTEXT =
-    \\
-    \\ usage:
-    \\ \tawtfdb-metrics
-    \\
-    \\ options:
-    \\ \t-h\tprints this help and exits
-    \\ \t-V\tprints version and exits
-;
 
 const StringList = std.ArrayList([]const u8);
 const Args = struct {

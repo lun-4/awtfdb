@@ -8,35 +8,6 @@ const ID = manage_main.ID;
 const logger = std.log.scoped(.afind);
 
 const VERSION = "0.0.1";
-const HELPTEXT =
-    \\ afind: execute queries on the awtfdb index
-    \\
-    \\ usage:
-    \\  afind [options...] query
-    \\
-    \\ options:
-    \\ \t-h\tprints this help and exits
-    \\ \t-V\tprints version and exits
-    \\ \t-L, --link\tcreates a temporary folder with
-    \\ \tsymlinks to the resulting files from
-    \\ \tthe query. deletes the folder on
-    \\ \tCTRL-C.
-    \\ \t(linux only)
-    \\
-    \\ query examples:
-    \\ \tafind 'mytag1'
-    \\ \tsearch all files with mytag1
-    \\ \tafind 'mytag1 mytag2'
-    \\ \tsearch all files with mytag1 AND mytag2
-    \\ \tafind 'mytag1 | mytag2'
-    \\ \tsearch all files with mytag1 OR mytag2
-    \\ \tafind '"mytag1" | "mytag2"'
-    \\ \tsearch all files with mytag1 OR mytag2 (raw tag syntax)
-    \\ \tnot all characters are allowed in non-raw tag syntax
-    \\ \tafind '"mytag1" -"mytag2"'
-    \\ \tafind 'mytag1 -mytag2'
-    \\ \tsearch all files with mytag1 but they do NOT have mytag2
-;
 
 pub const std_options = struct {
     pub const log_level = .debug;
@@ -62,9 +33,36 @@ pub fn main() anyerror!void {
         \\-h, --help                  display this help and exit.
         \\-V, --version               print version and exit.
         \\-v, --verbose               enable debug logs.
-        \\-L, --link                 creates a temporary folder with symlinks to all results
+        \\-L, --link                 creates a temporary folder with symlinks to all results. press CTRL-C to delete the folder (linux only)
         \\--v1                        use v1 cli api (for scripts)
         \\<str>...                    list of tags to search on. returned results are an intersection of all given tags' results
+        \\
+        \\ afind: search the index
+        \\
+        \\ examples:
+        \\
+        \\ search all files with mytag1:
+        \\
+        \\ afind 'mytag1'
+        \\
+        \\ search all files with mytag1 AND mytag2:
+        \\
+        \\ afind 'mytag1 mytag2'
+        \\
+        \\ search all files with mytag1 OR mytag2:
+        \\
+        \\ afind 'mytag1 | mytag2'
+        \\
+        \\ search all files with mytag1 OR mytag2 (raw tag syntax)
+        \\ not all characters are allowed in non-raw tag syntax:
+        \\
+        \\ afind '"mytag1" | "mytag2"'
+        \\
+        \\ search all files with mytag1 but they do NOT have mytag2:
+        \\
+        \\ afind '"mytag1" -"mytag2"'
+        \\
+        \\ afind 'mytag1 -mytag2'
     );
 
     var diag = clap.Diagnostic{};
