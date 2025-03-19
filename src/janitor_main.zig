@@ -2,6 +2,7 @@ const std = @import("std");
 const sqlite = @import("sqlite");
 const manage_main = @import("main.zig");
 const libpcre = @import("libpcre");
+const clap = @import("clap");
 const Context = manage_main.Context;
 const ID = manage_main.ID;
 
@@ -543,8 +544,35 @@ pub fn main() anyerror!u8 {
     defer _ = gpa.deinit();
     var allocator = gpa.allocator();
 
-    var args_it = std.process.args();
-    _ = args_it.skip();
+    const custom_parsers = .{
+        .string = clap.parsers.string,
+        .str = clap.parsers.string,
+        .fs_size = parseByteAmount,
+    };
+
+    const params = comptime clap.parseParamsComptime(
+        \\-h, --help                  display this help and exit.
+        \\-V, --version               print version and exit.
+        \\-v, --verbose               enable debug logs.
+        \\--repair           attempt to repair consistency (this operation may be destructive on the index file, please only run this manually)
+        \\--full           validate file hashes against index (very slow)
+        \\--only <str>...         only run full validation on the given path(s)
+        \\--hash-files-smaller-than <fs_size>    only hash files smaller than given size (e.g 10K, 10M, 3G)
+        \\--from-report <str>      use existing report file for double check
+        \\--skip-db       skip db checks
+        \\--skip-tag-cores    skip tag core checks
+    );
+
+    var diag = clap.Diagnostic{};
+    var res = clap.parse(clap.Help, &params, custom_parsers, .{
+        .diagnostic = &diag,
+        .allocator = allocator,
+    }) catch |err| {
+        // Report useful error and exit.
+        diag.report(std.io.getStdErr().writer(), err) catch {};
+        return err;
+    };
+    defer res.deinit();
 
     var given_args = Args{ .only = StringList.init(allocator) };
     defer {
@@ -552,61 +580,32 @@ pub fn main() anyerror!u8 {
         given_args.only.deinit();
     }
 
-    var state: enum { None, Only, HashFilesSmallerThan, FromReport } = .None;
+    given_args.help = res.args.help != 0;
+    given_args.version = res.args.version != 0;
+    if (res.args.verbose != 0)
+        current_log_level = .debug;
 
-    while (args_it.next()) |arg| {
-        switch (state) {
-            .Only => {
-                try given_args.only.append(try std.fs.path.resolve(
-                    allocator,
-                    &[_][]const u8{arg},
-                ));
-                state = .None;
-                continue;
-            },
-            .HashFilesSmallerThan => {
-                given_args.maybe_hash_files_smaller_than = try parseByteAmount(arg);
-                state = .None;
-                continue;
-            },
-            .FromReport => {
-                given_args.from_report = arg;
-                state = .None;
-                continue;
-            },
-            .None => {},
-        }
-        if (std.mem.eql(u8, arg, "-h")) {
-            given_args.help = true;
-        } else if (std.mem.eql(u8, arg, "-v")) {
-            current_log_level = .debug;
-        } else if (std.mem.eql(u8, arg, "-V")) {
-            given_args.version = true;
-        } else if (std.mem.eql(u8, arg, "--repair")) {
-            given_args.repair = true;
-        } else if (std.mem.eql(u8, arg, "--full")) {
-            given_args.full = true;
-        } else if (std.mem.eql(u8, arg, "--only")) {
-            state = .Only;
-        } else if (std.mem.eql(u8, arg, "--skip-db")) {
-            given_args.skip_db = true;
-        } else if (std.mem.eql(u8, arg, "--skip-tag-cores")) {
-            given_args.skip_tag_cores = true;
-        } else if (std.mem.eql(u8, arg, "--hash-files-smaller-than")) {
-            state = .HashFilesSmallerThan;
-        } else if (std.mem.eql(u8, arg, "--from-report")) {
-            state = .FromReport;
-        } else {
-            return error.InvalidArgument;
-        }
+    given_args.repair = res.args.repair != 0;
+    given_args.full = res.args.full != 0;
+    given_args.skip_db = res.args.@"skip-db" != 0;
+    given_args.skip_tag_cores = res.args.@"skip-tag-cores" != 0;
+
+    for (res.args.only) |arg| {
+        try given_args.only.append(try std.fs.path.resolve(
+            allocator,
+            &[_][]const u8{arg},
+        ));
     }
 
+    given_args.maybe_hash_files_smaller_than = res.args.@"hash-files-smaller-than";
+    given_args.from_report = res.args.@"from-report";
+
     if (given_args.help) {
-        std.debug.print(HELPTEXT, .{});
-        return 1;
+        try clap.help(std.io.getStdErr().writer(), clap.Help, &params, .{});
+        return 0;
     } else if (given_args.version) {
         std.debug.print("awtfdb-janitor {s}\n", .{VERSION});
-        return 1;
+        return 0;
     }
 
     var ctx = try manage_main.loadDatabase(allocator, .{});
