@@ -1,6 +1,7 @@
 const std = @import("std");
 const sqlite = @import("sqlite");
 const manage_main = @import("main.zig");
+const clap = @import("clap");
 const Context = manage_main.Context;
 const ID = manage_main.ID;
 const tunez = @import("tunez");
@@ -868,12 +869,35 @@ pub fn main() anyerror!void {
     defer _ = gpa.deinit();
     var allocator = gpa.allocator();
 
-    var args_it = std.process.args();
-    _ = args_it.skip();
+    const params = comptime clap.parseParamsComptime(
+        \\-h, --help                  display this help and exit.
+        \\-V, --version               print version and exit.
+        \\-v, --verbose               enable debug logs.
+        \\-s, --source <str>          set tag source
+        \\-t, --tag <str>...          add the tag to the given paths
+        \\-p, --pool <str>            add an existing pool to the given paths (recommended to do it with files only, never folders, as the list ordering is not stable)
+        \\--filter-indexed-files-only only include files already indexed (useful if you're moving files around and they're not catched by rename watcher or you haven't used amv)
+        \\--infer-tags <str>          infer tags based on file data via a specific pre-processor (available: regex, audio, mime). they come with extra options
+        // TODO (DO NOT MERGE) add infer tags regex stuff args
+        // .regex => try RegexTagInferrer.consumeArguments(&args_it),
+        // .audio => try AudioMetadataTagInferrer.consumeArguments(&args_it),
+        // .mime => try MimeTagInferrer.consumeArguments(&args_it),
+        \\--use-file-timestamp        use file timestamp from fs for internal file id
+        \\--strict                    validate tags, don't autocreate them (fails if given tag doesn't exist)
+        \\--v1                        use "v1" arguments, doesn't do anything atm (useful for scripts)
+        \\--dry-run                   do not do any modifications to the index file (good for testing)
+        \\<str>...                    file paths, or folder paths
+    );
 
-    const ArgState = enum { None, FetchTag, InferMoreTags, FetchPool, FetchSource };
-
-    var state: ArgState = .None;
+    var diag = clap.Diagnostic{};
+    var res = clap.parse(clap.Help, &params, clap.parsers.default, .{
+        .diagnostic = &diag,
+        .allocator = allocator,
+    }) catch |err| {
+        diag.report(std.io.getStdErr().writer(), err) catch {};
+        return err;
+    };
+    defer res.deinit();
 
     var given_args = Args{
         .default_tags = StringList.init(allocator),
@@ -882,87 +906,39 @@ pub fn main() anyerror!void {
     };
     defer given_args.deinit();
 
+    given_args.help = res.args.help != 0;
+    given_args.version = res.args.version != 0;
+    if (res.args.verbose != 0)
+        current_log_level = .debug;
+
+    given_args.cli_v1 = res.args.v1 != 0;
+    given_args.dry_run = res.args.@"dry-run" != 0;
+    given_args.filter_indexed_files_only = res.args.@"filter-indexed-files-only" != 0;
+    given_args.use_file_timestamp = res.args.@"use-file-timestamp" != 0;
+    given_args.strict = res.args.strict != 0;
+
+    for (res.args.tag) |arg| {
+        try given_args.default_tags.append(arg);
+    }
+
+    if (res.args.pool) |arg| {
+        given_args.pool = ID.fromString(arg);
+    }
+
     var ctx = try manage_main.loadDatabase(allocator, .{});
     defer ctx.deinit();
 
-    var arg: []const u8 = undefined;
-    while (args_it.next()) |arg_from_loop| {
-        arg = arg_from_loop;
-        logger.debug("state: {} arg: {s}", .{ state, arg });
-        switch (state) {
-            .FetchTag => {
-                try given_args.default_tags.append(arg);
-                state = .None;
-                continue;
-            },
-            .FetchPool => {
-                given_args.pool = ID.fromString(arg);
-                state = .None;
-                continue;
-            },
-            .FetchSource => {
-                const arg_as_int = try std.fmt.parseInt(i64, arg, 10);
-                given_args.tag_source = (try ctx.fetchTagSource(.external, arg_as_int)) orelse return error.TagSourceNotFound;
-                state = .None;
-                continue;
-            },
-            .InferMoreTags => {
-                const tag_inferrer = std.meta.stringToEnum(TagInferrer, arg) orelse return error.InvalidTagInferrer;
-                const inferrer_config = switch (tag_inferrer) {
-                    .regex => try RegexTagInferrer.consumeArguments(&args_it),
-                    .audio => try AudioMetadataTagInferrer.consumeArguments(&args_it),
-                    .mime => try MimeTagInferrer.consumeArguments(&args_it),
-                };
+    if (res.args.source) |arg| {
+        const arg_as_int = try std.fmt.parseInt(i64, arg, 10);
+        given_args.tag_source = (try ctx.fetchTagSource(.external, arg_as_int)) orelse return error.TagSourceNotFound;
+    }
 
-                try given_args.wanted_inferrers.append(inferrer_config);
-
-                arg = inferrer_config.last_argument;
-                state = .None;
-            },
-            .None => {},
-        }
-        logger.debug("(possible transition) state: {} arg: {s}", .{ state, arg });
-
-        if (std.mem.eql(u8, arg, "-h")) {
-            given_args.help = true;
-        } else if (std.mem.eql(u8, arg, "-v")) {
-            current_log_level = .debug;
-        } else if (std.mem.eql(u8, arg, "-V")) {
-            given_args.version = true;
-        } else if (std.mem.eql(u8, arg, "--filter-indexed-files-only")) {
-            given_args.filter_indexed_files_only = true;
-        } else if (std.mem.eql(u8, arg, "--dry-run")) {
-            given_args.dry_run = true;
-        } else if (std.mem.eql(u8, arg, "--use-file-timestamp")) {
-            given_args.use_file_timestamp = true;
-        } else if (std.mem.eql(u8, arg, "--v1")) {
-            given_args.cli_v1 = true; // doesn't do anything yet
-        } else if (std.mem.eql(u8, arg, "--tag") or std.mem.eql(u8, arg, "-t")) {
-            state = .FetchTag;
-            // tag inferrers require more than one arg, so we need to load
-            // those args beforehand and then pass the arg state forward
-        } else if (std.mem.eql(u8, arg, "--infer-tags")) {
-            state = .InferMoreTags;
-            // TODO check if this is supposed to be an argument or an
-            // actual option by peeking over args_it. paths can have --
-            // after all.
-        } else if (std.mem.eql(u8, arg, "-p") or std.mem.eql(u8, arg, "--pool")) {
-            state = .FetchPool;
-        } else if (std.mem.eql(u8, arg, "-s") or std.mem.eql(u8, arg, "--source")) {
-            state = .FetchSource;
-        } else if (std.mem.eql(u8, arg, "--strict")) {
-            given_args.strict = true;
-        } else if (std.mem.startsWith(u8, arg, "--")) {
-            logger.err("unknown argument '{s}'", .{arg});
-            return error.InvalidArgument;
-        } else {
-            try given_args.include_paths.append(arg);
-        }
+    for (res.positionals[0]) |arg| {
+        try given_args.include_paths.append(arg);
     }
 
     if (given_args.help) {
-        std.debug.print(HELPTEXT, .{});
-        return;
+        return clap.help(std.io.getStdErr().writer(), clap.Help, &params, .{});
     } else if (given_args.version) {
         std.debug.print("ainclude {s}\n", .{VERSION});
         return;
