@@ -1,25 +1,13 @@
 const std = @import("std");
 const sqlite = @import("sqlite");
 const manage_main = @import("main.zig");
+const clap = @import("clap");
 const Context = manage_main.Context;
 const ID = manage_main.ID;
 
 const logger = std.log.scoped(.awtfdb_janitor);
 
 const VERSION = "0.0.1";
-const HELPTEXT =
-    \\ awtfdb-metrics: run analytical queries on db and submit results inside db
-    \\
-    \\ run this daily, at a time you're not going to use your computer
-    \\ that much. maybe 5am
-    \\
-    \\ usage:
-    \\ \tawtfdb-metrics
-    \\
-    \\ options:
-    \\ \t-h\tprints this help and exits
-    \\ \t-V\tprints version and exits
-;
 
 const StringList = std.ArrayList([]const u8);
 const Args = struct {
@@ -67,29 +55,40 @@ pub fn main() anyerror!u8 {
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
-    var args_it = std.process.args();
-    _ = args_it.skip();
+    const params = comptime clap.parseParamsComptime(
+        \\-h, --help                  display this help and exit.
+        \\-V, --version               print version and exit.
+        \\-v, --verbose               enable debug logs.
+        \\--full                      run all possible metrics (slower).
+        \\
+        \\ awtfdb-metrics: run analytical queries on your awtfdb index and submit results inside the index itself
+        \\
+        \\ run this daily, at a time you're not going to use your computer that much. maybe 5am
+    );
+
+    var diag = clap.Diagnostic{};
+    var res = clap.parse(clap.Help, &params, clap.parsers.default, .{
+        .diagnostic = &diag,
+        .allocator = allocator,
+    }) catch |err| {
+        // Report useful error and exit.
+        diag.report(std.io.getStdErr().writer(), err) catch {};
+        return err;
+    };
+    defer res.deinit();
 
     var given_args = Args{};
-    //var state: enum { None } = .None;
 
-    while (args_it.next()) |arg| {
-        if (std.mem.eql(u8, arg, "-h")) {
-            given_args.help = true;
-        } else if (std.mem.eql(u8, arg, "-V")) {
-            given_args.version = true;
-        } else if (std.mem.eql(u8, arg, "-v")) {
-            current_log_level = .debug;
-        } else if (std.mem.eql(u8, arg, "--full")) {
-            given_args.full = true;
-        } else {
-            return error.InvalidArgument;
-        }
-    }
+    given_args.help = res.args.help != 0;
+    given_args.version = res.args.version != 0;
+    if (res.args.verbose != 0)
+        current_log_level = .debug;
+
+    given_args.full = res.args.full != 0;
 
     if (given_args.help) {
-        std.debug.print(HELPTEXT, .{});
-        return 1;
+        try clap.help(std.io.getStdErr().writer(), clap.Help, &params, .{});
+        return 0;
     } else if (given_args.version) {
         std.debug.print("awtfdb-metrics {s}\n", .{VERSION});
         return 1;
@@ -116,6 +115,7 @@ pub fn main() anyerror!u8 {
 }
 
 fn runMetricsTagUsage(ctx: *Context, metrics_timestamp: Timestamp) !void {
+    logger.debug("running tag usage metrics", .{});
     try ctx.db.exec(
         "insert into metrics_tag_usage_timestamps (timestamp) values (?)",
         .{},

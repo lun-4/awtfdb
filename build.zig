@@ -32,6 +32,8 @@ pub fn build(b: *std.Build) !void {
     const tunez_pkg = b.dependency("tunez", .{ .optimize = optimize, .target = target });
     const ulid_pkg = b.dependency("zig_ulid", .{ .optimize = optimize, .target = target });
     const libexif_pkg = b.dependency("libexif", .{ .optimize = optimize, .target = target });
+    const clap = b.dependency("clap", .{});
+
     const Mod = struct { name: []const u8, mod: *std.Build.Module };
 
     const mod_deps = &[_]Mod{
@@ -41,6 +43,7 @@ pub fn build(b: *std.Build) !void {
         .{ .name = "expiring_hash_map", .mod = expiring_hash_map_pkg.module("expiring-hash-map") },
         .{ .name = "tunez", .mod = tunez_pkg.module("tunez") },
         .{ .name = "ulid", .mod = ulid_pkg.module("zig-ulid") },
+        .{ .name = "clap", .mod = clap.module("clap") },
     };
 
     const exif_artifact = libexif_pkg.artifact("exif");
@@ -174,17 +177,18 @@ const CustomHardLinkStep = struct {
         const builder = self.builder;
 
         const wrapmain_path = self.exe.getEmittedBin().getPath(builder);
+        var madeDir = false;
         inline for (EXECUTABLES) |exec_decl| {
             const exec_name = exec_decl.@"0";
             const full_dest_path = builder.getInstallPath(.{ .bin = {} }, exec_name);
-            std.debug.print("{s} -> {s}\n", .{ wrapmain_path, full_dest_path });
-            _ = try std.fs.Dir.updateFile(
-                std.fs.cwd(),
-                wrapmain_path,
-                std.fs.cwd(),
-                full_dest_path,
-                .{},
-            );
+            if (!madeDir) {
+                const dirpath = std.fs.path.dirname(full_dest_path).?;
+                std.debug.print("mkdir -p {s}\n", .{dirpath});
+                try std.fs.Dir.makePath(std.fs.cwd(), dirpath);
+                madeDir = true;
+            }
+            std.debug.print("symlink {s} to {s}\n", .{ wrapmain_path, full_dest_path });
+            try std.fs.cwd().atomicSymLink(wrapmain_path, full_dest_path, .{});
         }
     }
 };
