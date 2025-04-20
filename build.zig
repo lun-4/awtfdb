@@ -139,6 +139,7 @@ pub fn build(b: *std.Build) !void {
             .builder = b,
             .step = hardlink_step,
             .exe = single_exe,
+            .optimize = optimize,
         };
         hardlink_install.step.dependOn(&single_exe.step);
         b.getInstallStep().dependOn(&hardlink_install.step);
@@ -168,6 +169,7 @@ const CustomHardLinkStep = struct {
     builder: *std.Build,
     step: std.Build.Step,
     exe: *std.Build.Step.Compile,
+    optimize: std.builtin.OptimizeMode,
 
     const Self = @This();
 
@@ -181,14 +183,21 @@ const CustomHardLinkStep = struct {
         inline for (EXECUTABLES) |exec_decl| {
             const exec_name = exec_decl.@"0";
             const full_dest_path = builder.getInstallPath(.{ .bin = {} }, exec_name);
+            const dirpath = std.fs.path.dirname(full_dest_path).?;
             if (!madeDir) {
-                const dirpath = std.fs.path.dirname(full_dest_path).?;
                 std.debug.print("mkdir -p {s}\n", .{dirpath});
                 try std.fs.Dir.makePath(std.fs.cwd(), dirpath);
                 madeDir = true;
             }
-            std.debug.print("symlink {s} to {s}\n", .{ wrapmain_path, full_dest_path });
-            try std.fs.cwd().atomicSymLink(wrapmain_path, full_dest_path, .{});
+            if (self.optimize == .ReleaseFast or self.optimize == .ReleaseSafe) {
+                var dest_dir = try std.fs.cwd().openDir(dirpath, .{});
+                defer dest_dir.close();
+                std.debug.print("copy {s} to {s} with name {s}\n", .{ wrapmain_path, dirpath, exec_name });
+                try std.fs.cwd().copyFile(wrapmain_path, dest_dir, exec_name, .{});
+            } else {
+                std.debug.print("symlink {s} to {s}\n", .{ wrapmain_path, full_dest_path });
+                try std.fs.cwd().atomicSymLink(wrapmain_path, full_dest_path, .{});
+            }
         }
     }
 };
