@@ -1251,7 +1251,7 @@ async def fetch_file_entity(
             [
                 {
                     "category": "default",
-                    "names": [f'pool:{pool["id"]}'],
+                    "names": [f"pool:{pool['id']}"],
                     "usages": pool["postCount"],
                 }
                 for pool in pools
