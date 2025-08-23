@@ -1350,6 +1350,8 @@ async def fetch_file_entity(
         returned_file["canvasHeight"] = int(canvas_size[1]) if canvas_size[1] else None
 
         log.info("file %s calculate canvas size: %r", file_id, canvas_size)
+        if len(canvas_size) == 3:
+            canvas_size = canvas_size[:2]
         assert len(canvas_size) == 2
 
     if "fileSize" in fields:
