@@ -532,18 +532,29 @@ async def content(file_id: str):
             return await send_file(file_local_path, mimetype=mimetype.target)
 
 
-def blocking_thumbnail_image(path, thumbnail_path, size):
+def blocking_thumbnail_image(path, thumbnail_path, size=None):
     try:
         with Image.open(path) as file_as_image:
+            original_width, original_height = file_as_image.size
+
+            if size is None:
+                # Scale based on megapixels for better quality preservation
+                megapixels = (original_width * original_height) / 1_000_000
+                if megapixels > 10:
+                    size = (2000, 600)
+                elif megapixels > 5:
+                    size = (600, 450)
+                else:
+                    size = (350, 350)
             file_as_image = file_as_image.convert("RGB")
-            file_as_image.thumbnail(size)
-            file_as_image.save(thumbnail_path)
+            file_as_image.thumbnail(size, Image.Resampling.LANCZOS)
+            file_as_image.save(thumbnail_path, quality=85, optimize=True)
     except UnidentifiedImageError:
         log.exception("failed to make thumbnail")
         return False
 
 
-async def thumbnail_given_path(path: Path, thumbnail_path: Path, size=(350, 350)):
+async def thumbnail_given_path(path: Path, thumbnail_path: Path, size=None):
     return await app.loop.run_in_executor(
         None, blocking_thumbnail_image, path, thumbnail_path, size
     )
