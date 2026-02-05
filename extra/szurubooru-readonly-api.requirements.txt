@@ -3,5 +3,5 @@ aiosqlite==0.20.0
 python-magic==0.4.27
 Pillow==11.0.0
 expiringdict==1.2.2
-uvloop==0.21.0
+uvloop==0.22.1
 eyed3==0.9.7

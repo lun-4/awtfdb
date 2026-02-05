@@ -1279,7 +1279,7 @@ async def fetch_file_entity(
             (file_id,),
         )
         if rows:
-            file_local_path = rows[0][0]
+            file_local_path = next(row[0] for row in rows if Path(row[0]).exists())
         else:
             log.warning("failed to fetch file id %r", file_id)
             file_local_path = None
