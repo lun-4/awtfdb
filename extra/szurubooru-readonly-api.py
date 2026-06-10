@@ -1015,6 +1015,7 @@ async def posts_fetch():
         )
 
         minipage_results = []
+        fields = fields or []
 
         appending_pool_id = None
         # prevent pool entries from appearing multiple times
@@ -1523,11 +1524,12 @@ async def fetch_pool_entity(pool_hash: str, micro=False):
 
 @app.get("/pools/")
 async def pools_fetch():
-    # GET /pools/?offset=<initial-pos>&limit=<page-size>&query=<query>
+    # GET /pools/?offset=<initial-pos>&limit=<page-size>&query=<query>&sort=<asc|desc>
     query = request_query_field().split(" ")[0].replace("*", "%").lower()
     offset = int(request.args.get("offset", 0))
     limit = int(request.args.get("limit", 15))
     query = query.replace("\\:", ":")
+    sort_dir = "desc" if request.args.get("sort") == "desc" else "asc"
     log.debug("query: %r", query)
 
     count_rows = await app.db.execute_fetchall(
@@ -1543,6 +1545,7 @@ async def pools_fetch():
     select pool_hash
     from pools
     where pools.title LIKE '%' || ? || '%'
+    order by pool_hash {sort_dir}
     limit {limit}
     offset {offset}
     """,
