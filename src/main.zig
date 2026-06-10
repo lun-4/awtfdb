@@ -2129,8 +2129,8 @@ fn configCommand(args_it: *std.process.ArgIterator, ctx: *Context) !void {
         return clap.help(std.io.getStdErr().writer(), clap.Help, &params, .{});
 
     const key = res.positionals[1] orelse return error.MissingKey;
-    const maybe_value = if (res.positionals[2].len > 1)
-        res.positionals[2][0]
+    const maybe_value = if (res.positionals[2].len >= 1)
+        res.positionals[2][res.positionals[2].len - 1]
     else
         null;
     var stdout = std.io.getStdOut().writer();
