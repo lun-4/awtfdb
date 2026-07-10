@@ -1544,7 +1544,7 @@ async def pools_fetch():
         f"""
     select pool_hash
     from pools
-    where pools.title LIKE '%' || ? || '%'
+    where lower(pools.title) LIKE '%' || ? || '%'
     order by pool_hash {sort_dir}
     limit {limit}
     offset {offset}
